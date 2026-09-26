@@ -4,7 +4,9 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 4
+    var schemaVersion: Int = 5
+    /// Optional so version-4 packets remain decodable.
+    var guidedProgress: GuidedSurveyProgress?
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String

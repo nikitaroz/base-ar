@@ -5,7 +5,9 @@ private enum RootPhase {
     case hub
 }
 
-enum HubRoute: Hashable {
+enum HubRoute: Hashable, Identifiable {
+    var id: Self { self }
+    case guide
     case home
     case meter
     case breaker
@@ -44,11 +46,13 @@ struct ContentView: View {
     @ViewBuilder
     private func hubStack(store: SurveyStore) -> some View {
         NavigationStack(path: $path) {
-            SurveyHubView(store: store) { route in
+            GuidedSurveyView(store: store) { route in
                 path.append(route)
             }
             .navigationDestination(for: HubRoute.self) { route in
                 switch route {
+                case .guide:
+                    GuidedSurveyView(store: store) { path.append($0) }
                 case .home:
                     HomeInformationView(store: store)
                 case .meter:
@@ -72,7 +76,7 @@ struct ContentView: View {
 
     private func beginSurvey() {
         do {
-            store = try SurveyStore(propertyIdentifier: "")
+            store = try SurveyStore(propertyIdentifier: "", resumeDraft: true)
             path = NavigationPath()
             withAnimation(.easeInOut(duration: 0.35)) {
                 phase = .hub
@@ -83,6 +87,10 @@ struct ContentView: View {
     }
 
     private func editFromReview(_ route: HubRoute) {
+        if route == .guide {
+            path = NavigationPath()
+            return
+        }
         path.append(route)
     }
 
@@ -121,7 +129,7 @@ private struct WelcomeView: View {
                         .font(.largeTitle.bold())
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Add your home details, take two electrical photos, and preview where a Base Core could sit outside.")
+                    Text("We'll guide you through home details, electrical labels, surrounding photos, and an outdoor battery preview. Stop and resume your local draft at any time.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -133,7 +141,7 @@ private struct WelcomeView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 48)
                     Button(action: onContinue) {
-                        Text("Start survey")
+                        Text(SurveyStore.hasSavedDraft ? "Resume survey" : "Start survey")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -429,7 +437,7 @@ private enum BatteryCountChoice: String, CaseIterable, Identifiable {
     }
 }
 
-private struct HomeInformationView: View {
+struct HomeInformationView: View {
     var store: SurveyStore
 
     @State private var addressCompleter = AddressCompleter()
@@ -478,6 +486,8 @@ private struct HomeInformationView: View {
             }
 
             Section("Address") {
+                Text("Editing the address clears the location fix, utility confirmation and placement, and asks you to recheck saved photos. For a different home, start a new survey from Review.")
+                    .font(.footnote).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Property address or identifier")
                         .font(.subheadline)

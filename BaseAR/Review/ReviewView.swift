@@ -17,6 +17,7 @@ struct ReviewView: View {
             VStack(alignment: .leading, spacing: 16) {
                 disclaimer
                 readinessCard
+                guidedEvidence
                 if !nextActions.isEmpty {
                     nextActionsCard
                 }
@@ -70,6 +71,38 @@ struct ReviewView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var guidedEvidence: some View {
+        GroupBox("Guided capture and human review") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Photo completion is not installation approval. Meter replacement, connection topology, program eligibility and local clearances still need qualified review.")
+                    .font(.footnote)
+                LabeledContent("Utility (self-reported)", value: store.session.guidedProgress?.program.title ?? "Unknown")
+                ForEach(SurveyStep.allCases.filter { $0 != .review }) { step in
+                    let issues = SurveyWorkflow.issues(for: step, session: store.session)
+                    if !issues.isEmpty || store.session.guidedProgress?.deferred[step.rawValue] != nil {
+                        Button("Revisit: \(step.title)") {
+                            store.setGuidedStep(step)
+                            onEdit(.guide)
+                        }
+                        if let reason = store.session.guidedProgress?.deferred[step.rawValue] {
+                            Text("Needs review: \(reason)").font(.footnote).foregroundStyle(.orange)
+                        }
+                    }
+                }
+                ForEach(ContextPhoto.allCases) { slot in
+                    if let image = store.contextImage(slot) {
+                        DisclosureGroup(slot.title) {
+                            evidenceImage(image, label: slot.title)
+                            Text(store.session.guidedProgress?.contextPhotos[slot.rawValue]?.accepted == true ? "User checked photo quality" : "Photo quality not confirmed")
+                                .font(.caption)
+                        }
+                    }
+                }
+                Button("Open all guided steps") { onEdit(.guide) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var readinessCard: some View {
@@ -387,7 +420,11 @@ struct ReviewView: View {
     }
 
     private var placementMissingCount: Int {
-        max(0, missingCount - homeMissingCount - meterMissingCount - breakerMissingCount)
+        // Guided photo/program issues have their own actionable cards above.
+        let baselineCount = store.session.missingInformation.filter {
+            !$0.hasPrefix("Guided:") && !$0.hasPrefix("Deferred:")
+        }.count
+        return max(0, baselineCount - homeMissingCount - meterMissingCount - breakerMissingCount)
     }
 
     private var breakerText: String {

@@ -36,6 +36,21 @@ struct BaseSurveyEvaluator: SurveyEvaluating {
 enum MissingInformation {
     static func list(for session: SurveySession) -> [String] {
         var items: [String] = []
+        if let progress = session.guidedProgress {
+            for step in [SurveyStep.safety, .program, .meterContext, .panelContext] {
+                items += SurveyWorkflow.issues(for: step, session: session).map { "Guided: \($0)" }
+            }
+            if !progress.meterConfirmed { items.append("Guided: Confirm the meter ID against the photo.") }
+            if !progress.breakerConfirmed { items.append("Guided: Confirm the main breaker rating against the photo.") }
+            for step in SurveyStep.allCases {
+                if let reason = progress.deferred[step.rawValue] {
+                    items.append("Deferred: \(step.title): \(reason)")
+                }
+            }
+            if progress.program == .unknown || !progress.programAnswered {
+                items.append("Guided: Utility/program needs human verification.")
+            }
+        }
         if session.propertyIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             items.append("Property address or identifier")
         }

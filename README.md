@@ -4,6 +4,12 @@ A small iPhone app for a preliminary Base Power site survey. It collects meter a
 
 The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
 
+## Guided survey branch
+
+This branch implements a nine-step guided capture flow, wider context photos, explicit OCR/value confirmation, safe deferrals, local draft resume, and targeted review loops. See [the end-to-end workflow and Mermaid diagram](docs/guided-survey-workflow.md) and [validation / iPhone acceptance checklist](docs/guided-survey-validation.md).
+
+The workflow document is the current behavior reference for this branch; the older feature notes below describe the original hub implementation. Native Xcode compilation and physical-device validation are still required.
+
 ## Xcode and device setup
 
 1. Open `BaseAR.xcodeproj`.
@@ -40,7 +46,7 @@ Or select Xcode once with `sudo xcode-select -s /Applications/Xcode.app/Contents
 
 ## What works
 
-- One-screen welcome → four-tile hub (home and personal info, electrical meter, breaker box, battery placement). Every tile is open, shows completion progress, and saves as you go.
+- Welcome → nine-step guide: safety, home, utility, meter, meter context, main disconnect, panel context, AR placement, and review. Step navigation, explicit deferrals and local draft resume are available.
 - Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
 - Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the number in a card-style frame and saves that photo. A normal photo can also fill an empty field. The typed value is the one that is kept.
 - Outdoor `ARView` with horizontal and vertical plane detection. Placement scans the electric meter and breaker panel first, then the gas meter (or “No gas meter”), and places the Base Core last (30.68 in W × 35.9 in H × 22 in D, on a 3 ft × 3 ft pad). Meter height and same-wall come from the scan. Distances, pad clearance, working space, and the transfer-switch reservation update from the placed battery. A missed meter or panel can be marked by hand.

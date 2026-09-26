@@ -121,9 +121,12 @@ struct ReviewView: View {
                 evidenceImage(store.placementImage, label: "Placement screenshot")
                 LabeledContent("LiDAR mesh", value: store.session.placement.lidarMeshAvailable ? "Used" : "Not available")
                 LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
+                LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
                 LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
                 LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
                 LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
+                LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
+                LabeledContent("Same wall (meter + panel)", value: sameWallText(store.session.placement.meterAndPanelSameWall))
                 LabeledContent("Footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
                 LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
                 Text("GPS above is the phone's property fix, not where the battery was placed.")
@@ -272,6 +275,14 @@ struct ReviewView: View {
         if let measured { return measured ? "Measured clear" : "Measured blocked" }
         if attested == true { return "Attested clear (not measured)" }
         return "Not measured or attested"
+    }
+
+    private func sameWallText(_ value: Bool?) -> String {
+        switch value {
+        case nil: "Not measured"
+        case true?: "Yes"
+        case false?: "No"
+        }
     }
 
     private func statusColor(_ status: CheckStatus) -> Color {

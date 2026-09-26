@@ -11,6 +11,8 @@ enum BaseRuleSet {
     static let maxWallDistanceFeet = 1.0
     static let minGasMeterDistanceFeet = 3.0
     static let footprintSideFeet = 3.0
+    static let minMeterHeightFeet = 3.0
+    static let maxMeterHeightFeet = 6.0
 
     static let rules: [EligibilityRule] = [
         austinBreaker,
@@ -19,7 +21,9 @@ enum BaseRuleSet {
         meterDistance,
         wallDistance,
         gasMeterClearance,
-        transferSwitchSpace
+        transferSwitchSpace,
+        meterHeight,
+        meterAndPanelSameWall
     ]
 
     private static let austinBreaker = EligibilityRule(
@@ -130,6 +134,38 @@ enum BaseRuleSet {
                 passText: { "Measured distance to the marked gas meter is \($0), at least 3 ft." },
                 conflictText: { "Measured distance to the marked gas meter is \($0), closer than 3 ft." }
             )
+        }
+    )
+
+    private static let meterHeight = EligibilityRule(
+        id: "meter-height",
+        title: "Meter height",
+        requirement: "The electric meter must be between \(Int(minMeterHeightFeet)) and \(Int(maxMeterHeightFeet)) ft off the ground.",
+        isRequired: true,
+        evaluate: { session in
+            guard let height = session.placement.meterHeightFeet else {
+                return .unknown("Meter height was not measured. Tap the ground below the meter and then the meter on the wall to measure it.")
+            }
+            let formatted = String(format: "%.1f ft", height)
+            if height >= minMeterHeightFeet && height <= maxMeterHeightFeet {
+                return .pass("Measured meter height is \(formatted), inside the \(Int(minMeterHeightFeet))–\(Int(maxMeterHeightFeet)) ft range.")
+            }
+            return .conflict("Measured meter height is \(formatted), outside the \(Int(minMeterHeightFeet))–\(Int(maxMeterHeightFeet)) ft range.")
+        }
+    )
+
+    private static let meterAndPanelSameWall = EligibilityRule(
+        id: "meter-panel-same-wall",
+        title: "Meter and panel on the same wall",
+        requirement: "The meter and the main breaker panel should sit on the same wall.",
+        isRequired: true,
+        evaluate: { session in
+            guard let same = session.placement.meterAndPanelSameWall else {
+                return .unknown("Same-wall check needs a wall tap on both the meter and the panel.")
+            }
+            return same
+                ? .pass("The meter and panel wall taps landed on parallel walls.")
+                : .conflict("The meter and panel wall taps landed on walls that face different directions.")
         }
     )
 

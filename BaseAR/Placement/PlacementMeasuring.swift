@@ -16,12 +16,19 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
     var meterPosition: PlacementAnchor?
+    /// Wall hit at the meter itself, when the user has tapped the meter on a vertical plane. Y drives meter height.
+    var meterWallPosition: PlacementAnchor?
+    /// Unit normal of the vertical plane the meter wall hit landed on. Same-wall check compares this with the panel's wall normal.
+    var meterWallNormal: PlacementAnchor?
+    var panelPosition: PlacementAnchor?
+    var panelWallPosition: PlacementAnchor?
+    var panelWallNormal: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
     var verticalPlanes: [PlaneSample] = []
     var lidarMeshAvailable: Bool = false
 
     var hasPlacedContent: Bool {
-        batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil
+        batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil || panelPosition != nil
     }
 }
 
@@ -29,12 +36,16 @@ struct PlacementMeasurements: Sendable, Equatable {
     var batteryPlaced: Bool
     var meterMarked: Bool
     var gasMeterMarked: Bool
+    var panelMarked: Bool
     var lidarMeshAvailable: Bool
     var distanceToMeterFeet: Double?
     var distanceToWallFeet: Double?
     var distanceToGasMeterFeet: Double?
+    var meterHeightFeet: Double?
+    var meterAndPanelSameWall: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
+    var panelPosition: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
     var batteryYawRadians: Float?
 }
@@ -51,12 +62,16 @@ extension PlacementMeasuring {
         updated.batteryPlaced = measured.batteryPlaced
         updated.meterMarked = measured.meterMarked
         updated.gasMeterMarked = measured.gasMeterMarked
+        updated.panelMarked = measured.panelMarked
         updated.lidarMeshAvailable = measured.lidarMeshAvailable
         updated.distanceToMeterFeet = measured.distanceToMeterFeet
         updated.distanceToWallFeet = measured.distanceToWallFeet
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
+        updated.meterHeightFeet = measured.meterHeightFeet
+        updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
         updated.batteryPosition = measured.batteryPosition
         updated.meterPosition = measured.meterPosition
+        updated.panelPosition = measured.panelPosition
         updated.gasMeterPosition = measured.gasMeterPosition
         updated.batteryYawRadians = measured.batteryYawRadians
         return updated
@@ -66,21 +81,29 @@ extension PlacementMeasuring {
 struct CorePlacementMeasurer: PlacementMeasuring {
     /// Extra margin around a detected wall patch before it counts as "the" wall.
     var planeMarginMeters: Float = 0.5
+    /// Dot product threshold for treating two wall normals as parallel (~15° tolerance).
+    var wallParallelDotThreshold: Float = 0.96
 
     func measure(_ snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
         let meterFeet = horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
         let gasFeet = horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
         let wallFeet = wallClearanceFeet(snapshot)
+        let heightFeet = meterHeightFeet(snapshot)
+        let sameWall = meterAndPanelSameWall(snapshot)
         return PlacementMeasurements(
             batteryPlaced: snapshot.batteryPosition != nil,
             meterMarked: snapshot.meterPosition != nil,
             gasMeterMarked: snapshot.gasMeterPosition != nil,
+            panelMarked: snapshot.panelPosition != nil,
             lidarMeshAvailable: snapshot.lidarMeshAvailable,
             distanceToMeterFeet: meterFeet,
             distanceToWallFeet: wallFeet,
             distanceToGasMeterFeet: gasFeet,
+            meterHeightFeet: heightFeet,
+            meterAndPanelSameWall: sameWall,
             batteryPosition: snapshot.batteryPosition,
             meterPosition: snapshot.meterPosition,
+            panelPosition: snapshot.panelPosition,
             gasMeterPosition: snapshot.gasMeterPosition,
             batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians
         )
@@ -91,6 +114,19 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let dx = Double(origin.x - target.x)
         let dz = Double(origin.z - target.z)
         return (dx * dx + dz * dz).squareRoot() / 0.3048
+    }
+
+    private func meterHeightFeet(_ snapshot: PlacementSceneSnapshot) -> Double? {
+        guard let ground = snapshot.meterPosition, let wall = snapshot.meterWallPosition else { return nil }
+        let deltaMeters = Double(wall.y - ground.y)
+        guard deltaMeters > 0 else { return nil }
+        return deltaMeters / 0.3048
+    }
+
+    private func meterAndPanelSameWall(_ snapshot: PlacementSceneSnapshot) -> Bool? {
+        guard let meterNormal = snapshot.meterWallNormal, let panelNormal = snapshot.panelWallNormal else { return nil }
+        let dot = abs(simd_dot(meterNormal.simd, panelNormal.simd))
+        return dot >= wallParallelDotThreshold
     }
 
     /// Horizontal clearance from the battery's nearest bottom corner to a vertical plane whose patch runs past that corner.

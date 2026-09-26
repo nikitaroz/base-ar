@@ -4,7 +4,7 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 2
+    var schemaVersion: Int = 3
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -139,6 +139,7 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var batteryPlaced: Bool = false
     var meterMarked: Bool = false
     var gasMeterMarked: Bool = false
+    var panelMarked: Bool = false
     var lidarMeshAvailable: Bool = false
     var distanceToMeterFeet: Double?
     var distanceToWallFeet: Double?
@@ -158,6 +159,7 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var meterAndPanelSameWall: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
+    var panelPosition: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
     var batteryYawRadians: Float?
     /// When the placement snapshot was committed. Nil until a save happens.

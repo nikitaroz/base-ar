@@ -5,6 +5,7 @@ import SwiftUI
 enum PlacementTarget: String, CaseIterable, Identifiable {
     case battery
     case meter
+    case panel
     case gasMeter
 
     var id: String { rawValue }
@@ -13,6 +14,7 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
         switch self {
         case .battery: "Battery"
         case .meter: "Meter"
+        case .panel: "Panel"
         case .gasMeter: "Gas"
         }
     }
@@ -22,7 +24,9 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
         case .battery:
             "Tap the ground to place the battery. Drag to move it. Twist with two fingers to rotate."
         case .meter:
-            "Tap the ground where the electric meter is."
+            "Tap the ground below the electric meter, then tap the meter on the wall. Meter height needs both taps."
+        case .panel:
+            "Tap the ground below the main breaker panel, then tap the panel on the wall."
         case .gasMeter:
             "Tap the ground at the gas meter if you can see one."
         }
@@ -350,6 +354,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
         var batteryBody: ModelEntity?
         var footprintPad: ModelEntity?
         var meterMarker: ModelEntity?
+        var meterWallMarker: ModelEntity?
+        var meterWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
+        var panelMarker: ModelEntity?
+        var panelWallMarker: ModelEntity?
+        var panelWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
         var gasMarker: ModelEntity?
         var planes: [UUID: PlaneSample] = [:]
         var lidarMeshAvailable = false
@@ -464,16 +473,30 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended else { return }
-            guard let position = groundPosition(in: arView, at: gesture.location(in: arView)) else { return }
+            let point = gesture.location(in: arView)
+            var didPlace = false
             switch mode {
             case .battery:
-                placeBattery(at: position)
-            case .meter:
-                placeMarker(kind: .meter, at: position)
+                if let position = groundPosition(in: arView, at: point) {
+                    placeBattery(at: position)
+                    didPlace = true
+                }
+            case .meter, .panel:
+                // Two-stage: try a wall hit first (user tilting at the meter/panel on a vertical plane); fall back to a ground hit.
+                if let wallHit = wallHit(in: arView, at: point) {
+                    placeWallMarker(kind: mode, hit: wallHit)
+                    didPlace = true
+                } else if let position = groundPosition(in: arView, at: point) {
+                    placeMarker(kind: mode, at: position)
+                    didPlace = true
+                }
             case .gasMeter:
-                placeMarker(kind: .gasMeter, at: position)
+                if let position = groundPosition(in: arView, at: point) {
+                    placeMarker(kind: .gasMeter, at: position)
+                    didPlace = true
+                }
             }
-            emit()
+            if didPlace { emit() }
         }
 
         @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -655,6 +678,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             let existing: ModelEntity?
             switch kind {
             case .meter: existing = meterMarker
+            case .panel: existing = panelMarker
             case .gasMeter: existing = gasMarker
             case .battery: existing = nil
             }
@@ -667,6 +691,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             case .meter:
                 let mesh = MeshResource.generateBox(width: 0.14, height: 0.28, depth: 0.14)
                 marker = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: .systemBlue, isMetallic: false)])
+            case .panel:
+                let mesh = MeshResource.generateBox(width: 0.14, height: 0.28, depth: 0.14)
+                marker = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: .systemIndigo, isMetallic: false)])
             case .gasMeter:
                 let mesh = MeshResource.generateSphere(radius: 0.08)
                 marker = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: .systemPurple, isMetallic: false)])
@@ -677,8 +704,46 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             root?.addChild(marker)
             switch kind {
             case .meter: meterMarker = marker
+            case .panel: panelMarker = marker
             case .gasMeter: gasMarker = marker
             case .battery: break
+            }
+        }
+
+        private func placeWallMarker(kind: PlacementTarget, hit: (position: SIMD3<Float>, normal: SIMD3<Float>)) {
+            let color: UIColor
+            switch kind {
+            case .meter: color = .systemBlue
+            case .panel: color = .systemIndigo
+            default: return
+            }
+            let existing: ModelEntity?
+            switch kind {
+            case .meter: existing = meterWallMarker
+            case .panel: existing = panelWallMarker
+            default: existing = nil
+            }
+            let marker: ModelEntity
+            if let existing {
+                marker = existing
+            } else {
+                // Small disc on the wall so the user sees where their tap landed.
+                let mesh = MeshResource.generateBox(width: 0.10, height: 0.10, depth: 0.02)
+                marker = ModelEntity(mesh: mesh, materials: [SimpleMaterial(color: color, isMetallic: false)])
+                root?.addChild(marker)
+                switch kind {
+                case .meter: meterWallMarker = marker
+                case .panel: panelWallMarker = marker
+                default: break
+                }
+            }
+            marker.position = hit.position
+            // Rotate the disc so its short axis points along the wall's outward normal.
+            marker.orientation = simd_quatf(from: SIMD3(0, 0, 1), to: hit.normal)
+            switch kind {
+            case .meter: meterWallHit = hit
+            case .panel: panelWallHit = hit
+            default: break
             }
         }
 
@@ -688,6 +753,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             guard let hit else { return nil }
             let column = hit.worldTransform.columns.3
             return SIMD3(column.x, column.y, column.z)
+        }
+
+        private func wallHit(in arView: ARView, at point: CGPoint) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
+            // Prefer real plane geometry so the meter/panel snaps to the actual detected wall.
+            guard let hit = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .vertical).first else {
+                return nil
+            }
+            let column = hit.worldTransform.columns.3
+            let position = SIMD3<Float>(column.x, column.y, column.z)
+            var normal = SIMD3<Float>(0, 0, 1)
+            if let planeAnchor = hit.anchor as? ARPlaneAnchor {
+                // The plane's local +Y in world space is the outward normal for a vertical ARPlaneAnchor.
+                let up = planeAnchor.transform * SIMD4<Float>(0, 1, 0, 0)
+                normal = SIMD3(up.x, up.y, up.z)
+                let len = simd_length(normal)
+                if len > 0.0001 { normal /= len }
+            }
+            return (position, normal)
         }
 
         private func makeSnapshot() -> PlacementSceneSnapshot {
@@ -700,6 +783,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             }
             if let meterMarker {
                 snapshot.meterPosition = PlacementAnchor(grounded(meterMarker.position(relativeTo: nil)))
+            }
+            if let meterWallHit {
+                snapshot.meterWallPosition = PlacementAnchor(meterWallHit.position)
+                snapshot.meterWallNormal = PlacementAnchor(meterWallHit.normal)
+                // Fall back to projecting the wall X/Z as the ground position when the user only tapped the wall.
+                if snapshot.meterPosition == nil {
+                    snapshot.meterPosition = PlacementAnchor(SIMD3(meterWallHit.position.x, meterWallHit.position.y, meterWallHit.position.z))
+                }
+            }
+            if let panelMarker {
+                snapshot.panelPosition = PlacementAnchor(grounded(panelMarker.position(relativeTo: nil)))
+            }
+            if let panelWallHit {
+                snapshot.panelWallPosition = PlacementAnchor(panelWallHit.position)
+                snapshot.panelWallNormal = PlacementAnchor(panelWallHit.normal)
+                if snapshot.panelPosition == nil {
+                    snapshot.panelPosition = PlacementAnchor(SIMD3(panelWallHit.position.x, panelWallHit.position.y, panelWallHit.position.z))
+                }
             }
             if let gasMarker {
                 snapshot.gasMeterPosition = PlacementAnchor(grounded(gasMarker.position(relativeTo: nil)))

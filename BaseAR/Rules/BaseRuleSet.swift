@@ -88,7 +88,7 @@ enum BaseRuleSet {
             if session.placement.footprintClearAttested == true {
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested the \(side) ft × \(side) ft pad is clear. Not a measurement.")
             }
-            return .unknown("The preview draws a \(side) ft × \(side) ft pad. Clearance inside that pad was not measured or attested.")
+            return .unknown("The preview draws a \(side) ft × \(side) ft pad. Clearance inside that pad was not measured from the scan.")
         }
     )
 
@@ -170,26 +170,26 @@ enum BaseRuleSet {
                 return .unknown("Same-wall check needs a wall tap on both the meter and the panel.")
             }
             return same
-                ? .pass("The meter and panel wall taps landed on parallel walls.")
-                : .conflict("The meter and panel wall taps landed on walls that face different directions.")
+                ? .pass("The meter and panel wall taps face the same direction and lie on the same wall.")
+                : .conflict("The meter and panel wall taps are not on the same wall.")
         }
     )
 
     private static let transferSwitchSpace = EligibilityRule(
         id: "transfer-switch-space",
         title: "Transfer switch beside the meter",
-        requirement: "Leave space for a transfer switch on the wall beside the meter.",
+        requirement: "Leave a 13 in wide by about 3 ft tall space on the wall beside the meter, with 30 in of clearance out from the wall.",
         isRequired: true,
         evaluate: { session in
             if let observed = session.placement.transferSwitchClearanceObserved {
                 return observed
-                    ? .pass("Transfer-switch space beside the meter was measured as available.")
-                    : .conflict("Transfer-switch space beside the meter was measured as blocked.")
+                    ? .pass("The wall beside the meter was measured clear for a transfer switch (13 in wide, about 3 ft tall, 30 in out from the wall).")
+                    : .conflict("The wall beside the meter was measured as blocked for the transfer switch.")
             }
             if session.placement.transferSwitchSpaceAttested == true {
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested transfer-switch space beside the meter is available. Not a measurement.")
             }
-            return .unknown("Space for a transfer switch beside the meter was not measured or attested.")
+            return .unknown("Space for a transfer switch beside the meter was not measured. Without a mesh scan it stays unknown.")
         }
     )
 
@@ -200,11 +200,11 @@ enum BaseRuleSet {
         isRequired: true,
         evaluate: { session in
             guard let clear = session.placement.frontWorkingSpaceIsClear else {
-                return .unknown("The working-space overlay has not been explicitly confirmed clear or blocked.")
+                return .unknown("Clearance in the 30 × 36 in working space was not measured from the scan.")
             }
             return clear
-                ? .pass("The positioned 30 × 36 in overlay was explicitly confirmed clear.")
-                : .conflict("The positioned 30 × 36 in overlay was explicitly confirmed blocked.")
+                ? .pass("The 30 × 36 in working space was measured clear.")
+                : .conflict("The 30 × 36 in working space was measured as blocked.")
         }
     )
 

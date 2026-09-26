@@ -642,10 +642,10 @@ private struct HomeInformationView: View {
                             store.locationStatusMessage == nil ? "Use current location" : "Try location again",
                             systemImage: "location.fill"
                         )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(store.isRequestingPropertyLocation)
                 }
                 Text(SurveySession.locationDisclaimer)

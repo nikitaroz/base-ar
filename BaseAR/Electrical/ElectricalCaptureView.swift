@@ -265,6 +265,7 @@ struct ElectricalCaptureView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             Text("Point at the number. Accepting it saves the photo too. Confirm the value before you leave.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -276,6 +277,7 @@ struct ElectricalCaptureView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.large)
             Text(unavailableText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)

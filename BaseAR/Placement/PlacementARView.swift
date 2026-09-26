@@ -261,13 +261,13 @@ struct PlacementARView: View {
                 onContinue()
             } label: {
                 Text("Done")
-                    .frame(maxWidth: 100)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
         }
         .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var warmingOverlay: some View {

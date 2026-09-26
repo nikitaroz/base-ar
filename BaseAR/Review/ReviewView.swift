@@ -171,6 +171,7 @@ struct ReviewView: View {
             Label(title, systemImage: symbol)
                 .font(.headline)
         }
+        .tint(.primary)
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }

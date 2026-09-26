@@ -177,11 +177,12 @@ struct EquipmentScanFrame: Sendable {
     }
 }
 
-/// Copies AR frames and runs the detector off the session callback. The latest packet is drained on the main thread.
+/// Copies AR frames on the session callback and runs the detector on a background queue. The latest packet is drained on the main thread.
 final class EquipmentScanBridge: @unchecked Sendable {
     let detector = YOLOEquipmentDetector()
     private let gate = OSAllocatedUnfairLock(initialState: Gate())
     private let latest = OSAllocatedUnfairLock<EquipmentScanFrame?>(initialState: nil)
+    private let inference = DispatchQueue(label: "BaseAR.equipment-scan", qos: .userInitiated)
 
     private struct Gate {
         var enabled = false
@@ -245,22 +246,32 @@ final class EquipmentScanBridge: @unchecked Sendable {
             displayTY: transform.ty,
             depth: EquipmentPixelBuffer.depthSample(from: frame.smoothedSceneDepth ?? frame.sceneDepth)
         )
-        var packet = geometry
-        packet.detections = detector.detect(in: pixels, orientation: visionOrientation)
-        let finished = packet
-        latest.withLock { $0 = finished }
-        gate.withLock { $0.busy = false }
+        // The session delegate runs on the main queue. Only the copies above touch the frame; inference runs here.
+        let copied = CopiedPixels(buffer: pixels)
+        inference.async { [self] in
+            var packet = geometry
+            packet.detections = detector.detect(in: copied.buffer, orientation: visionOrientation)
+            let finished = packet
+            latest.withLock { $0 = finished }
+            gate.withLock { $0.busy = false }
+        }
     }
 
     private static func visionOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
         switch interface {
         case .portrait: .right
         case .portraitUpsideDown: .left
-        case .landscapeLeft: .up
-        case .landscapeRight: .down
+        // capturedImage is upright in landscapeRight (home side on the right).
+        case .landscapeRight: .up
+        case .landscapeLeft: .down
         default: .right
         }
     }
+}
+
+/// The copy is owned by one inference job, so handing it across queues is safe.
+private struct CopiedPixels: @unchecked Sendable {
+    let buffer: CVPixelBuffer
 }
 
 enum EquipmentPixelBuffer {

@@ -229,6 +229,11 @@ struct ReviewView: View {
             Text("GPS is the phone’s property fix, not the battery position. AR measurements are preliminary estimates.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            if store.placementController?.hasExportableMesh == true {
+                Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Blue is wall, green is floor, gray is ceiling, orange is other.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -310,7 +315,9 @@ struct ReviewView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            Text("Shares the current responses, photos, and missing-item list. The survey is also saved locally as survey.json.")
+            Text(store.placementController?.hasExportableMesh == true
+                ? "Shares the current responses, photos, missing-item list, and scene.ply. The survey is also saved locally as survey.json."
+                : "Shares the current responses, photos, and missing-item list. The survey is also saved locally as survey.json. A LiDAR mesh is included as scene.ply after the placement scan captures one.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

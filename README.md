@@ -75,7 +75,7 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 - Answering "No gas meter" is saved in `survey.json` (`gasMeterNotPresent`) and passes the gas-clearance check.
 - The 30 × 36 in working space, the 3 × 3 ft pad, and the transfer-switch reservation are scored from the mesh after the battery is placed. They do not have their own screens. Whether the meter and panel share a wall comes from the two wall hits.
 - Review is reachable from the hub (and after placement). It leads with grouped next actions, then provides collapsible property, electrical, placement, and rule details with edit links.
-- A local `survey.json` is saved next to the photos and can be shared from the review screen.
+- A local `survey.json` is saved next to the photos and can be shared from the review screen. When the phone reconstructed a LiDAR mesh, that share also includes `scene.ply` (meters, AR world, colored by surface class). Open it in MeshLab, CloudCompare, or Blender.
 - The battery preview is green only when every required check passed on measured evidence. Unknown stays amber. A measured conflict turns it red.
 
 Siting numbers follow Base’s published guidance: Austin main breakers 150–200A, 200A when the home has solar or two batteries, a 3 ft × 3 ft footprint, within 20 ft of the meter, within 1 ft of the wall, at least 3 ft from a gas meter, and space for a transfer switch beside the meter.

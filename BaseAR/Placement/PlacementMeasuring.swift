@@ -60,6 +60,9 @@ enum TransferSwitchReservation {
 struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
+    /// Wall-side proposal shown before Confirm. Measurements for the live preview copy this into `batteryPosition`.
+    var suggestedBatteryPosition: PlacementAnchor?
+    var suggestedBatteryYawRadians: Float = 0
     var meterPosition: PlacementAnchor?
     /// Wall hit at the meter itself, when the user has tapped the meter on a vertical plane. Y drives meter height.
     var meterWallPosition: PlacementAnchor?

@@ -246,8 +246,12 @@ final class SurveyStore {
     func exportForSharing() {
         refreshAssessment()
         do {
+            session.placement.pointCloudFilename = try writePointCloud()
             let jsonURL = try exporter.write(session, to: directory)
             var urls = [jsonURL]
+            if let name = session.placement.pointCloudFilename {
+                urls.append(directory.appendingPathComponent(name))
+            }
             for name in [
                 session.electrical.meterPhotoFilename,
                 session.electrical.breakerPhotoFilename,
@@ -272,6 +276,20 @@ final class SurveyStore {
         session.ruleResults = assessment.results
         session.missingInformation = assessment.missingInformation
         session.placementTone = assessment.placementTone
+    }
+
+    /// Latest LiDAR mesh as `scene.ply`. Removes a stale file when the scan has no mesh.
+    private func writePointCloud() throws -> String? {
+        let name = "scene.ply"
+        let url = directory.appendingPathComponent(name)
+        guard let data = placementController?.pointCloudPLYData() else {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            return nil
+        }
+        try data.write(to: url, options: .atomic)
+        return name
     }
 
     private func write(_ data: Data?, filename: String) -> String? {

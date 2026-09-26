@@ -221,6 +221,8 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var meterAndPanelShareWall: Bool?
     var workingSpacePosition: PlacementAnchor?
     var workingSpaceYawRadians: Float?
+    /// LiDAR mesh written next to survey.json. Nil when the phone had no reconstructed mesh.
+    var pointCloudFilename: String?
 
     init() {}
 }

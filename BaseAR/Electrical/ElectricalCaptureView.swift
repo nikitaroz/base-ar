@@ -100,19 +100,18 @@ struct ElectricalCaptureView: View {
 
     private var meterSection: some View {
         Section("Round electric meter") {
-            Text("Fill the frame with the round meter and make sure the meter number is sharp and readable.")
+            Text(capturePrompt(
+                scan: "Scan the round meter. It reads the number and saves a photo.",
+                photo: "Take a photo of the round meter with the meter number sharp and readable."
+            ))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            photoRow(
+            captureControl(
                 image: store.meterImage,
-                emptyTitle: "Take meter photo",
-                retakeTitle: "Retake photo",
-                slot: .meter
-            )
-            scanControl(
-                title: "Scan meter number",
+                scanTitle: "Scan meter",
+                slot: .meter,
                 target: .meterNumber,
-                unavailableText: "Live scan needs an iPhone camera. A photo can still fill the number."
+                unavailableText: "Live scan needs an iPhone camera. The photo can still fill the number."
             )
             VStack(alignment: .leading, spacing: 6) {
                 Text("Meter number")
@@ -136,19 +135,18 @@ struct ElectricalCaptureView: View {
 
     private var breakerSection: some View {
         Section("Main disconnect / breaker") {
-            Text("Capture the main disconnect with the number printed on the main breaker clearly visible.")
+            Text(capturePrompt(
+                scan: "Scan the main breaker. It reads the amperage and saves a photo.",
+                photo: "Take a photo of the main disconnect with the number on the main breaker clearly visible."
+            ))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            photoRow(
+            captureControl(
                 image: store.breakerImage,
-                emptyTitle: "Take breaker photo",
-                retakeTitle: "Retake photo",
-                slot: .breaker
-            )
-            scanControl(
-                title: "Scan breaker amperage",
+                scanTitle: "Scan breaker",
+                slot: .breaker,
                 target: .breakerAmperage,
-                unavailableText: "Live scan needs an iPhone camera. A photo can still fill the rating."
+                unavailableText: "Live scan needs an iPhone camera. The photo can still fill the rating."
             )
             VStack(alignment: .leading, spacing: 6) {
                 Text("Main breaker amperage")
@@ -237,20 +235,47 @@ struct ElectricalCaptureView: View {
         }
     }
 
+    private func capturePrompt(scan: String, photo: String) -> String {
+        LiveLabelScanner.isSupported ? scan : photo
+    }
+
     @ViewBuilder
-    private func scanControl(title: String, target: LabelScanTarget, unavailableText: String) -> some View {
+    private func captureControl(
+        image: UIImage?,
+        scanTitle: String,
+        slot: PhotoSlot,
+        target: LabelScanTarget,
+        unavailableText: String
+    ) -> some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(maxWidth: .infinity)
+                .frame(height: 180)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .accessibilityLabel("Saved photo")
+        }
         if LiveLabelScanner.isSupported {
             Button {
                 beginScan(target)
             } label: {
-                Label(title, systemImage: "text.viewfinder")
+                Label(image == nil ? scanTitle : "Scan again", systemImage: "text.viewfinder")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            Text("Highlights the number in a card-shaped frame and saves that photo. Confirm the value before you leave.")
+            .buttonStyle(.borderedProminent)
+            Text("Point at the number. Accepting it saves the photo too. Confirm the value before you leave.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         } else {
+            Button {
+                requestPhoto(for: slot)
+            } label: {
+                Label(image == nil ? "Take photo" : "Retake photo", systemImage: "camera.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
             Text(unavailableText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -260,26 +285,5 @@ struct ElectricalCaptureView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-    }
-
-    @ViewBuilder
-    private func photoRow(image: UIImage?, emptyTitle: String, retakeTitle: String, slot: PhotoSlot) -> some View {
-        if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(maxWidth: .infinity)
-                .frame(height: 180)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityLabel(retakeTitle)
-        }
-        Button {
-            requestPhoto(for: slot)
-        } label: {
-            Label(image == nil ? emptyTitle : retakeTitle, systemImage: "camera.fill")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.borderedProminent)
     }
 }

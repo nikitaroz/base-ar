@@ -154,14 +154,12 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         hintLabel.numberOfLines = 0
 
         var useConfig = UIButton.Configuration.filled()
-        useConfig.title = "Use this number"
+        useConfig.title = "Save photo"
         useConfig.baseBackgroundColor = .white
         useConfig.baseForegroundColor = .black
         useConfig.cornerStyle = .large
         useConfig.buttonSize = .large
         useButton.configuration = useConfig
-        useButton.isEnabled = false
-        useButton.alpha = 0.45
         useButton.addTarget(self, action: #selector(useTapped), for: .touchUpInside)
 
         var cancelConfig = UIButton.Configuration.plain()
@@ -293,8 +291,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             candidateSince = Date()
             didHaptic = false
             lockedRead = nil
-            useButton.isEnabled = false
-            useButton.alpha = 0.45
+            setUseTitle("Save photo")
             candidateLabel.text = read.display
             hintLabel.text = "Hold steady…"
             return
@@ -304,8 +301,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         lockedRead = read
         candidateLabel.text = read.display
         hintLabel.text = "Tap a highlighted number to pick a different one."
-        useButton.isEnabled = true
-        useButton.alpha = 1
+        setUseTitle("Use this number")
         if !didHaptic {
             didHaptic = true
             haptic.impactOccurred()
@@ -320,8 +316,13 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     }
 
     @objc private func useTapped() {
-        guard let lockedRead else { return }
         finish(lockedRead)
+    }
+
+    private func setUseTitle(_ title: String) {
+        var config = useButton.configuration ?? .filled()
+        config.title = title
+        useButton.configuration = config
     }
 
     @objc private func cancelTapped() {
@@ -330,14 +331,15 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         onCancel()
     }
 
-    private func finish(_ read: LabelScanRead) {
+    private func finish(_ read: LabelScanRead?) {
         guard !didFinish else { return }
         didFinish = true
         useButton.isEnabled = false
         candidateLabel.text = "Saving photo…"
+        let accepted = read ?? LabelScanRead(meterNumber: nil, amperage: nil)
         Task {
             let image = try? await scanner.capturePhoto()
-            onAccept(read, image)
+            onAccept(accepted, image)
         }
     }
 }

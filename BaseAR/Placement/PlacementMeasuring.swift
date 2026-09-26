@@ -58,6 +58,10 @@ enum TransferSwitchReservation {
 }
 
 struct PlacementSceneSnapshot: Sendable, Equatable {
+    var scanID: UUID = UUID()
+    var revision: UInt64 = 0
+    var batteryModelID: String = "base-core"
+    var trackingIsNormal: Bool = false
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
     var meterPosition: PlacementAnchor?
@@ -139,22 +143,16 @@ extension PlacementMeasuring {
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
         updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
-        // A missing mesh leaves the previous measured result in place. Yes/No answers are not a measurement.
-        if let footprint = measured.footprintIsClear {
-            updated.footprintIsClear = footprint
-        }
+        // Unknown current evidence must replace any previous result.
+        updated.footprintIsClear = measured.footprintIsClear
         updated.batteryPosition = measured.batteryPosition
         updated.meterPosition = measured.meterPosition
         updated.panelPosition = measured.panelPosition
         updated.gasMeterPosition = measured.gasMeterPosition
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
-        if let working = measured.frontWorkingSpaceIsClear {
-            updated.frontWorkingSpaceIsClear = working
-        }
-        if let transfer = measured.transferSwitchClearanceObserved {
-            updated.transferSwitchClearanceObserved = transfer
-        }
+        updated.frontWorkingSpaceIsClear = measured.frontWorkingSpaceIsClear
+        updated.transferSwitchClearanceObserved = measured.transferSwitchClearanceObserved
         updated.meterAndPanelShareWall = measured.meterAndPanelShareWall
         updated.workingSpacePosition = measured.workingSpacePosition
         updated.workingSpaceYawRadians = measured.workingSpaceYawRadians
@@ -171,8 +169,10 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     var sameWallPlaneToleranceMeters: Float = 0.30
 
     func measure(_ snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
+        let evidenceIsCurrent = snapshot.trackingIsNormal
+            && BatteryCatalog.all.contains { $0.id == snapshot.batteryModelID }
         let meterFeet = confirmed(.batteryToMeter, in: snapshot)?.distanceFeet
-            ?? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
+            ?? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition ?? snapshot.meterWallPosition)
         let gasFeet = confirmed(.batteryToGasMeter, in: snapshot)?.distanceFeet
             ?? horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
         let wallFeet = wallDistanceFeet(snapshot)
@@ -183,25 +183,25 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let transfer = transferSwitchClearance(snapshot)
         return PlacementMeasurements(
             batteryPlaced: snapshot.batteryPosition != nil,
-            meterMarked: snapshot.meterPosition != nil,
+            meterMarked: snapshot.meterPosition != nil || snapshot.meterWallPosition != nil,
             gasMeterMarked: snapshot.gasMeterPosition != nil,
-            panelMarked: snapshot.panelPosition != nil,
+            panelMarked: snapshot.panelPosition != nil || snapshot.panelWallPosition != nil,
             lidarMeshAvailable: snapshot.lidarMeshAvailable,
-            distanceToMeterFeet: meterFeet,
-            distanceToWallFeet: wallFeet,
-            distanceToGasMeterFeet: gasFeet,
-            meterHeightFeet: heightFeet,
-            meterAndPanelSameWall: sameWall,
-            footprintIsClear: footprint,
+            distanceToMeterFeet: evidenceIsCurrent ? meterFeet : nil,
+            distanceToWallFeet: evidenceIsCurrent ? wallFeet : nil,
+            distanceToGasMeterFeet: evidenceIsCurrent ? gasFeet : nil,
+            meterHeightFeet: evidenceIsCurrent ? heightFeet : nil,
+            meterAndPanelSameWall: evidenceIsCurrent ? sameWall : nil,
+            footprintIsClear: evidenceIsCurrent ? footprint : nil,
             batteryPosition: snapshot.batteryPosition,
             meterPosition: snapshot.meterPosition,
             panelPosition: snapshot.panelPosition,
             gasMeterPosition: snapshot.gasMeterPosition,
             batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians,
-            confirmedMeasurements: snapshot.confirmedMeasurements,
-            frontWorkingSpaceIsClear: working,
-            transferSwitchClearanceObserved: transfer,
-            meterAndPanelShareWall: sameWall,
+            confirmedMeasurements: evidenceIsCurrent ? snapshot.confirmedMeasurements.filter(isMeasured) : [],
+            frontWorkingSpaceIsClear: evidenceIsCurrent ? working : nil,
+            transferSwitchClearanceObserved: evidenceIsCurrent ? transfer : nil,
+            meterAndPanelShareWall: evidenceIsCurrent ? sameWall : nil,
             workingSpacePosition: snapshot.workingSpacePosition,
             workingSpaceYawRadians: snapshot.workingSpacePosition == nil ? nil : snapshot.workingSpaceYawRadians
         )
@@ -209,11 +209,13 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Live 1 ft check. Classified wall faces win; a real vertical plane is the fallback. Estimated-plane tape never counts.
     func wallClearance(in snapshot: PlacementSceneSnapshot) -> WallClearanceHit? {
-        guard let battery = snapshot.batteryPosition?.simd else { return nil }
-        if let meshHit = meshWallHit(battery: battery, yaw: snapshot.batteryYawRadians, samples: snapshot.classifiedMesh) {
+        guard snapshot.trackingIsNormal,
+              let model = BatteryCatalog.all.first(where: { $0.id == snapshot.batteryModelID }),
+              let battery = snapshot.batteryPosition?.simd else { return nil }
+        if let meshHit = meshWallHit(battery: battery, yaw: snapshot.batteryYawRadians, samples: snapshot.classifiedMesh, model: model) {
             return meshHit
         }
-        return planeWallHit(battery: battery, yaw: snapshot.batteryYawRadians, planes: snapshot.verticalPlanes)
+        return planeWallHit(battery: battery, yaw: snapshot.batteryYawRadians, planes: snapshot.verticalPlanes, model: model)
     }
 
     func transferSwitchBox(in snapshot: PlacementSceneSnapshot) -> TransferSwitchBox? {
@@ -231,29 +233,30 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     }
 
     private func confirmed(_ kind: PlacementMeasurementKind, in snapshot: PlacementSceneSnapshot) -> ConfirmedPlacementMeasurement? {
-        snapshot.confirmedMeasurements.first { $0.kind == kind }
+        snapshot.confirmedMeasurements.first { $0.kind == kind && isMeasured($0) }
     }
 
-    /// Automatic wall clearance wins. A saved estimated-plane tape does not fill in when the scan has no real wall.
+    private func isMeasured(_ measurement: ConfirmedPlacementMeasurement) -> Bool {
+        measurement.captureMethod != .estimatedPlane
+            && measurement.start.captureMethod != .estimatedPlane
+            && measurement.end.captureMethod != .estimatedPlane
+            && measurement.distanceFeet.isFinite && measurement.distanceFeet >= 0
+    }
+
+    /// A saved tape cannot fill in when the live scan no longer has a real wall.
     private func wallDistanceFeet(_ snapshot: PlacementSceneSnapshot) -> Double? {
-        if let automatic = wallClearance(in: snapshot)?.distanceFeet {
-            return automatic
-        }
-        guard let saved = confirmed(.batteryToWall, in: snapshot), saved.captureMethod != .estimatedPlane else {
-            return nil
-        }
-        return saved.distanceFeet
+        wallClearance(in: snapshot)?.distanceFeet
     }
 
     /// Pad clearance from classified faces. Floor and the wall the battery sits against are not obstacles. No mesh stays unknown.
     private func footprintClearance(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard snapshot.lidarMeshAvailable, let battery = snapshot.batteryPosition?.simd else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: battery, radius: 2) else { return nil }
         let host = hostWall(
             battery: battery,
             yaw: snapshot.batteryYawRadians,
             samples: snapshot.classifiedMesh,
-            planes: snapshot.verticalPlanes
+            planes: snapshot.verticalPlanes,
+            model: BatteryCatalog.model(for: snapshot.batteryModelID)
         )
         let blocked = snapshot.classifiedMesh.contains { sample in
             guard occupiesVolume(sample, ignoring: host) else { return false }
@@ -264,10 +267,11 @@ struct CorePlacementMeasurer: PlacementMeasuring {
                 halfWidth: BatteryGeometry.footprintMeters / 2,
                 halfDepth: BatteryGeometry.footprintMeters / 2,
                 minHeight: 0.02,
-                maxHeight: BatteryGeometry.heightMeters
+                maxHeight: BatteryCatalog.model(for: snapshot.batteryModelID).heightMeters
             )
         }
-        return !blocked
+        // Face samples can show an obstacle, not prove complete coverage of free space.
+        return blocked ? false : nil
     }
 
     /// The positioned 30 × 36 in slab. Floor and the host wall are ignored. Yes/No is not consulted.
@@ -275,12 +279,12 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         guard snapshot.lidarMeshAvailable,
               let battery = snapshot.batteryPosition?.simd,
               let center = snapshot.workingSpacePosition?.simd else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: center, radius: 2) else { return nil }
         let host = hostWall(
             battery: battery,
             yaw: snapshot.batteryYawRadians,
             samples: snapshot.classifiedMesh,
-            planes: snapshot.verticalPlanes
+            planes: snapshot.verticalPlanes,
+            model: BatteryCatalog.model(for: snapshot.batteryModelID)
         )
         let meterWall = wallFrame(position: snapshot.meterWallPosition, normal: snapshot.meterWallNormal)
         let blocked = snapshot.classifiedMesh.contains { sample in
@@ -295,13 +299,12 @@ struct CorePlacementMeasurer: PlacementMeasuring {
                 maxHeight: 2
             )
         }
-        return !blocked
+        return blocked ? false : nil
     }
 
     /// 13 in wide by about 3 ft tall beside the meter, 30 in out from the wall. No mesh stays unknown.
     private func transferSwitchClearance(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard snapshot.lidarMeshAvailable, let frame = transferSwitchFrame(snapshot) else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: frame.center, radius: 2) else { return nil }
         let mounting = WallFrame(point: frame.wallPoint, normal: frame.normal)
         let blocked = snapshot.classifiedMesh.contains { sample in
             guard occupiesVolume(sample, ignoring: mounting) else { return false }
@@ -310,7 +313,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
                 && abs(simd_dot(delta, frame.up)) <= frame.halfHeight
                 && abs(simd_dot(delta, frame.normal)) <= frame.halfOut
         }
-        return !blocked
+        return blocked ? false : nil
     }
 
     private func horizontalFeet(_ origin: PlacementAnchor?, _ target: PlacementAnchor?) -> Double? {
@@ -338,7 +341,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return separation <= sameWallPlaneToleranceMeters
     }
 
-    private func meshWallHit(battery: SIMD3<Float>, yaw: Float, samples: [ClassifiedMeshSample]) -> WallClearanceHit? {
+    private func meshWallHit(battery: SIMD3<Float>, yaw: Float, samples: [ClassifiedMeshSample], model: BatteryModel) -> WallClearanceHit? {
         var best: (clearance: Float, edge: SIMD3<Float>, wallPoint: SIMD3<Float>, normal: SIMD3<Float>)?
         for sample in samples where sample.faceClass == .wall {
             guard let normal = horizontalUnit(sample.normal) else { continue }
@@ -347,7 +350,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             guard dx * dx + dz * dz <= 25 else { continue }
             let height = sample.point.y - battery.y
             guard height > -0.4, height < 2.5 else { continue }
-            let edge = BatteryGeometry.nearestBasePoint(origin: battery, yaw: yaw, toward: sample.point)
+            let edge = BatteryGeometry.nearestBasePoint(origin: battery, yaw: yaw, toward: sample.point, model: model)
             let signed = simd_dot(edge - sample.point, normal)
             let inPlane = (edge - sample.point) - normal * signed
             let along = simd_length(SIMD3(inPlane.x, 0, inPlane.z))
@@ -369,8 +372,8 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Horizontal clearance from the battery's nearest bottom corner to a detected vertical plane.
     /// Walls are treated as reaching the ground: people usually scan a wall at chest height, well above the battery's base.
-    private func planeWallHit(battery: SIMD3<Float>, yaw: Float, planes: [PlaneSample]) -> WallClearanceHit? {
-        let corners = bottomCorners(origin: battery, yaw: yaw)
+    private func planeWallHit(battery: SIMD3<Float>, yaw: Float, planes: [PlaneSample], model: BatteryModel) -> WallClearanceHit? {
+        let corners = bottomCorners(origin: battery, yaw: yaw, model: model)
         let up = SIMD3<Float>(0, 1, 0)
         var best: (clearance: Float, edge: SIMD3<Float>, wallPoint: SIMD3<Float>, normal: SIMD3<Float>)?
         for plane in planes {
@@ -420,11 +423,11 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Nearest wall face, or the nearest detected plane when the mesh has no wall label.
     /// Occupancy ignores faces on this plane so the wall itself is not an obstacle.
-    private func hostWall(battery: SIMD3<Float>, yaw: Float, samples: [ClassifiedMeshSample], planes: [PlaneSample]) -> WallFrame? {
-        if let hit = meshWallHit(battery: battery, yaw: yaw, samples: samples) {
+    private func hostWall(battery: SIMD3<Float>, yaw: Float, samples: [ClassifiedMeshSample], planes: [PlaneSample], model: BatteryModel) -> WallFrame? {
+        if let hit = meshWallHit(battery: battery, yaw: yaw, samples: samples, model: model) {
             return WallFrame(point: hit.wallPoint, normal: hit.normal)
         }
-        if let hit = planeWallHit(battery: battery, yaw: yaw, planes: planes) {
+        if let hit = planeWallHit(battery: battery, yaw: yaw, planes: planes, model: model) {
             return WallFrame(point: hit.wallPoint, normal: hit.normal)
         }
         return nil
@@ -479,15 +482,6 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return abs(simd_dot(sample.point - wall.point, wall.normal)) < 0.20
     }
 
-    private func hasScan(_ samples: [ClassifiedMeshSample], around point: SIMD3<Float>, radius: Float) -> Bool {
-        let limit = radius * radius
-        return samples.contains { sample in
-            let dx = sample.point.x - point.x
-            let dz = sample.point.z - point.z
-            return dx * dx + dz * dz <= limit
-        }
-    }
-
     private func point(
         _ point: SIMD3<Float>,
         isInsideBoxAt origin: SIMD3<Float>,
@@ -508,10 +502,10 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return abs(localX) <= halfWidth && abs(localZ) <= halfDepth
     }
 
-    private func bottomCorners(origin: SIMD3<Float>, yaw: Float) -> [SIMD3<Float>] {
+    private func bottomCorners(origin: SIMD3<Float>, yaw: Float, model: BatteryModel) -> [SIMD3<Float>] {
         let rotation = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0))
-        let halfW = BatteryGeometry.widthMeters / 2
-        let halfD = BatteryGeometry.depthMeters / 2
+        let halfW = model.widthMeters / 2
+        let halfD = model.depthMeters / 2
         let locals = [
             SIMD3<Float>(halfW, 0, halfD),
             SIMD3<Float>(halfW, 0, -halfD),
@@ -547,19 +541,5 @@ extension PlacementMeasurementKind {
             let dz = Double(end.z - start.z)
             return (dx * dx + dz * dz).squareRoot() / 0.3048
         }
-    }
-}
-
-extension BatteryGeometry {
-    /// Closest point on the battery's base to `target`, on the ground under the battery.
-    static func nearestBasePoint(origin: SIMD3<Float>, yaw: Float, toward target: SIMD3<Float>) -> SIMD3<Float> {
-        let rotation = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0))
-        let local = rotation.inverse.act(target - origin)
-        let clamped = SIMD3<Float>(
-            min(max(local.x, -widthMeters / 2), widthMeters / 2),
-            0,
-            min(max(local.z, -depthMeters / 2), depthMeters / 2)
-        )
-        return origin + rotation.act(clamped)
     }
 }

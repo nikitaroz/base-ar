@@ -14,6 +14,7 @@ build/
 *.dSYM
 *.dSYM.zip
 xcuserdata/
+Config/Local.xcconfig
 
 # Swift Package Manager
 .build/
@@ -24,4 +25,3 @@ xcuserdata/
 
 # Local editor state
 .cursor/
-

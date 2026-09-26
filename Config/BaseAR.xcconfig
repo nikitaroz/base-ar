@@ -1,0 +1,5 @@
+// Shared defaults. Developers override these in the ignored Local.xcconfig.
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR
+
+#include? "Local.xcconfig"

@@ -84,3 +84,14 @@ Base’s product filters stay on the survey for a person to read. Renters are wa
 - `BaseAR/Location` — one-shot property location
 
 See `README.md` for device setup, what already runs, and what is still stubbed.
+
+## Cursor Cloud specific instructions
+
+Cloud agents run on Ubuntu. Xcode and the iOS Simulator are not available, so the iPhone UI, camera, AR placement, and Core Location flows cannot be launched here. Device and simulator builds stay on a Mac. The signing-free simulator command in `README.md` is that path.
+
+Swift 6.4 is on `PATH` (`swift`, `swiftc`), installed under `/opt/swift`. No package install, secrets, or background services are required.
+
+- Syntax-check the sources: `find BaseAR BaseARTests -name '*.swift' -print0 | xargs -0 swiftc -parse -swift-version 6`
+- Exercise the survey model, eligibility rules, and `survey.json` export: `./scripts/linux-survey-check.sh`
+
+That script compiles `SurveySession`, `BaseSurveyEvaluator`, and `JSONSurveyExporter` with small Linux stand-ins so the `UIKit` and `simd` imports resolve. It writes three surveys: an empty session stays `incomplete`, a 100A main breaker is `conflict`, and a fully measured session is `clear`. Dropping the footprint measurement keeps the tone `incomplete`. It does not run ARKit, the camera, or the SwiftUI screens.

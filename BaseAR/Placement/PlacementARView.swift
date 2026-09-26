@@ -317,7 +317,7 @@ struct PlacementARView: View {
             .controlSize(.large)
         }
         .padding(16)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var preflightScreen: some View {
@@ -389,24 +389,89 @@ struct PlacementARView: View {
                     .multilineTextAlignment(.center)
             }
             if let trackingMessage {
-                Text(trackingMessage)
+                Label(trackingMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.orange, in: RoundedRectangle(cornerRadius: 8))
                     .multilineTextAlignment(.center)
             } else if let equipmentMessage {
-                Text(equipmentMessage)
+                Label(equipmentMessage, systemImage: "viewfinder.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.orange, in: RoundedRectangle(cornerRadius: 8))
                     .multilineTextAlignment(.center)
             }
             if let statusMessage {
-                Text(statusMessage)
+                Label(statusMessage, systemImage: "xmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.red, in: RoundedRectangle(cornerRadius: 8))
                     .multilineTextAlignment(.center)
             }
-            if cue == .stepBack || cue == .stepBackFromPanel {
-                Button("Can’t step back further") { store.placementController?.skipStepBack() }
+            stepControls
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var stepControls: some View {
+        switch step {
+        case .scan where manualMark == nil:
+            scanControls
+        case .finish:
+            finishControls
+        default:
+            aimControls
+        }
+    }
+
+    private var aimControls: some View {
+        VStack(spacing: 8) {
+            HStack {
+                if step != .scan || manualMark != nil {
+                    Button("Back", action: goBack)
+                        .buttonStyle(.bordered)
+                        .frame(minWidth: 72, minHeight: 44)
+                } else {
+                    Color.clear.frame(width: 72, height: 44)
+                        .allowsHitTesting(false)
+                }
+                Spacer()
+                VStack(spacing: 4) {
+                    Button(action: primaryAction) {
+                        Image(systemName: primaryIsAdvance ? "checkmark" : "plus")
+                            .font(.title2.weight(.semibold))
+                            .frame(width: 68, height: 68)
+                            .background(Color.primary, in: Circle())
+                            .foregroundStyle(Color(uiColor: .systemBackground))
+                    }
+                    .buttonStyle(.plain)
+                    .contentShape(Circle())
+                    .accessibilityLabel(primaryIsAdvance ? "Next" : "Place point")
+                    Text(primaryIsAdvance ? "Next" : "Place")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if canUndoPoint {
+                    Button("Undo") { store.placementController?.undoMeasurementPoint() }
+                        .buttonStyle(.bordered)
+                        .frame(minWidth: 72, minHeight: 44)
+                } else {
+                    Color.clear.frame(width: 72, height: 44)
+                        .allowsHitTesting(false)
+                }
+            }
+            if let secondaryTitle {
+                Button(secondaryTitle, action: secondaryAction)
                     .buttonStyle(.bordered)
                     .controlSize(.large)
             }

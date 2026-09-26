@@ -244,6 +244,12 @@ struct PlacementARView: View {
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
+                if !coachingIsActive {
+                    VStack(spacing: 8) {
+                        // Battery model chip picker removed: single-model simplified UX
+                    }
+                    .padding(.top, 8)
+                }
             }
             if !coachingIsActive {
                 bottomBar
@@ -404,17 +410,22 @@ struct PlacementARView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
             }
-            if meterIsMarked || panelIsMarked {
-                HStack(spacing: 8) {
-                    if meterIsMarked {
-                        Button("Clear meter") { store.placementController?.clearMeterForRescan() }
-                            .buttonStyle(.bordered)
-                    }
-                    if panelIsMarked {
-                        Button("Clear panel") { store.placementController?.clearPanelForRescan() }
-                            .buttonStyle(.bordered)
-                    }
+        }
+    }
+
+    private var scanControls: some View {
+        VStack(spacing: 8) {
+            Button("Next", action: goForward)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            // Secondary manual controls moved below primary action
+            if let missedTarget {
+                Button(missedTarget == .meter ? "Mark meter yourself" : "Mark panel yourself") {
+                    manualMark = missedTarget
                 }
+                .font(.footnote)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
             }
             Button {
                 finishScan()
@@ -580,38 +591,38 @@ struct PlacementARView: View {
     }
 
     private var instruction: String {
-        switch cue {
-        case .findMeter:
-            "Point at the electric meter, the round glass gauge on the outside wall."
-        case .stepBack:
-            "Step back about 10 steps. Look left, right, and along the wall so we can measure the area around the meter."
-        case .findPanel:
-            "Point at the breaker panel, the metal box with the rows of switches."
-        case .stepBackFromPanel:
-            "Step back about 10 steps. Look left, right, and along the wall the breaker box sits on."
-        case .ready:
-            "That covers the meter and the breaker box. Tap Done."
+        switch step {
+        case .scan:
+            if manualMark == .meter {
+                return meterIsMarked
+                    ? "Meter marked. Tap Next, or tap again to move it."
+                    : "Point at the ground under the meter, then at the meter on the wall."
+            }
+            if manualMark == .panel {
+                return panelIsMarked
+                    ? "Panel marked. Tap Next, or tap again to move it."
+                    : "Point at the ground under the breaker panel, then at the panel on the wall."
+            }
+            return scanInstruction
+        case .gas:
+            return scene.gasMeterPosition == nil
+                ? "Point the dot at the gas meter, or say there isn’t one."
+                : "Gas meter marked. Tap Next when ready."
+        case .battery:
+            return scene.batteryPosition == nil
+                ? "Point the dot at the ground, then tap +. Distances are measured from this spot."
+                : "Drag to move. Twist two fingers to turn."
+        case .finish:
+            return "Save this placement for review."
         }
     }
 
-    private var progressLine: String? {
-        switch cue {
-        case .stepBack:
-            guide.progressLine(
-                steps: guide.meterSteps,
-                left: guide.meterLookedLeft,
-                right: guide.meterLookedRight,
-                along: guide.meterLookedAlong
-            )
-        case .stepBackFromPanel:
-            guide.progressLine(
-                steps: guide.panelSteps,
-                left: guide.panelLookedLeft,
-                right: guide.panelLookedRight,
-                along: guide.panelLookedAlong
-            )
-        case .findMeter, .findPanel, .ready:
-            nil
+    private var scanInstruction: String {
+        switch (meterIsMarked, panelIsMarked) {
+        case (false, false): "Point the camera at the electric meter, then the breaker panel."
+        case (true, false): "Point at the breaker panel."
+        case (false, true): "Point at the electric meter."
+        case (true, true): "Got it! Tap Next."
         }
     }
 
@@ -3099,6 +3110,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         private func installMeshDraw(id: UUID, draw: MeshDrawBuffers) {
+            // Mesh visualization disabled to keep camera view clear.
+            // Classification data still used for placement rules; visual feedback through battery color only.
             let anchor: AnchorEntity
             if let existing = meshVisuals[id] {
                 anchor = existing
@@ -3111,9 +3124,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meshVisuals[id] = created
                 anchor = created
             }
-            addMeshPart(draw.positions, draw.wall, .systemBlue, opacity: 0.34, to: anchor)
-            addMeshPart(draw.positions, draw.floor, .systemGreen, opacity: 0.18, to: anchor)
-            addMeshPart(draw.positions, draw.other, .systemOrange, opacity: 0.24, to: anchor)
+            // Disabled: mesh floods camera view. Classification still runs for clearance checks.
+            // addMeshPart(draw.positions, draw.wall, .systemBlue, opacity: 0.34, to: anchor)
+            // addMeshPart(draw.positions, draw.floor, .systemGreen, opacity: 0.18, to: anchor)
+            // addMeshPart(draw.positions, draw.other, .systemOrange, opacity: 0.24, to: anchor)
         }
 
         private func addMeshPart(

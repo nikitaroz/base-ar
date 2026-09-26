@@ -60,6 +60,8 @@ enum TransferSwitchReservation {
 struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
+    /// True when the battery was auto-placed or camera-relative preview; false when deliberately placed by user.
+    var batteryIsPreview: Bool = false
     var meterPosition: PlacementAnchor?
     /// Wall hit at the meter itself, when the user has tapped the meter on a vertical plane. Y drives meter height.
     var meterWallPosition: PlacementAnchor?
@@ -139,22 +141,15 @@ extension PlacementMeasuring {
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
         updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
-        // A missing mesh leaves the previous measured result in place. Yes/No answers are not a measurement.
-        if let footprint = measured.footprintIsClear {
-            updated.footprintIsClear = footprint
-        }
+        updated.footprintIsClear = measured.footprintIsClear
         updated.batteryPosition = measured.batteryPosition
         updated.meterPosition = measured.meterPosition
         updated.panelPosition = measured.panelPosition
         updated.gasMeterPosition = measured.gasMeterPosition
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
-        if let working = measured.frontWorkingSpaceIsClear {
-            updated.frontWorkingSpaceIsClear = working
-        }
-        if let transfer = measured.transferSwitchClearanceObserved {
-            updated.transferSwitchClearanceObserved = transfer
-        }
+        updated.frontWorkingSpaceIsClear = measured.frontWorkingSpaceIsClear
+        updated.transferSwitchClearanceObserved = measured.transferSwitchClearanceObserved
         updated.meterAndPanelShareWall = measured.meterAndPanelShareWall
         updated.workingSpacePosition = measured.workingSpacePosition
         updated.workingSpaceYawRadians = measured.workingSpaceYawRadians
@@ -171,18 +166,19 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     var sameWallPlaneToleranceMeters: Float = 0.30
 
     func measure(_ snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
+        let confirmedBattery = snapshot.batteryPosition != nil && !snapshot.batteryIsPreview
         let meterFeet = confirmed(.batteryToMeter, in: snapshot)?.distanceFeet
-            ?? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
+            ?? (confirmedBattery ? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition) : nil)
         let gasFeet = confirmed(.batteryToGasMeter, in: snapshot)?.distanceFeet
-            ?? horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
-        let wallFeet = wallDistanceFeet(snapshot)
+            ?? (confirmedBattery ? horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition) : nil)
+        let wallFeet = confirmedBattery ? wallDistanceFeet(snapshot) : nil
         let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
         let sameWall = meterAndPanelSameWall(snapshot)
-        let footprint = footprintClearance(snapshot)
-        let working = workingSpaceClearance(snapshot)
-        let transfer = transferSwitchClearance(snapshot)
+        let footprint = confirmedBattery ? footprintClearance(snapshot) : nil
+        let working = confirmedBattery ? workingSpaceClearance(snapshot) : nil
+        let transfer = confirmedBattery ? transferSwitchClearance(snapshot) : nil
         return PlacementMeasurements(
-            batteryPlaced: snapshot.batteryPosition != nil,
+            batteryPlaced: confirmedBattery,
             meterMarked: snapshot.meterPosition != nil,
             gasMeterMarked: snapshot.gasMeterPosition != nil,
             panelMarked: snapshot.panelPosition != nil,
@@ -193,11 +189,11 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             meterHeightFeet: heightFeet,
             meterAndPanelSameWall: sameWall,
             footprintIsClear: footprint,
-            batteryPosition: snapshot.batteryPosition,
+            batteryPosition: confirmedBattery ? snapshot.batteryPosition : nil,
             meterPosition: snapshot.meterPosition,
             panelPosition: snapshot.panelPosition,
             gasMeterPosition: snapshot.gasMeterPosition,
-            batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians,
+            batteryYawRadians: confirmedBattery ? snapshot.batteryYawRadians : nil,
             confirmedMeasurements: snapshot.confirmedMeasurements,
             frontWorkingSpaceIsClear: working,
             transferSwitchClearanceObserved: transfer,
@@ -248,7 +244,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     /// Pad clearance from classified faces. Floor and the wall the battery sits against are not obstacles. No mesh stays unknown.
     private func footprintClearance(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard snapshot.lidarMeshAvailable, let battery = snapshot.batteryPosition?.simd else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: battery, radius: 2) else { return nil }
+        let footprintVolume = volumeBounds(
+            origin: battery,
+            yaw: snapshot.batteryYawRadians,
+            halfWidth: BatteryGeometry.footprintMeters / 2,
+            halfDepth: BatteryGeometry.footprintMeters / 2,
+            minHeight: 0.02,
+            maxHeight: BatteryGeometry.heightMeters
+        )
+        guard hasAdequateCoverage(snapshot.classifiedMesh, in: footprintVolume) else { return nil }
         let host = hostWall(
             battery: battery,
             yaw: snapshot.batteryYawRadians,
@@ -275,7 +279,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         guard snapshot.lidarMeshAvailable,
               let battery = snapshot.batteryPosition?.simd,
               let center = snapshot.workingSpacePosition?.simd else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: center, radius: 2) else { return nil }
+        let workingVolume = volumeBounds(
+            origin: center,
+            yaw: snapshot.workingSpaceYawRadians,
+            halfWidth: BatteryGeometry.workingSpaceWidthMeters / 2,
+            halfDepth: BatteryGeometry.workingSpaceDepthMeters / 2,
+            minHeight: 0.05,
+            maxHeight: 2
+        )
+        guard hasAdequateCoverage(snapshot.classifiedMesh, in: workingVolume) else { return nil }
         let host = hostWall(
             battery: battery,
             yaw: snapshot.batteryYawRadians,
@@ -301,7 +313,14 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     /// 13 in wide by about 3 ft tall beside the meter, 30 in out from the wall. No mesh stays unknown.
     private func transferSwitchClearance(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard snapshot.lidarMeshAvailable, let frame = transferSwitchFrame(snapshot) else { return nil }
-        guard hasScan(snapshot.classifiedMesh, around: frame.center, radius: 2) else { return nil }
+        let transferVolume = VolumeBounds(
+            center: frame.center,
+            halfExtents: SIMD3<Float>(frame.halfAlong, frame.halfHeight, frame.halfOut),
+            along: frame.along,
+            up: frame.up,
+            normal: frame.normal
+        )
+        guard hasAdequateCoverage(snapshot.classifiedMesh, in: transferVolume) else { return nil }
         let mounting = WallFrame(point: frame.wallPoint, normal: frame.normal)
         let blocked = snapshot.classifiedMesh.contains { sample in
             guard occupiesVolume(sample, ignoring: mounting) else { return false }
@@ -477,6 +496,60 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         guard abs(sample.normal.y) < 0.45, let normal = horizontalUnit(sample.normal) else { return false }
         guard abs(simd_dot(normal, wall.normal)) > 0.85 else { return false }
         return abs(simd_dot(sample.point - wall.point, wall.normal)) < 0.20
+    }
+
+    private struct VolumeBounds {
+        var center: SIMD3<Float>
+        var halfExtents: SIMD3<Float>
+        var along: SIMD3<Float>
+        var up: SIMD3<Float>
+        var normal: SIMD3<Float>
+    }
+
+    private func volumeBounds(
+        origin: SIMD3<Float>,
+        yaw: Float,
+        halfWidth: Float,
+        halfDepth: Float,
+        minHeight: Float,
+        maxHeight: Float
+    ) -> VolumeBounds {
+        let cosYaw = cos(yaw)
+        let sinYaw = sin(yaw)
+        let along = SIMD3<Float>(cosYaw, 0, -sinYaw)
+        let normal = SIMD3<Float>(sinYaw, 0, cosYaw)
+        let up = SIMD3<Float>(0, 1, 0)
+        let halfHeight = (maxHeight - minHeight) / 2
+        let center = SIMD3<Float>(origin.x, origin.y + minHeight + halfHeight, origin.z)
+        return VolumeBounds(
+            center: center,
+            halfExtents: SIMD3<Float>(halfWidth, halfHeight, halfDepth),
+            along: along,
+            up: up,
+            normal: normal
+        )
+    }
+
+    private func hasAdequateCoverage(_ samples: [ClassifiedMeshSample], in volume: VolumeBounds) -> Bool {
+        let projectedRadius = simd_length(SIMD2<Float>(volume.halfExtents.x, volume.halfExtents.z))
+        let nearby = samples.filter { sample in
+            let dx = sample.point.x - volume.center.x
+            let dz = sample.point.z - volume.center.z
+            let distSq = dx * dx + dz * dz
+            return distSq <= (projectedRadius + 1.0) * (projectedRadius + 1.0)
+        }
+        guard !nearby.isEmpty else { return false }
+        let volumeSamples = nearby.filter { sample in
+            let delta = sample.point - volume.center
+            let alongDist = abs(simd_dot(delta, volume.along))
+            let upDist = abs(simd_dot(delta, volume.up))
+            let normalDist = abs(simd_dot(delta, volume.normal))
+            return alongDist <= volume.halfExtents.x + 0.3
+                && upDist <= volume.halfExtents.y + 0.3
+                && normalDist <= volume.halfExtents.z + 0.3
+        }
+        let requiredCount = max(Int(volume.halfExtents.x * volume.halfExtents.z * 4), 8)
+        return volumeSamples.count >= requiredCount
     }
 
     private func hasScan(_ samples: [ClassifiedMeshSample], around point: SIMD3<Float>, radius: Float) -> Bool {

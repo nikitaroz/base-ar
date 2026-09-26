@@ -219,6 +219,8 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var batteryYawRadians: Float?
     /// When the placement snapshot was committed. Nil until a save happens.
     var snapshotTimestamp: Date?
+    /// Unique revision identifier binding screenshot and measurements together.
+    var evidenceRevisionId: UUID?
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
     /// Explicit answer after positioning the 30 × 36 in overlay. Nil stays unknown.
     var frontWorkingSpaceIsClear: Bool?

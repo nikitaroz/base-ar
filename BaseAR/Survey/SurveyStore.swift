@@ -285,9 +285,10 @@ final class SurveyStore {
         return evaluator.evaluate(copy)
     }
 
-    func commitPlacement(_ snapshot: PlacementSceneSnapshot) {
+    func commitPlacement(_ snapshot: PlacementSceneSnapshot, revisionId: UUID) {
         session.placement = measurer.applying(snapshot, to: session.placement)
         session.placement.snapshotTimestamp = Date()
+        session.placement.evidenceRevisionId = revisionId
         if session.placement.gasMeterMarked {
             session.placement.gasMeterNotPresent = false
         }

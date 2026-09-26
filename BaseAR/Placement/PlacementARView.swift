@@ -755,7 +755,8 @@ struct PlacementARView: View {
         guard scene.batteryPosition != nil else { return }
         var committed = store.placementController?.scene ?? scene
         committed.batteryYawRadians = yawRadians
-        store.commitPlacement(committed)
+        let revisionId = UUID()
+        store.commitPlacement(committed, revisionId: revisionId)
         let token = UUID()
         pendingSave = token
         screenshotToken = token
@@ -769,7 +770,7 @@ struct PlacementARView: View {
     /// Keeps review and export in step with the scene when the user leaves without Save.
     private func commitLiveScene() {
         guard let live = store.placementController?.scene, live.hasPlacedContent else { return }
-        store.commitPlacement(live)
+        store.commitPlacement(live, revisionId: UUID())
     }
 
     private func handleScreenshot(_ image: UIImage?) {
@@ -975,6 +976,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var activeModel: BatteryModel = BatteryCatalog.baseCore
         /// Turned true after the first auto-place attempt succeeds or is decisively skipped so we do not spam.
         var didAttemptAutoPlace = false
+        /// True when the current battery position is an auto-placed or camera-relative preview, not a confirmed placement.
+        var batteryIsPreviewMode = false
         var meterMarker: ModelEntity?
         var meterWallMarker: ModelEntity?
         var meterWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
@@ -1215,6 +1218,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             switch mode {
             case .battery:
                 if let position = groundPosition(in: arView, at: point) {
+                    batteryIsPreviewMode = false
                     placeBattery(at: position)
                     didPlace = true
                 }
@@ -1549,6 +1553,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             guard let placement else { return }
             didAttemptAutoPlace = true
+            batteryIsPreviewMode = true
             placeBattery(at: placement)
             emit()
         }
@@ -1671,6 +1676,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             switch mode {
             case .battery:
+                batteryIsPreviewMode = false
                 placeBattery(at: position)
             case .meter, .panel:
                 placeMarker(kind: mode, at: position)
@@ -2299,6 +2305,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             snapshot.lidarMeshAvailable = lidarMeshAvailable
             snapshot.verticalPlanes = Array(planes.values)
             snapshot.batteryYawRadians = appliedYaw
+            snapshot.batteryIsPreview = batteryIsPreviewMode
             if let batteryRig {
                 snapshot.batteryPosition = PlacementAnchor(batteryRig.position(relativeTo: nil))
             }

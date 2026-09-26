@@ -282,9 +282,19 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             return text
         }
         let inside = texts.filter { cardRect.contains(center(of: $0.bounds)) }
-        let pool = inside.isEmpty ? texts : inside
-        let ordered = pool.sorted { $0.bounds.topLeft.x < $1.bounds.topLeft.x }
-        guard let read = target.read(from: ordered.map(\.transcript)) else { return }
+        let ordered = inside.sorted { $0.bounds.topLeft.x < $1.bounds.topLeft.x }
+        guard let read = target.read(from: ordered.map(\.transcript)) else {
+            // Losing the label invalidates the old candidate instead of leaving Use enabled.
+            lockedRead = nil
+            candidateKey = nil
+            candidateSince = nil
+            didHaptic = false
+            useButton.isEnabled = false
+            useButton.alpha = 0.45
+            candidateLabel.text = "Looking…"
+            hintLabel.text = "Keep the printed label inside the frame. Stand still and reduce glare."
+            return
+        }
         if read == lockedRead { return }
         if read.display != candidateKey {
             candidateKey = read.display

@@ -21,6 +21,8 @@ The Xcode target is `BaseAR`. The home-screen name is Base Site Survey.
 
 ## Flow
 
+The `feat/guided-site-survey` implementation supersedes the original debug-hub entry with a nine-step coordinator. Read `docs/guided-survey-workflow.md` for the current flow, state contract, Mermaid diagram and safety boundaries; the original hub description below is historical context. Do not revert to implicit OCR confirmation or infer panel bus rating from main-breaker amperage.
+
 1. **Splash.** Brief branded start (home-screen name: Base Site Survey).
 2. **Intro.** Setup-assistant screen (“Let’s get your battery placement”) that opens a new `SurveySession`.
 3. **Hub.** Four tiles, all available at once (debug layout; a forced step-by-step wizard may come later):

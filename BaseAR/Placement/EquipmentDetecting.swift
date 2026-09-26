@@ -343,6 +343,17 @@ final class EquipmentScanBridge: @unchecked Sendable {
             return observation
         }
     }
+    
+    /// Call from ARSession interruption/failure/reset callbacks.
+    func trackingInterrupted() {
+        // Simplified bridge doesn't track generations; just clear the pending frame
+        latest.withLock { $0 = nil }
+    }
+    
+    /// Observation status - simplified bridge returns nil (not implemented)
+    var latestObservation: EquipmentScanObservation? {
+        nil
+    }
 
     func takeLatest() -> EquipmentScanFrame? {
         gate.withLock {

@@ -4,6 +4,10 @@ A small iPhone app for a preliminary Base Power site survey. It collects meter a
 
 The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
 
+## Spatial and observation integration
+
+`chore/guidance-integration` combines the isolated spatial-evidence and observation-contract workstreams. Read [the integration contract and device acceptance scenarios](docs/realtime-integration.md) before reviewing or running this branch; static source checks do not establish a successful native build or device validation.
+
 ## Guided survey branch
 
 This branch implements a nine-step guided capture flow, wider context photos, explicit OCR/value confirmation, safe deferrals, local draft resume, and targeted review loops. See [the end-to-end workflow and Mermaid diagram](docs/guided-survey-workflow.md) and [validation / iPhone acceptance checklist](docs/guided-survey-validation.md).

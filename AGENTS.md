@@ -17,6 +17,7 @@ The Xcode target is `BaseAR`. The home-screen name is Base Site Survey.
 - Target a physical iPhone. AR placement needs a device; the simulator can walk the survey without world tracking.
 - No backend, accounts, external datasets, or third-party dependencies.
 - Do not add ERCOT data, satellite imagery, automatic equipment detection, a Base integration, or production-grade permitting logic unless a later task explicitly asks for it.
+- **Exception**: Optional TypeSafe Jev advisory — when `TYPESAFE_API_KEY` is configured, the review screen may call `https://api.typesafe.ai/v1/systemone` for realtime survey-readiness guidance. Advisory only; never overrides measured placement color or rule outcomes. Gracefully degrades when unavailable.
 - GPS is the phone’s property fix (latitude, longitude, timestamp, reported horizontal accuracy) when location permission is granted. Do not describe it as the precise battery position.
 
 ## Flow

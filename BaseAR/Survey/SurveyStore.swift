@@ -55,7 +55,7 @@ final class SurveyStore {
             // Fail visibly rather than silently overwriting a damaged draft.
             session = try decoder.decode(SurveySession.self, from: Data(contentsOf: folder.appendingPathComponent("survey.json")))
         }
-        session.schemaVersion = 5
+        session.schemaVersion = 6
         if session.guidedProgress == nil { session.guidedProgress = GuidedSurveyProgress() }
         self.session = session
         self.measurer = measurer
@@ -75,7 +75,10 @@ final class SurveyStore {
             self.session.electrical.breakerPhotoFilename = nil
             self.session.guidedProgress?.breakerConfirmed = false
         }
-        if placementImage == nil { self.session.placement.screenshotFilename = nil }
+        if placementImage == nil {
+            self.session.placement.screenshotFilename = nil
+            self.session.placement.captureIdentity = nil
+        }
         for (key, evidence) in self.session.guidedProgress?.contextPhotos ?? [:] {
             if !FileManager.default.fileExists(atPath: directory.appendingPathComponent(evidence.filename).path) {
                 self.session.guidedProgress?.contextPhotos.removeValue(forKey: key)
@@ -124,6 +127,7 @@ final class SurveyStore {
     func setSelectedBatteryModel(_ modelId: String) {
         guard modelId != session.selectedBatteryModelId else { return }
         session.selectedBatteryModelId = modelId
+        invalidatePlacementCapture()
         placementController?.setActiveModel(BatteryCatalog.model(for: modelId))
         refreshAssessment()
     }
@@ -281,12 +285,19 @@ final class SurveyStore {
 
     func assessment(applying snapshot: PlacementSceneSnapshot) -> SurveyAssessment {
         var copy = session
-        copy.placement = measurer.applying(snapshot, to: copy.placement)
+        copy.placement = placementApplying(snapshot)
         return evaluator.evaluate(copy)
     }
 
     func commitPlacement(_ snapshot: PlacementSceneSnapshot) {
-        session.placement = measurer.applying(snapshot, to: session.placement)
+        guard snapshot.batteryModelID == session.selectedBatteryModelId else { return }
+        let capture = session.placement.captureIdentity
+        if session.placement.screenshotFilename != nil &&
+            (capture?.scanID != snapshot.scanID || capture?.revision != snapshot.revision ||
+             capture?.batteryModelID != snapshot.batteryModelID || !snapshot.trackingIsNormal) {
+            invalidatePlacementCapture()
+        }
+        session.placement = placementApplying(snapshot)
         session.placement.snapshotTimestamp = Date()
         if session.placement.gasMeterMarked {
             session.placement.gasMeterNotPresent = false
@@ -295,19 +306,120 @@ final class SurveyStore {
     }
 
     func setFootprintClearAttested(_ value: Bool) {
+        if let snapshot = placementController?.scene { commitPlacement(snapshot) }
         session.placement.footprintClearAttested = value ? true : nil
         refreshAssessment()
     }
 
     func setTransferSwitchSpaceAttested(_ value: Bool) {
+        if let snapshot = placementController?.scene { commitPlacement(snapshot) }
         session.placement.transferSwitchSpaceAttested = value ? true : nil
         refreshAssessment()
     }
 
     func attachPlacementScreenshot(_ image: UIImage) {
+        // Legacy callers may save an image, but cannot imply an identified measurement bundle.
         placementImage = image
         session.placement.screenshotFilename = write(Self.uprightJPEG(image), filename: "placement.jpg")
+        session.placement.captureIdentity = nil
         refreshAssessment()
+    }
+
+    /// A new image name plus an atomic JSON replacement make a failed save leave the
+    /// previous packet intact. No UI navigation should happen until this returns true.
+    func commitPlacementCapture(
+        _ snapshot: PlacementSceneSnapshot,
+        image: UIImage,
+        identity: PlacementCaptureIdentity
+    ) -> Bool {
+        guard snapshot.trackingIsNormal,
+              identity.scanID == snapshot.scanID,
+              identity.revision == snapshot.revision,
+              identity.batteryModelID == snapshot.batteryModelID,
+              snapshot.batteryModelID == session.selectedBatteryModelId,
+              let live = placementController?.scene,
+              live.trackingIsNormal,
+              live.scanID == identity.scanID,
+              live.revision == identity.revision,
+              live.batteryModelID == identity.batteryModelID else {
+            lastExportError = "The scene changed before capture finished. Check tracking and save again."
+            return false
+        }
+        guard let jpeg = Self.uprightJPEG(image) else {
+            lastExportError = "The placement image could not be encoded. Save again."
+            return false
+        }
+        if session.placement.captureIdentity == identity,
+           let filename = session.placement.screenshotFilename,
+           FileManager.default.fileExists(atPath: directory.appendingPathComponent(filename).path) {
+            return true
+        }
+        let filename = "placement-\(identity.captureID.uuidString).jpg"
+        let imageURL = directory.appendingPathComponent(filename)
+        var candidate = session
+        candidate.placement = placementApplying(snapshot)
+        candidate.placement.captureIdentity = identity
+        candidate.placement.snapshotTimestamp = identity.capturedAt
+        candidate.placement.screenshotFilename = filename
+        if candidate.placement.gasMeterMarked { candidate.placement.gasMeterNotPresent = false }
+        let assessment = evaluator.evaluate(candidate)
+        candidate.ruleResults = assessment.results
+        candidate.missingInformation = assessment.missingInformation
+        candidate.placementTone = assessment.placementTone
+        do {
+            try jpeg.write(to: imageURL, options: .atomic)
+            _ = try exporter.write(candidate, to: directory)
+            // Commit the observable session only after the complete packet is durable.
+            session = candidate
+            placementImage = image
+            exportURLs = []
+            lastExportError = nil
+            draftSaveError = nil
+            UserDefaults.standard.set(session.id.uuidString, forKey: Self.activeDraftKey)
+            return true
+        } catch {
+            // The unique, unreferenced new image is safe to remove on rollback.
+            try? FileManager.default.removeItem(at: imageURL)
+            lastExportError = error.localizedDescription
+            return false
+        }
+    }
+
+    private func observationIdentity(for snapshot: PlacementSceneSnapshot) -> PlacementObservationIdentity {
+        PlacementObservationIdentity(
+            scanID: snapshot.scanID, revision: snapshot.revision,
+            batteryModelID: snapshot.batteryModelID,
+            trackingIsNormal: snapshot.trackingIsNormal, observedAt: Date()
+        )
+    }
+
+    private func placementApplying(_ snapshot: PlacementSceneSnapshot) -> PlacementEvidence {
+        var previous = session.placement
+        let observation = previous.observationIdentity
+        if observation?.scanID != snapshot.scanID || observation?.revision != snapshot.revision ||
+            observation?.batteryModelID != snapshot.batteryModelID || !snapshot.trackingIsNormal {
+            previous.footprintClearAttested = nil
+            previous.transferSwitchSpaceAttested = nil
+        }
+        if previous.captureIdentity?.scanID != snapshot.scanID ||
+            previous.captureIdentity?.revision != snapshot.revision ||
+            previous.captureIdentity?.batteryModelID != snapshot.batteryModelID || !snapshot.trackingIsNormal {
+            previous.captureIdentity = nil
+            previous.screenshotFilename = nil
+        }
+        var placement = measurer.applying(snapshot, to: previous)
+        placement.observationIdentity = observationIdentity(for: snapshot)
+        return placement
+    }
+
+    private func invalidatePlacementCapture() {
+        session.placement.observationIdentity = nil
+        session.placement.captureIdentity = nil
+        session.placement.screenshotFilename = nil
+        session.placement.footprintClearAttested = nil
+        session.placement.transferSwitchSpaceAttested = nil
+        placementImage = nil
+        exportURLs = []
     }
 
     func exportForSharing() {

@@ -245,6 +245,14 @@ struct ReviewView: View {
 
     private var placementDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let capture = store.session.placement.captureIdentity {
+                LabeledContent("Capture", value: capture.capturedAt.formatted(date: .abbreviated, time: .standard))
+                Text("Saved observation, revision \(capture.revision). Not a restored live AR session.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Text("No version-matched placement capture. Any previous image or measurements are draft evidence; rescan and save together.")
+                    .font(.footnote).foregroundStyle(.orange)
+            }
             evidenceImage(store.placementImage, label: "Placement screenshot")
             LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
             LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
@@ -473,6 +481,9 @@ struct ReviewView: View {
     }
 
     private func attestationText(measured: Bool?, attested: Bool?) -> String {
+        if measured != nil, store.session.placement.observationIdentity == nil {
+            return "Legacy observation; rescan needed"
+        }
         if let measured { return measured ? "Measured clear" : "Measured blocked" }
         if attested == true { return "Attested clear (not measured)" }
         return "Not measured or attested"

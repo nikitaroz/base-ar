@@ -142,7 +142,8 @@ enum SurveyWorkflow {
             return issues
         case .placement:
             return (!s.placement.batteryPlaced ? ["Preview a battery location or defer for a site visit."] : []) +
-                (s.placement.screenshotFilename == nil ? ["Save an AR screenshot or defer this step."] : [])
+                (s.placement.screenshotFilename == nil || s.placement.captureIdentity == nil
+                    ? ["Save one version-matched placement and screenshot, or defer this step."] : [])
         case .review: return []
         }
     }

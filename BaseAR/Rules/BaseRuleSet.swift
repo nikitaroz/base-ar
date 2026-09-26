@@ -13,6 +13,8 @@ enum BaseRuleSet {
     static let footprintSideFeet = 3.0
     static let minMeterHeightFeet = 3.0
     static let maxMeterHeightFeet = 6.0
+    static let workingSpaceWidthInches = 30.0
+    static let workingSpaceDepthInches = 36.0
 
     static let rules: [EligibilityRule] = [
         austinBreaker,
@@ -23,6 +25,7 @@ enum BaseRuleSet {
         gasMeterClearance,
         transferSwitchSpace,
         meterHeight,
+        frontWorkingSpace,
         meterAndPanelSameWall
     ]
 
@@ -113,7 +116,7 @@ enum BaseRuleSet {
         evaluate: { session in
             distanceOutcome(
                 feet: session.placement.distanceToWallFeet,
-                missing: "No wall plane was close enough to measure clearance from the battery.",
+                missing: "Clearance from the battery to the wall has not been measured.",
                 passes: { $0 <= maxWallDistanceFeet },
                 passText: { "Measured clearance to the nearest detected wall is \($0), within 1 ft." },
                 conflictText: { "Measured clearance to the nearest detected wall is \($0), more than 1 ft." }
@@ -127,7 +130,10 @@ enum BaseRuleSet {
         requirement: "The battery must be at least 3 ft from a gas meter.",
         isRequired: true,
         evaluate: { session in
-            distanceOutcome(
+            if session.placement.distanceToGasMeterFeet == nil, session.placement.gasMeterNotPresent {
+                return .pass("No gas meter was observed near the placement.")
+            }
+            return distanceOutcome(
                 feet: session.placement.distanceToGasMeterFeet,
                 missing: "The gas meter was not marked, so clearance was not measured.",
                 passes: { $0 >= minGasMeterDistanceFeet },
@@ -186,6 +192,22 @@ enum BaseRuleSet {
             return .unknown("Space for a transfer switch beside the meter was not measured or attested.")
         }
     )
+
+    private static let frontWorkingSpace = EligibilityRule(
+        id: "front-working-space",
+        title: "30 × 36 in front working space",
+        requirement: "Confirm approximately 30 × 36 in of clear working space in front of the equipment.",
+        isRequired: true,
+        evaluate: { session in
+            guard let clear = session.placement.frontWorkingSpaceIsClear else {
+                return .unknown("The working-space overlay has not been explicitly confirmed clear or blocked.")
+            }
+            return clear
+                ? .pass("The positioned 30 × 36 in overlay was explicitly confirmed clear.")
+                : .conflict("The positioned 30 × 36 in overlay was explicitly confirmed blocked.")
+        }
+    )
+
 }
 
 /// `passText` and `conflictText` receive the distance already formatted, such as "4.2 ft".

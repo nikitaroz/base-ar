@@ -12,9 +12,10 @@ enum PhotoSlot: String, Identifiable {
 struct ElectricalCaptureView: View {
     var store: SurveyStore
     var focus: PhotoSlot
-    var onContinue: () -> Void
 
     @State private var activeSlot: PhotoSlot?
+    @State private var scanTarget: LabelScanTarget?
+    @State private var scanMessage: String?
     @State private var amperageText = ""
     @State private var showCameraDeniedAlert = false
     @FocusState private var fieldIsFocused: Bool
@@ -28,21 +29,19 @@ struct ElectricalCaptureView: View {
                 breakerSection
             }
 
-            Section {
-                Button("Done") {
-                    fieldIsFocused = false
-                    onContinue()
-                }
-                Text("You can leave blanks. Review lists what is still missing.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
         }
         .navigationTitle(focus == .meter ? "Electrical Meter" : "Breaker box")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if focus == .breaker, amperageText.isEmpty, let amps = store.session.electrical.mainBreakerAmperage {
                 amperageText = String(amps)
+            }
+        }
+        .onChange(of: store.session.electrical.mainBreakerAmperage) { _, amps in
+            guard focus == .breaker, let amps else { return }
+            let text = String(amps)
+            if amperageText != text {
+                amperageText = text
             }
         }
         .toolbar {
@@ -59,6 +58,15 @@ struct ElectricalCaptureView: View {
                 case .breaker:
                     store.attachBreakerPhoto(image)
                 }
+            }
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $scanTarget) { target in
+            LiveLabelScanner(target: target) { read, image in
+                applyScan(read, image: image, target: target)
+                scanTarget = nil
+            } onCancel: {
+                scanTarget = nil
             }
             .ignoresSafeArea()
         }
@@ -92,17 +100,35 @@ struct ElectricalCaptureView: View {
 
     private var meterSection: some View {
         Section("Round electric meter") {
+            Text("Fill the frame with the round meter and make sure the meter number is sharp and readable.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             photoRow(
                 image: store.meterImage,
-                emptyTitle: "Photograph meter",
-                retakeTitle: "Retake meter photo",
+                emptyTitle: "Take meter photo",
+                retakeTitle: "Retake photo",
                 slot: .meter
             )
-            TextField("Meter number", text: meterNumberBinding)
-                .textInputAutocapitalization(.characters)
-                .autocorrectionDisabled()
-                .focused($fieldIsFocused)
-            Text("The meter number is separate from the breaker amperage. Reading it from the photo is not connected yet.")
+            scanControl(
+                title: "Scan meter number",
+                target: .meterNumber,
+                unavailableText: "Live scan needs an iPhone camera. A photo can still fill the number."
+            )
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Meter number")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("Enter the number shown on the meter", text: meterNumberBinding)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .focused($fieldIsFocused)
+            }
+            if store.isReadingMeterNumber {
+                Label("Reading the photo…", systemImage: "text.viewfinder")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Text(store.meterNumberNote ?? "The meter number is different from the breaker amperage. Confirm the number before leaving this screen.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -110,31 +136,66 @@ struct ElectricalCaptureView: View {
 
     private var breakerSection: some View {
         Section("Main disconnect / breaker") {
+            Text("Capture the main disconnect with the number printed on the main breaker clearly visible.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             photoRow(
                 image: store.breakerImage,
-                emptyTitle: "Photograph main breaker",
-                retakeTitle: "Retake breaker photo",
+                emptyTitle: "Take breaker photo",
+                retakeTitle: "Retake photo",
                 slot: .breaker
             )
-            TextField("Main breaker amperage", text: $amperageText)
-                .keyboardType(.numberPad)
-                .focused($fieldIsFocused)
-                .onChange(of: amperageText) { _, newValue in
-                    let digits = newValue.filter(\.isNumber)
-                    if digits != newValue {
-                        amperageText = digits
-                    }
-                    store.setMainBreakerAmperage(Int(digits))
+            scanControl(
+                title: "Scan breaker amperage",
+                target: .breakerAmperage,
+                unavailableText: "Live scan needs an iPhone camera. A photo can still fill the rating."
+            )
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Main breaker amperage")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    TextField("Enter amperage", text: $amperageText)
+                        .keyboardType(.numberPad)
+                        .focused($fieldIsFocused)
+                        .onChange(of: amperageText) { _, newValue in
+                            let digits = newValue.filter(\.isNumber)
+                            if digits != newValue {
+                                amperageText = digits
+                                return
+                            }
+                            let parsed = Int(digits)
+                            if parsed != store.session.electrical.mainBreakerAmperage {
+                                store.setMainBreakerAmperage(parsed)
+                            }
+                        }
+                    Text("A")
+                        .foregroundStyle(.secondary)
                 }
-            if let amps = store.session.electrical.mainBreakerAmperage {
-                Text("Confirmed main breaker: \(amps) A")
-            } else {
-                Text("No amperage confirmed yet.")
+            }
+            if store.isReadingBreakerAmperage {
+                Label("Reading the photo…", systemImage: "text.viewfinder")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text("Austin checks use 150–200A. Confirm the number printed on the breaker.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if let amps = store.session.electrical.mainBreakerAmperage {
+                if (150...200).contains(amps) {
+                    Label("Confirmed: \(amps) A", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Label("\(amps) A is outside the 150–200A Austin guidance and will be flagged for review.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            } else if store.breakerAmperageNote == nil {
+                Text("Enter the number printed on the main breaker.")
+                    .foregroundStyle(.secondary)
+            }
+            if let note = store.breakerAmperageNote {
+                Text(note)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -143,6 +204,62 @@ struct ElectricalCaptureView: View {
             get: { store.session.electrical.meterNumber ?? "" },
             set: { store.setMeterNumber($0) }
         )
+    }
+
+    private func applyScan(_ read: LabelScanRead, image: UIImage?, target: LabelScanTarget) {
+        switch target {
+        case .meterNumber:
+            if let number = read.meterNumber {
+                store.setMeterNumber(number, note: "Scanned from the camera. Confirm it matches the meter.")
+            }
+            if let image {
+                store.attachMeterPhoto(image)
+            }
+        case .breakerAmperage:
+            if let amps = read.amperage {
+                store.setMainBreakerAmperage(amps, note: "Scanned from the camera. Confirm it matches the main breaker.")
+                amperageText = String(amps)
+            }
+            if let image {
+                store.attachBreakerPhoto(image)
+            }
+        }
+    }
+
+    private func beginScan(_ target: LabelScanTarget) {
+        scanMessage = nil
+        Task {
+            if let reason = await LiveLabelScanner.prepare() {
+                scanMessage = reason
+            } else {
+                scanTarget = target
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func scanControl(title: String, target: LabelScanTarget, unavailableText: String) -> some View {
+        if LiveLabelScanner.isSupported {
+            Button {
+                beginScan(target)
+            } label: {
+                Label(title, systemImage: "text.viewfinder")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            Text("Highlights the number in a card-shaped frame and saves that photo. Confirm the value before you leave.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            Text(unavailableText)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        if let scanMessage {
+            Text(scanMessage)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
     }
 
     @ViewBuilder
@@ -157,8 +274,12 @@ struct ElectricalCaptureView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .accessibilityLabel(retakeTitle)
         }
-        Button(image == nil ? emptyTitle : retakeTitle) {
+        Button {
             requestPhoto(for: slot)
+        } label: {
+            Label(image == nil ? emptyTitle : retakeTitle, systemImage: "camera.fill")
+                .frame(maxWidth: .infinity)
         }
+        .buttonStyle(.borderedProminent)
     }
 }

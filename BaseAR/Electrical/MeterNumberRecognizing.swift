@@ -1,14 +1,19 @@
 import Foundation
 
 /// Electrical capture/OCR boundary.
-/// Replace `UnimplementedMeterNumberRecognizer` with Vision text recognition.
-/// Leave the manual meter-number field as the confirmed value until the user accepts a read.
+/// A scan may suggest a meter number or main-breaker rating.
+/// The typed field stays the value the user accepts.
 protocol MeterNumberRecognizing: Sendable {
     func recognizeMeterNumber(in imageJPEG: Data) async -> String?
+    func recognizeMainBreakerAmperage(in imageJPEG: Data) async -> Int?
 }
 
 struct UnimplementedMeterNumberRecognizer: MeterNumberRecognizing {
     func recognizeMeterNumber(in imageJPEG: Data) async -> String? {
+        nil
+    }
+
+    func recognizeMainBreakerAmperage(in imageJPEG: Data) async -> Int? {
         nil
     }
 }

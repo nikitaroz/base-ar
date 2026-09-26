@@ -1,8 +1,7 @@
 import SwiftUI
 
 private enum RootPhase {
-    case splash
-    case intro
+    case welcome
     case hub
 }
 
@@ -15,7 +14,7 @@ enum HubRoute: Hashable {
 }
 
 struct ContentView: View {
-    @State private var phase: RootPhase = .splash
+    @State private var phase: RootPhase = .welcome
     @State private var store: SurveyStore?
     @State private var path = NavigationPath()
     @State private var startError: String?
@@ -23,15 +22,8 @@ struct ContentView: View {
     var body: some View {
         Group {
             switch phase {
-            case .splash:
-                SplashView {
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        phase = .intro
-                    }
-                }
-                .transition(.opacity)
-            case .intro:
-                IntroView {
+            case .welcome:
+                WelcomeView {
                     beginSurvey()
                 }
                 .transition(.opacity)
@@ -58,25 +50,21 @@ struct ContentView: View {
             .navigationDestination(for: HubRoute.self) { route in
                 switch route {
                 case .home:
-                    HomeInformationView(store: store) {
-                        path.removeLast()
-                    }
+                    HomeInformationView(store: store)
                 case .meter:
-                    ElectricalCaptureView(store: store, focus: .meter) {
-                        path.removeLast()
-                    }
+                    ElectricalCaptureView(store: store, focus: .meter)
                 case .breaker:
-                    ElectricalCaptureView(store: store, focus: .breaker) {
-                        path.removeLast()
-                    }
+                    ElectricalCaptureView(store: store, focus: .breaker)
                 case .placement:
                     PlacementARView(store: store) {
                         path.append(HubRoute.review)
                     }
                 case .review:
-                    ReviewView(store: store) {
-                        resetToSplash()
-                    }
+                    ReviewView(
+                        store: store,
+                        onEdit: { editFromReview($0) },
+                        onStartOver: { resetToWelcome() }
+                    )
                 }
             }
         }
@@ -94,12 +82,16 @@ struct ContentView: View {
         }
     }
 
-    private func resetToSplash() {
+    private func editFromReview(_ route: HubRoute) {
+        path.append(route)
+    }
+
+    private func resetToWelcome() {
         path = NavigationPath()
         store?.discardSavedSurvey()
         store = nil
         withAnimation(.easeInOut(duration: 0.35)) {
-            phase = .splash
+            phase = .welcome
         }
     }
 
@@ -111,63 +103,46 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Splash
+// MARK: - Welcome
 
-private struct SplashView: View {
+private struct WelcomeView: View {
     var onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: "bolt.house.fill")
-                .font(.system(size: 64, weight: .light))
-                .foregroundStyle(.primary)
-            Text("Base Site Survey")
-                .font(.largeTitle.bold())
-            Text("A first look at your home for a Base Power battery")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-            Button(action: onContinue) {
-                Text("Continue")
-                    .frame(maxWidth: .infinity)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 24) {
+                    Spacer(minLength: 56)
+                    Image(systemName: "bolt.house.fill")
+                        .font(.system(size: 64, weight: .light))
+                        .foregroundStyle(.primary)
+                        .accessibilityHidden(true)
+                    Text("Base Site Survey")
+                        .font(.largeTitle.bold())
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Add your home details, take two electrical photos, and preview where a Base Core could sit outside.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(SurveySession.prototypeDisclaimer)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 48)
+                    Button(action: onContinue) {
+                        Text("Start survey")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
-    }
-}
-
-// MARK: - Intro
-
-private struct IntroView: View {
-    var onContinue: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Spacer()
-            Text("Let’s get your battery placement")
-                .font(.largeTitle.bold())
-            Text("Take photos of your home, meter, and breaker, then see where a Base Core could sit outside. An engineer may still ask for more photos.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-            Text(SurveySession.prototypeDisclaimer)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button(action: onContinue) {
-                Text("Continue")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Color(.systemBackground))
     }
 }
@@ -183,9 +158,14 @@ private struct SurveyHubView: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Site survey")
                     .font(.largeTitle.bold())
-                Text("You can do these in any order.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(completedSectionCount) of 4 sections complete")
+                        .font(.headline)
+                    ProgressView(value: Double(completedSectionCount), total: 4)
+                    Text("Complete these in any order. Your answers save as you go.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
 
                 VStack(spacing: 14) {
                     hubTile(
@@ -221,13 +201,13 @@ private struct SurveyHubView: View {
                 Button {
                     onOpen(.review)
                 } label: {
-                    Text("Review survey")
+                    Text(allSectionsComplete ? "Review survey" : "Review missing items")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.large)
 
-                Text(SurveySession.prototypeDisclaimer)
+                Text("Preliminary survey only. An engineer must confirm the site.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -270,20 +250,31 @@ private struct SurveyHubView: View {
     }
 
     private var placementProgress: StepProgress {
-        if store.session.placement.batteryPlaced { return .done }
-        if store.placementController?.scene.hasPlacedContent == true { return .inProgress }
-        return .notStarted
+        let placement = store.session.placement
+        let liveScene = store.placementController?.scene
+        return progress(for: [
+            placement.batteryPlaced || liveScene?.batteryPosition != nil,
+            placement.meterMarked || liveScene?.meterPosition != nil,
+            placement.gasMeterMarked || liveScene?.gasMeterPosition != nil || store.gasMeterNotVisible
+        ])
     }
+
+    private var sectionProgress: [StepProgress] {
+        [homeProgress, meterProgress, breakerProgress, placementProgress]
+    }
+
+    private var completedSectionCount: Int {
+        sectionProgress.filter(\.isComplete).count
+    }
+
+    private var allSectionsComplete: Bool { completedSectionCount == sectionProgress.count }
 
     private func filled(_ value: String) -> Bool {
         !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func progress(for answers: [Bool]) -> StepProgress {
-        let filledCount = answers.filter { $0 }.count
-        if filledCount == 0 { return .notStarted }
-        if filledCount == answers.count { return .done }
-        return .inProgress
+        StepProgress(answered: answers.filter { $0 }.count, total: answers.count)
     }
 
     private func hubTile(
@@ -314,9 +305,15 @@ private struct SurveyHubView: View {
                         .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 8)
-                if progress == .done {
+                if progress.isComplete {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                        .accessibilityLabel("Complete")
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                 }
             }
             .padding(16)
@@ -332,17 +329,16 @@ private struct SurveyHubView: View {
 
 // MARK: - Home and personal info
 
-private enum StepProgress: Equatable {
-    case notStarted
-    case inProgress
-    case done
+private struct StepProgress: Equatable {
+    var answered: Int
+    var total: Int
+
+    var isComplete: Bool { total > 0 && answered == total }
 
     var title: String {
-        switch self {
-        case .notStarted: "Not started"
-        case .inProgress: "In progress"
-        case .done: "Done"
-        }
+        if answered == 0 { return "Not started" }
+        if isComplete { return "Complete" }
+        return "\(answered) of \(total) answered"
     }
 }
 
@@ -435,40 +431,68 @@ private enum BatteryCountChoice: String, CaseIterable, Identifiable {
 
 private struct HomeInformationView: View {
     var store: SurveyStore
-    var onDone: () -> Void
 
     @State private var addressCompleter = AddressCompleter()
-    @FocusState private var fieldIsFocused: Bool
+    @FocusState private var focusedField: HomeField?
+
+    private enum HomeField: Hashable {
+        case name, email, phone, address
+    }
 
     var body: some View {
         Form {
             Section("Personal") {
-                TextField("Name", text: contactNameBinding)
-                    .textContentType(.name)
-                    .textInputAutocapitalization(.words)
-                    .focused($fieldIsFocused)
-                TextField("Email", text: emailBinding)
-                    .textContentType(.emailAddress)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($fieldIsFocused)
-                TextField("Phone", text: phoneBinding)
-                    .textContentType(.telephoneNumber)
-                    .keyboardType(.phonePad)
-                    .focused($fieldIsFocused)
+                LabeledContent("Name") {
+                    TextField("Required", text: contactNameBinding)
+                        .multilineTextAlignment(.trailing)
+                        .textContentType(.name)
+                        .textInputAutocapitalization(.words)
+                        .focused($focusedField, equals: .name)
+                }
+                LabeledContent("Email") {
+                    TextField("Required", text: emailBinding)
+                        .multilineTextAlignment(.trailing)
+                        .textContentType(.emailAddress)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .email)
+                }
+                if shouldShowEmailWarning {
+                    Label("Enter an email address such as name@example.com.", systemImage: "exclamationmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+                LabeledContent("Phone") {
+                    TextField("Required", text: phoneBinding)
+                        .multilineTextAlignment(.trailing)
+                        .textContentType(.telephoneNumber)
+                        .keyboardType(.phonePad)
+                        .focused($focusedField, equals: .phone)
+                }
+                if shouldShowPhoneWarning {
+                    Label("Enter a complete phone number.", systemImage: "exclamationmark.circle")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             }
 
             Section("Address") {
-                TextField("Property address or identifier", text: addressBinding)
-                    .textContentType(.fullStreetAddress)
-                    .textInputAutocapitalization(.words)
-                    .focused($fieldIsFocused)
-                    .onChange(of: store.session.propertyIdentifier) { _, newValue in
-                        addressCompleter.updateQuery(newValue)
-                    }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Property address or identifier")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TextField("Required", text: addressBinding)
+                        .textContentType(.fullStreetAddress)
+                        .textInputAutocapitalization(.words)
+                        .focused($focusedField, equals: .address)
+                        .onChange(of: store.session.propertyIdentifier) { _, newValue in
+                            addressCompleter.updateQuery(newValue)
+                        }
+                }
                 ForEach(addressCompleter.suggestions) { suggestion in
                     Button {
+                        focusedField = nil
                         let line = addressCompleter.accept(suggestion)
                         store.setPropertyIdentifier(line)
                     } label: {
@@ -481,7 +505,10 @@ private struct HomeInformationView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.borderless)
                 }
             }
 
@@ -512,35 +539,53 @@ private struct HomeInformationView: View {
                         value: String(format: "%.1f m", fix.horizontalAccuracyMeters)
                     )
                 } else {
-                    Text(store.locationStatusMessage ?? "Waiting for a property fix, or location was not available.")
+                    Text(store.locationStatusMessage ?? "Use this iPhone’s location to place the property on the map.")
                         .foregroundStyle(.secondary)
-                    Button("Try again") {
-                        store.retryPropertyLocation()
+                    if store.isRequestingPropertyLocation {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Getting this iPhone’s location…")
+                        }
+                        .foregroundStyle(.secondary)
                     }
+                    Button {
+                        focusedField = nil
+                        store.requestPropertyLocation()
+                    } label: {
+                        Label(
+                            store.locationStatusMessage == nil ? "Use current location" : "Try location again",
+                            systemImage: "location.fill"
+                        )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.isRequestingPropertyLocation)
                 }
                 Text(SurveySession.locationDisclaimer)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                Button("Done") {
-                    fieldIsFocused = false
-                    onDone()
-                }
-                Text(SurveySession.prototypeDisclaimer)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
         }
         .navigationTitle("Home and personal info")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") { fieldIsFocused = false }
+                Button("Done") { focusedField = nil }
             }
         }
+    }
+
+    private var shouldShowEmailWarning: Bool {
+        let value = store.session.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        return focusedField != .email && !value.isEmpty && (!value.contains("@") || !value.contains("."))
+    }
+
+    private var shouldShowPhoneWarning: Bool {
+        let digits = store.session.phone.filter(\.isNumber)
+        return focusedField != .phone && !store.session.phone.isEmpty && digits.count < 7
     }
 
     private var contactNameBinding: Binding<String> {
@@ -620,20 +665,28 @@ private struct RadioChoice<Choice: Hashable & Identifiable>: View where Choice: 
     var label: (Choice) -> String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
+            choiceButtons
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var choiceButtons: some View {
+        HStack(spacing: 24) {
             ForEach(Array(Choice.allCases)) { choice in
                 let selected = selection == choice
                 Button {
                     selection = choice
                 } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    Label {
                         Text(label(choice))
                             .foregroundStyle(.primary)
-                        Spacer(minLength: 0)
+                    } icon: {
+                        Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                            .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                     }
+                    .frame(minHeight: 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -641,7 +694,6 @@ private struct RadioChoice<Choice: Hashable & Identifiable>: View where Choice: 
                 .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
             }
         }
-        .padding(.vertical, 4)
     }
 }
 

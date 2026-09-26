@@ -14,4 +14,6 @@ enum BatteryGeometry {
     static var heightMeters: Float { heightInches * inchesToMeters }
     static var depthMeters: Float { depthInches * inchesToMeters }
     static var footprintMeters: Float { Float(BaseRuleSet.footprintSideFeet) * feetToMeters }
+    static var workingSpaceWidthMeters: Float { Float(BaseRuleSet.workingSpaceWidthInches) * inchesToMeters }
+    static var workingSpaceDepthMeters: Float { Float(BaseRuleSet.workingSpaceDepthInches) * inchesToMeters }
 }

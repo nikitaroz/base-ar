@@ -2,27 +2,51 @@ import SwiftUI
 
 struct ReviewView: View {
     var store: SurveyStore
+    var onEdit: (HubRoute) -> Void
     var onStartOver: () -> Void
 
     @State private var showShare = false
+    @State private var confirmStartOver = false
+    @State private var propertyExpanded = false
+    @State private var electricalExpanded = false
+    @State private var placementExpanded = false
+    @State private var checksExpanded = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 disclaimer
-                toneCard
-                propertySection
-                electricalSection
-                placementSection
-                checksSection
-                missingSection
+                readinessCard
+                if !nextActions.isEmpty {
+                    nextActionsCard
+                }
+                details
                 jsonPreviewSection
                 shareSection
             }
             .padding()
         }
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("Review")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("Start over", systemImage: "arrow.counterclockwise", role: .destructive) {
+                        confirmStartOver = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Survey options")
+            }
+        }
+        .alert("Start over?", isPresented: $confirmStartOver) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete survey", role: .destructive, action: onStartOver)
+        } message: {
+            Text("This deletes the current answers, photos, placement, and local survey file. This can’t be undone.")
+        }
         .task {
             store.exportForSharing()
         }
@@ -32,121 +56,193 @@ struct ReviewView: View {
     }
 
     private var disclaimer: some View {
-        Text(store.session.prototypeDisclaimer)
-            .font(.footnote)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Color.orange.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(Color.orange.opacity(0.55), lineWidth: 1)
-            )
-    }
-
-    private var toneCard: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Label {
+                Text(store.session.prototypeDisclaimer)
+            } icon: {
+                Image(systemName: "info.circle.fill")
+            }
+            .font(.footnote)
             Text(ToneStyle.title(store.session.placementTone))
-                .font(.headline)
-            Text("Green means every required check passed on measured evidence. Teal means a required check passed on a user attestation instead of a measurement. Amber means a required check is still unknown. Red means a measured conflict.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ToneStyle.color(store.session.placementTone))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(ToneStyle.color(store.session.placementTone).opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
+        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var propertySection: some View {
-        GroupBox("Property") {
-            VStack(alignment: .leading, spacing: 8) {
-                LabeledContent("Name", value: display(store.session.contactName))
-                LabeledContent("Email", value: display(store.session.email))
-                LabeledContent("Phone", value: display(store.session.phone))
-                LabeledContent("Own or rent", value: ownershipText)
-                TextField(
-                    "Property address or identifier",
-                    text: Binding(
-                        get: { store.session.propertyIdentifier },
-                        set: { store.setPropertyIdentifier($0) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-                locationSummary
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private var locationSummary: some View {
-        if let fix = store.session.propertyLocation {
-            PropertyLocationMap(fix: fix)
-            Text(fix.timestamp.formatted(date: .abbreviated, time: .standard))
-            Text(String(format: "Reported horizontal accuracy: %.1f m", fix.horizontalAccuracyMeters))
-            Text(store.session.propertyLocationDisclaimer)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        } else {
-            Text("Location was not available. No property fix was saved.")
-                .foregroundStyle(.secondary)
-            Text(store.session.propertyLocationDisclaimer)
-                .font(.footnote)
+    private var readinessCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(readinessTitle, systemImage: readinessSymbol)
+                .font(.title3.bold())
+                .foregroundStyle(readinessColor)
+            Text(readinessMessage)
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private var electricalSection: some View {
-        GroupBox("Electrical evidence") {
-            VStack(alignment: .leading, spacing: 10) {
-                evidenceImage(store.meterImage, label: "Round electric meter")
-                evidenceImage(store.breakerImage, label: "Main disconnect or breaker")
-                LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
-                if let source = store.session.electrical.meterNumberSource {
-                    LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
+    private var nextActionsCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Next actions")
+                .font(.headline)
+                .padding(.bottom, 8)
+            ForEach(nextActions) { action in
+                Button {
+                    onEdit(action.route)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: action.symbol)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(action.title)
+                                .foregroundStyle(.primary)
+                            Text("\(action.count) missing")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
-                LabeledContent("Main breaker", value: breakerText)
-                LabeledContent("Solar", value: yesNo(store.session.electrical.hasSolar))
-                LabeledContent("Portable generator", value: yesNo(store.session.electrical.hasPortableGenerator))
-                LabeledContent("Standby generator", value: yesNo(store.session.electrical.hasStandbyGenerator))
-                LabeledContent("Existing whole-home battery", value: yesNo(store.session.electrical.hasExistingWholeHomeBattery))
-                LabeledContent("Planned batteries", value: batteryCountText)
+                .buttonStyle(.plain)
+                if action.id != nextActions.last?.id {
+                    Divider()
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Survey details")
+                .font(.headline)
+
+            detailCard(title: "Property", symbol: "house.fill", isExpanded: $propertyExpanded) {
+                propertyDetails
+                editButton("Edit home information", route: .home)
+            }
+
+            detailCard(title: "Electrical evidence", symbol: "bolt.fill", isExpanded: $electricalExpanded) {
+                electricalDetails
+                HStack {
+                    editButton("Edit meter", route: .meter)
+                    editButton("Edit breaker", route: .breaker)
+                }
+            }
+
+            detailCard(title: "Placement", symbol: "arkit", isExpanded: $placementExpanded) {
+                placementDetails
+                editButton("Edit placement", route: .placement)
+            }
+
+            detailCard(title: "Eligibility checks", symbol: "checklist", isExpanded: $checksExpanded) {
+                checksDetails
+            }
         }
     }
 
-    private var placementSection: some View {
-        GroupBox("AR placement") {
-            VStack(alignment: .leading, spacing: 8) {
-                evidenceImage(store.placementImage, label: "Placement screenshot")
-                LabeledContent("LiDAR mesh", value: store.session.placement.lidarMeshAvailable ? "Used" : "Not available")
-                LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
-                LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
-                LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
-                LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
-                LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
-                LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
-                LabeledContent("Same wall (meter + panel)", value: sameWallText(store.session.placement.meterAndPanelSameWall))
-                LabeledContent("Footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
-                LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
-                Text("GPS above is the phone's property fix, not where the battery was placed.")
+    private func detailCard<Content: View>(
+        title: String,
+        symbol: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
+                content()
+            }
+            .padding(.top, 8)
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.headline)
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var propertyDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("Name", value: display(store.session.contactName))
+            LabeledContent("Email", value: display(store.session.email))
+            LabeledContent("Phone", value: display(store.session.phone))
+            LabeledContent("Address", value: display(store.session.propertyIdentifier))
+            LabeledContent("Own or rent", value: ownershipText)
+            if let fix = store.session.propertyLocation {
+                PropertyLocationMap(fix: fix)
+                LabeledContent("Captured", value: fix.timestamp.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent("Accuracy", value: String(format: "%.1f m", fix.horizontalAccuracyMeters))
+                Text(store.session.propertyLocationDisclaimer)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            } else {
+                Text("Property location not captured")
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private var checksSection: some View {
-        GroupBox("Checks") {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(store.session.ruleResults) { result in
+    private var electricalDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            evidenceImage(store.meterImage, label: "Round electric meter")
+            evidenceImage(store.breakerImage, label: "Main disconnect or breaker")
+            LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
+            if let source = store.session.electrical.meterNumberSource {
+                LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
+            }
+            LabeledContent("Main breaker", value: breakerText)
+            LabeledContent("Solar", value: yesNo(store.session.electrical.hasSolar))
+            LabeledContent("Portable generator", value: yesNo(store.session.electrical.hasPortableGenerator))
+            LabeledContent("Standby generator", value: yesNo(store.session.electrical.hasStandbyGenerator))
+            LabeledContent("Existing whole-home battery", value: yesNo(store.session.electrical.hasExistingWholeHomeBattery))
+            LabeledContent("Planned batteries", value: batteryCountText)
+        }
+    }
+
+    private var placementDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            evidenceImage(store.placementImage, label: "Placement screenshot")
+            LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
+            LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
+            LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
+            LabeledContent("Gas meter", value: gasMeterText)
+            LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
+            LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
+            LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
+            LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
+            LabeledContent("3 × 3 ft footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
+            LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
+            LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
+            LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelSameWall))
+            LabeledContent("Measurement surfaces", value: measurementMethods)
+            Text("GPS is the phone’s property fix, not the battery position. AR measurements are preliminary estimates.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var checksDetails: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(store.session.ruleResults) { result in
+                DisclosureGroup {
+                    Text(result.explanation)
+                        .font(.footnote)
+                        .padding(.top, 4)
+                } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Circle()
-                                .fill(statusColor(result.status))
-                                .frame(width: 10, height: 10)
-                            Text(result.title)
+                            Label(result.title, systemImage: statusSymbol(result.status))
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
                             Text(ToneStyle.statusTitle(result.status))
@@ -156,29 +252,20 @@ struct ReviewView: View {
                         Text(result.requirement)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(result.explanation)
-                            .font(.footnote)
                     }
                 }
+                if result.id != store.session.ruleResults.last?.id {
+                    Divider()
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private var missingSection: some View {
-        GroupBox("Still missing") {
-            VStack(alignment: .leading, spacing: 6) {
-                if store.session.missingInformation.isEmpty {
-                    Text("Nothing else is missing for this prototype.")
-                } else {
-                    ForEach(store.session.missingInformation, id: \.self) { item in
-                        Text("• \(item)")
-                            .font(.subheadline)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func editButton(_ title: String, route: HubRoute) -> some View {
+        Button(title) {
+            onEdit(route)
         }
+        .buttonStyle(.bordered)
     }
 
     private var jsonPreviewSection: some View {
@@ -210,32 +297,101 @@ struct ReviewView: View {
     private var shareSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let lastExportError = store.lastExportError {
-                Text(lastExportError)
+                Label(lastExportError, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.red)
-            } else if !store.exportURLs.isEmpty {
-                Text("Saved on this iPhone as survey.json, with any photos beside it.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
             Button {
                 store.exportForSharing()
                 showShare = store.lastExportError == nil && !store.exportURLs.isEmpty
             } label: {
-                Text("Share survey")
+                Label("Share survey", systemImage: "square.and.arrow.up")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            Button("Start over", role: .destructive, action: onStartOver)
-                .frame(maxWidth: .infinity, alignment: .center)
+            .controlSize(.large)
+            Text("Shares the current responses, photos, and missing-item list. The survey is also saved locally as survey.json.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
+        .padding(.top, 4)
+    }
+
+    private var readinessTitle: String {
+        if missingCount == 0 { return "Ready to share" }
+        return "\(missingCount) item\(missingCount == 1 ? "" : "s") still needed"
+    }
+
+    private var readinessMessage: String {
+        if store.session.ruleResults.contains(where: { $0.status == .conflict }) {
+            return "Captured evidence includes a conflict. Review the flagged checks and missing information."
+        }
+        if missingCount == 0 {
+            return "All requested information is captured. This remains a preliminary survey for engineer review."
+        }
+        return "Use the next actions below to finish the survey. You can still share the current draft."
+    }
+
+    private var readinessSymbol: String {
+        if store.session.ruleResults.contains(where: { $0.status == .conflict }) {
+            return "exclamationmark.triangle.fill"
+        }
+        return missingCount == 0 ? "checkmark.circle.fill" : "questionmark.circle.fill"
+    }
+
+    private var readinessColor: Color {
+        if store.session.ruleResults.contains(where: { $0.status == .conflict }) { return .red }
+        return missingCount == 0 ? .green : ToneStyle.color(.incomplete)
+    }
+
+    private var missingCount: Int { store.session.missingInformation.count }
+
+    private var nextActions: [ReviewAction] {
+        [
+            ReviewAction(route: .home, title: "Home and personal info", symbol: "house.fill", count: homeMissingCount),
+            ReviewAction(route: .meter, title: "Electrical meter", symbol: "gauge.with.dots.needle.33percent", count: meterMissingCount),
+            ReviewAction(route: .breaker, title: "Breaker box", symbol: "bolt.fill", count: breakerMissingCount),
+            ReviewAction(route: .placement, title: "Battery placement", symbol: "arkit", count: placementMissingCount)
+        ].filter { $0.count > 0 }
+    }
+
+    private var homeMissingCount: Int {
+        let session = store.session
+        return [
+            session.contactName.isBlank,
+            session.email.isBlank,
+            session.phone.isBlank,
+            session.propertyIdentifier.isBlank,
+            session.homeownership == nil,
+            session.electrical.hasSolar == nil,
+            session.electrical.hasPortableGenerator == nil,
+            session.electrical.hasStandbyGenerator == nil,
+            session.electrical.hasExistingWholeHomeBattery == nil,
+            session.electrical.plannedBatteryCount == nil,
+            session.propertyLocation == nil
+        ].filter { $0 }.count
+    }
+
+    private var meterMissingCount: Int {
+        [
+            store.session.electrical.meterPhotoFilename == nil,
+            (store.session.electrical.meterNumber ?? "").isBlank
+        ].filter { $0 }.count
+    }
+
+    private var breakerMissingCount: Int {
+        [
+            store.session.electrical.breakerPhotoFilename == nil,
+            store.session.electrical.mainBreakerAmperage == nil
+        ].filter { $0 }.count
+    }
+
+    private var placementMissingCount: Int {
+        max(0, missingCount - homeMissingCount - meterMissingCount - breakerMissingCount)
     }
 
     private var breakerText: String {
-        if let amps = store.session.electrical.mainBreakerAmperage {
-            return "\(amps) A"
-        }
-        return "Not confirmed"
+        store.session.electrical.mainBreakerAmperage.map { "\($0) A" } ?? "Not confirmed"
     }
 
     private var ownershipText: String {
@@ -246,19 +402,27 @@ struct ReviewView: View {
         }
     }
 
+    private var batteryCountText: String {
+        store.session.electrical.plannedBatteryCount.map(String.init) ?? "Not captured"
+    }
+
+    private var gasMeterText: String {
+        if store.session.placement.gasMeterMarked { return "Marked" }
+        if store.gasMeterNotVisible { return "Not visible" }
+        return "Not answered"
+    }
+
+    private var measurementMethods: String {
+        let methods = Set(store.session.placement.confirmedMeasurements.map(\.captureMethod.title)).sorted()
+        return methods.isEmpty ? "No confirmed measurements" : methods.joined(separator: ", ")
+    }
+
     private func yesNo(_ value: Bool?) -> String {
         switch value {
         case nil: "Not answered"
         case false: "No"
         case true: "Yes"
         }
-    }
-
-    private var batteryCountText: String {
-        if let count = store.session.electrical.plannedBatteryCount {
-            return "\(count)"
-        }
-        return "Not captured"
     }
 
     private func display(_ value: String?) -> String {
@@ -285,11 +449,27 @@ struct ReviewView: View {
         }
     }
 
+    private func observation(_ value: Bool?) -> String {
+        switch value {
+        case true: "Yes"
+        case false: "No"
+        case nil: "Not confirmed"
+        }
+    }
+
     private func statusColor(_ status: CheckStatus) -> Color {
         switch status {
         case .pass: .green
         case .conflict: .red
         case .unknown: ToneStyle.color(.incomplete)
+        }
+    }
+
+    private func statusSymbol(_ status: CheckStatus) -> String {
+        switch status {
+        case .pass: "checkmark.circle.fill"
+        case .conflict: "exclamationmark.triangle.fill"
+        case .unknown: "questionmark.circle.fill"
         }
     }
 
@@ -309,9 +489,24 @@ struct ReviewView: View {
                     .accessibilityLabel(label)
             }
         } else {
-            Text("\(label): not saved")
+            Label("\(label) not saved", systemImage: "photo.badge.exclamationmark")
                 .foregroundStyle(.secondary)
         }
+    }
+}
+
+private struct ReviewAction: Identifiable {
+    var route: HubRoute
+    var title: String
+    var symbol: String
+    var count: Int
+
+    var id: HubRoute { route }
+}
+
+private extension String {
+    var isBlank: Bool {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

@@ -90,17 +90,26 @@ enum MissingInformation {
                 items.append("Electric meter marked in AR, for the 20 ft check")
             }
             if session.placement.distanceToWallFeet == nil {
-                items.append("Wall clearance. No nearby wall plane was measured")
+                items.append("Confirmed battery-to-wall measurement")
             }
-            if !session.placement.gasMeterMarked {
+            if !session.placement.gasMeterMarked && !session.placement.gasMeterNotPresent {
                 items.append("Gas meter marked in AR, for the 3 ft check")
             }
             if session.placement.footprintIsClear == nil {
                 items.append("Clearance inside the 3 ft × 3 ft planning footprint")
             }
         }
+        if session.placement.meterHeightFeet == nil {
+            items.append("Confirmed meter height")
+        }
+        if session.placement.frontWorkingSpaceIsClear == nil {
+            items.append("30 × 36 in front working-space confirmation")
+        }
         if session.placement.transferSwitchClearanceObserved == nil {
             items.append("Space for a transfer switch beside the meter")
+        }
+        if session.placement.meterAndPanelShareWall == nil {
+            items.append("Whether the meter and breaker panel share a wall")
         }
         return items
     }

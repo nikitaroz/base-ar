@@ -102,11 +102,11 @@ struct GeoFix: Codable, Sendable, Equatable {
 struct ElectricalEvidence: Codable, Sendable, Equatable {
     var meterPhotoFilename: String?
     var breakerPhotoFilename: String?
-    /// Distinct from mainBreakerAmperage. Manual until OCR is connected.
+    /// Distinct from mainBreakerAmperage. A scan can fill this; the typed value is the one that is saved.
     var meterNumber: String?
     /// How the meter number was captured. Nil until a value is set.
     var meterNumberSource: MeterNumberSource?
-    /// Confirmed by the user. Distinct from meterNumber.
+    /// Confirmed by the user. Distinct from meterNumber. A scan can fill this.
     var mainBreakerAmperage: Int?
     /// Nil means the question has not been answered.
     var hasSolar: Bool?
@@ -134,12 +134,62 @@ struct PlacementAnchor: Codable, Sendable, Equatable {
     var simd: SIMD3<Float> { SIMD3(x, y, z) }
 }
 
+enum PlacementMeasurementKind: String, Codable, Sendable, CaseIterable, Identifiable {
+    case batteryToMeter
+    case batteryToWall
+    case batteryToGasMeter
+    case meterHeight
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .batteryToMeter: "Battery to meter"
+        case .batteryToWall: "Battery to wall"
+        case .batteryToGasMeter: "Battery to gas meter"
+        case .meterHeight: "Meter height"
+        }
+    }
+}
+
+enum MeasurementCaptureMethod: String, Codable, Sendable {
+    case lidarMesh
+    case existingPlane
+    case estimatedPlane
+
+    var title: String {
+        switch self {
+        case .lidarMesh: "LiDAR-supported surface"
+        case .existingPlane: "Detected plane"
+        case .estimatedPlane: "Estimated plane"
+        }
+    }
+}
+
+struct MeasurementEndpoint: Codable, Sendable, Equatable {
+    var position: PlacementAnchor
+    var captureMethod: MeasurementCaptureMethod
+}
+
+struct ConfirmedPlacementMeasurement: Codable, Sendable, Equatable, Identifiable {
+    var kind: PlacementMeasurementKind
+    var start: MeasurementEndpoint
+    var end: MeasurementEndpoint
+    var distanceFeet: Double
+    var captureMethod: MeasurementCaptureMethod
+    var confirmedAt: Date
+
+    var id: String { kind.rawValue }
+}
+
 struct PlacementEvidence: Codable, Sendable, Equatable {
     var screenshotFilename: String?
     var batteryPlaced: Bool = false
     var meterMarked: Bool = false
     var gasMeterMarked: Bool = false
     var panelMarked: Bool = false
+    /// The homeowner answered that there is no gas meter near the placement.
+    var gasMeterNotPresent: Bool = false
     var lidarMeshAvailable: Bool = false
     var distanceToMeterFeet: Double?
     var distanceToWallFeet: Double?
@@ -164,6 +214,15 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var batteryYawRadians: Float?
     /// When the placement snapshot was committed. Nil until a save happens.
     var snapshotTimestamp: Date?
+    var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
+    /// Explicit answer after positioning the 30 × 36 in overlay. Nil stays unknown.
+    var frontWorkingSpaceIsClear: Bool?
+    /// Explicit homeowner observation; no geometry-only inference is accepted.
+    var meterAndPanelShareWall: Bool?
+    var workingSpacePosition: PlacementAnchor?
+    var workingSpaceYawRadians: Float?
+
+    init() {}
 }
 
 enum CheckStatus: String, Codable, Sendable {

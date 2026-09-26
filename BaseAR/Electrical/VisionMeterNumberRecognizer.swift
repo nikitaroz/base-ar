@@ -10,6 +10,10 @@ struct VisionMeterNumberRecognizer: MeterNumberRecognizing {
     private static let maxDigits = 12
     private static let minConfidence: Float = 0.4
 
+    func recognizeMainBreakerAmperage(in imageJPEG: Data) async -> Int? {
+        nil
+    }
+
     func recognizeMeterNumber(in imageJPEG: Data) async -> String? {
         guard let cgImage = UIImage(data: imageJPEG)?.cgImage else { return nil }
         return await withCheckedContinuation { continuation in

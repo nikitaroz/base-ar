@@ -11,6 +11,7 @@ final class PropertyLocationProvider: NSObject, CLLocationManagerDelegate {
     private let precisePurposeKey = "PropertyFix"
     private let manager = CLLocationManager()
     private var didRequestFix = false
+    private var userRequestedLocation = false
     private nonisolated static let deniedMessage = "Location access is off. Allow location for Base Site Survey in Settings, then try again."
     private nonisolated static let failedMessage = "The property fix failed. Try again."
 
@@ -21,6 +22,7 @@ final class PropertyLocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     func request() {
+        userRequestedLocation = true
         switch manager.authorizationStatus {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
@@ -62,6 +64,7 @@ final class PropertyLocationProvider: NSObject, CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
         Task { @MainActor in
+            guard self.userRequestedLocation else { return }
             switch status {
             case .authorizedAlways, .authorizedWhenInUse:
                 self.requestSingleFix()

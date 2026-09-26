@@ -11,8 +11,18 @@ final class SurveyStore {
     var placementImage: UIImage?
     private(set) var exportURLs: [URL] = []
     private(set) var lastExportError: String?
+    /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
+    private(set) var meterNumberNote: String?
+    /// Shown under the amperage field after a scan or a failed read. Cleared when the user edits the rating.
+    private(set) var breakerAmperageNote: String?
+    private(set) var isReadingMeterNumber = false
+    private(set) var isReadingBreakerAmperage = false
     /// Shown when the property fix failed or location access is off. Nil while waiting or after a fix.
     private(set) var locationStatusMessage: String?
+    /// True from the tap until a fix or a failure. The form uses this so the tap has an immediate result.
+    private(set) var isRequestingPropertyLocation = false
+    /// True when the homeowner answered that there is no gas meter, as opposed to an unfinished mark.
+    var gasMeterNotVisible: Bool { session.placement.gasMeterNotPresent }
     /// Lives for the whole survey so leaving placement does not drop the AR session or its marks.
     private(set) var placementController: PlacementSceneController?
 
@@ -22,13 +32,15 @@ final class SurveyStore {
     private let exporter: any SurveyExporting
     private let recognizer: any MeterNumberRecognizing
     private let locationProvider = PropertyLocationProvider()
+    private var meterReadGeneration = 0
+    private var breakerReadGeneration = 0
 
     init(
         propertyIdentifier: String,
         measurer: any PlacementMeasuring = CorePlacementMeasurer(),
         evaluator: any SurveyEvaluating = BaseSurveyEvaluator(),
         exporter: any SurveyExporting = JSONSurveyExporter(),
-        recognizer: any MeterNumberRecognizing = VisionMeterNumberRecognizer()
+        recognizer: any MeterNumberRecognizing = VisionElectricalRecognizer()
     ) throws {
         let session = SurveySession.new(propertyIdentifier: propertyIdentifier)
         self.session = session
@@ -38,20 +50,35 @@ final class SurveyStore {
         self.recognizer = recognizer
         directory = try Self.makeDirectory(id: session.id)
         locationProvider.onFix = { [weak self] fix in
-            self?.locationStatusMessage = nil
-            self?.session.propertyLocation = fix
-            self?.refreshAssessment()
+            guard let self else { return }
+            self.isRequestingPropertyLocation = false
+            self.locationStatusMessage = nil
+            self.session.propertyLocation = fix
+            self.refreshAssessment()
         }
         locationProvider.onStatus = { [weak self] message in
             guard let self, self.session.propertyLocation == nil else { return }
+            if message != nil {
+                self.isRequestingPropertyLocation = false
+            }
             self.locationStatusMessage = message
         }
-        locationProvider.request()
         refreshAssessment()
+    }
+
+    func requestPropertyLocation() {
+        isRequestingPropertyLocation = true
+        locationStatusMessage = nil
+        locationProvider.request()
     }
 
     func retryPropertyLocation() {
         locationProvider.retry()
+    }
+
+    func setGasMeterNotVisible(_ value: Bool) {
+        session.placement.gasMeterNotPresent = value
+        refreshAssessment()
     }
 
     func requirePlacementController() -> PlacementSceneController {
@@ -93,15 +120,17 @@ final class SurveyStore {
         refreshAssessment()
     }
 
-    func setMeterNumber(_ value: String, source: MeterNumberSource = .manual) {
+    func setMeterNumber(_ value: String, source: MeterNumberSource = .manual, note: String? = nil) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         session.electrical.meterNumber = value
         session.electrical.meterNumberSource = trimmed.isEmpty ? nil : source
+        meterNumberNote = note
         refreshAssessment()
     }
 
-    func setMainBreakerAmperage(_ value: Int?) {
+    func setMainBreakerAmperage(_ value: Int?, note: String? = nil) {
         session.electrical.mainBreakerAmperage = value
+        breakerAmperageNote = note
         refreshAssessment()
     }
 
@@ -136,19 +165,46 @@ final class SurveyStore {
         session.electrical.meterPhotoFilename = write(jpeg, filename: "meter.jpg")
         refreshAssessment()
         guard let jpeg else { return }
+        let currentNumber = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard currentNumber.isEmpty else { return }
+        meterReadGeneration += 1
+        let generation = meterReadGeneration
+        isReadingMeterNumber = true
         Task {
-            guard let number = await recognizer.recognizeMeterNumber(in: jpeg) else { return }
+            let number = await recognizer.recognizeMeterNumber(in: jpeg)
+            guard generation == meterReadGeneration else { return }
+            isReadingMeterNumber = false
             let current = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if current.isEmpty {
-                setMeterNumber(number, source: .ocr)
+            guard current.isEmpty else { return }
+            if let number {
+                setMeterNumber(number, source: .ocr, note: "Read from the photo. Confirm it matches the meter.")
+            } else {
+                meterNumberNote = "Couldn't read a meter number from that photo. Type it, or scan the nameplate."
             }
         }
     }
 
     func attachBreakerPhoto(_ image: UIImage) {
         breakerImage = image
-        session.electrical.breakerPhotoFilename = write(Self.uprightJPEG(image), filename: "breaker.jpg")
+        let jpeg = Self.uprightJPEG(image)
+        session.electrical.breakerPhotoFilename = write(jpeg, filename: "breaker.jpg")
         refreshAssessment()
+        guard let jpeg else { return }
+        guard session.electrical.mainBreakerAmperage == nil else { return }
+        breakerReadGeneration += 1
+        let generation = breakerReadGeneration
+        isReadingBreakerAmperage = true
+        Task {
+            let amps = await recognizer.recognizeMainBreakerAmperage(in: jpeg)
+            guard generation == breakerReadGeneration else { return }
+            isReadingBreakerAmperage = false
+            guard session.electrical.mainBreakerAmperage == nil else { return }
+            if let amps {
+                setMainBreakerAmperage(amps, note: "Read from the photo. Confirm it matches the main breaker.")
+            } else {
+                breakerAmperageNote = "Couldn't read a breaker rating from that photo. Type it, or scan the handle."
+            }
+        }
     }
 
     func measurements(for snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
@@ -164,6 +220,9 @@ final class SurveyStore {
     func commitPlacement(_ snapshot: PlacementSceneSnapshot) {
         session.placement = measurer.applying(snapshot, to: session.placement)
         session.placement.snapshotTimestamp = Date()
+        if session.placement.gasMeterMarked {
+            session.placement.gasMeterNotPresent = false
+        }
         refreshAssessment()
     }
 

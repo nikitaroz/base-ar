@@ -8,7 +8,7 @@ The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**
 
 1. Open `BaseAR.xcodeproj`.
 2. Select the `BaseAR` scheme and a physical iPhone running iOS 17 or later.
-3. Allow camera and While Using location when asked. Location is the phone’s property fix (latitude, longitude, time, and reported horizontal accuracy). It is not the battery position.
+3. Allow camera after choosing a photo task, and allow While Using location after tapping **Use current location**. Location is the phone’s property fix (latitude, longitude, time, and reported horizontal accuracy). It is not the battery position.
 4. Run the app outdoors, or somewhere the phone can see the ground and a wall.
 
 AR placement needs a physical iPhone. The simulator can open the survey, take library photos, and reach review, but world tracking stays unavailable there.
@@ -29,7 +29,7 @@ Or select Xcode once with `sudo xcode-select -s /Applications/Xcode.app/Contents
 ## Project structure
 
 - `BaseAR/Survey` — shared `SurveySession` and `SurveyStore`
-- `BaseAR/Electrical` — meter and breaker capture, manual amperage, OCR hook
+- `BaseAR/Electrical` — meter and breaker capture, live scan, and photo OCR
 - `BaseAR/Placement` — AR placement, battery size, measurements
 - `BaseAR/Rules` — `EligibilityRule`, `BaseRuleSet`, pass / conflict / unknown
 - `BaseAR/Review` — review screen and JSON export
@@ -39,12 +39,15 @@ Or select Xcode once with `sudo xcode-select -s /Applications/Xcode.app/Contents
 
 ## What works
 
-- Splash → intro → four-tile hub (home and personal info, electrical meter, breaker box, battery placement). Every tile is open; nothing is locked yet.
+- One-screen welcome → four-tile hub (home and personal info, electrical meter, breaker box, battery placement). Every tile is open, shows completion progress, and saves as you go.
 - Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
-- Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields.
-- Outdoor `ARView` with horizontal and vertical plane detection. Tap to place, drag to move, and rotate a Base Core placeholder at 30.68 in W × 35.9 in H × 22 in D, with a separate 3 ft × 3 ft pad. Mark the electric meter, and optionally the gas meter.
-- LiDAR scene mesh and occlusion when the phone supports it. Placement still uses plane raycasts without LiDAR.
-- Review is reachable from the hub (and after placement). It shows both photos, the confirmed breaker value, the home-form answers, the AR screenshot, rule results, and what is still missing.
+- Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the number in a card-style frame and saves that photo. A normal photo can also fill an empty field. The typed value is the one that is kept.
+- Outdoor `ARView` with horizontal and vertical plane detection. Placement is a short walkthrough: aim a dot, tap +, then drag and twist the Base Core placeholder (30.68 in W × 35.9 in H × 22 in D, on a 3 ft × 3 ft pad). Later steps mark the meter, measure like the Measure app, and ask one clearance question at a time.
+- LiDAR occlusion when the phone supports it. Placement still uses plane raycasts without LiDAR. The mesh is not drawn on screen.
+- Each measurement is one distance: battery to meter, battery to wall, battery to gas meter, and meter height. Battery distances start automatically at the battery's nearest base edge, so you only aim at the target; they are horizontal. Meter height is the vertical rise from the ground point to the meter face. Points prefer detected planes and fall back to estimated planes.
+- Answering "No gas meter" is saved in `survey.json` (`gasMeterNotPresent`) and passes the gas-clearance check.
+- One step places a 30 × 36 in working-space overlay. Separate steps ask whether that space is clear, whether the 3 × 3 ft pad is clear, whether transfer-switch space is available, and whether the meter and panel share a wall.
+- Review is reachable from the hub (and after placement). It leads with grouped next actions, then provides collapsible property, electrical, placement, and rule details with edit links.
 - A local `survey.json` is saved next to the photos and can be shared from the review screen.
 - The battery preview is green only when every required check passed on measured evidence. Unknown stays amber. A measured conflict turns it red.
 
@@ -62,14 +65,12 @@ This app already asks the typed home-form questions and stores one meter photo, 
 
 ## What is stubbed
 
-- Meter OCR always returns nil. The number is typed by hand.
-- Footprint clearance (`footprintIsClear`) and transfer-switch space (`transferSwitchClearanceObserved`) are never set, so those required checks stay unknown and the preview does not turn green yet.
-- Meter height, front working space, and same-wall meter/panel are not measured yet. They are AR work, not form fields.
+- AR measurements are preliminary raycast estimates and still need physical-device field verification; they do not replace an installer measurement.
 - The wide photo kit (left, right, surrounding, adjacent wall, behind the fence, breaker-area context) is not captured.
 - No ERCOT data, satellite imagery, automatic equipment detection, Base backend, or permitting logic.
 
 ## Next three tasks
 
-1. **Electrical capture / OCR.** Implement `MeterNumberRecognizing` with Vision. Keep the typed meter number and breaker amperage as the values the user accepts.
+1. **Electrical capture / OCR.** Done. Vision reads a meter number and main-breaker amperage from a photo, and a live card-style scan can fill either field. The typed value is still the one the user accepts.
 2. **AR placement and measurements.** Measure pad clearance into `footprintIsClear`, and transfer-switch space beside the meter into `transferSwitchClearanceObserved`. Add meter height, front working space, and whether the meter and panel share a wall. Tighten wall distance against the LiDAR mesh when it exists.
 3. **Rules and review export.** Extend `BaseRuleSet` only when those measurements exist. Keep each check at pass, conflict, or unknown, and keep green reserved for a full set of measured passes.

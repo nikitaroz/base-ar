@@ -18,6 +18,8 @@
 		B10000000000000000000004 /* MeterNumberRecognizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* MeterNumberRecognizing.swift */; };
 		B10000000000000000000005 /* CameraImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* CameraImagePicker.swift */; };
 		B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* ElectricalCaptureView.swift */; };
+		B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* VisionElectricalRecognizer.swift */; };
+		B10000000000000000000014 /* LiveLabelScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* LiveLabelScanner.swift */; };
 		B10000000000000000000007 /* BatteryGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* BatteryGeometry.swift */; };
 		B10000000000000000000008 /* PlacementMeasuring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* PlacementMeasuring.swift */; };
 		B10000000000000000000009 /* PlacementARView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* PlacementARView.swift */; };
@@ -56,6 +58,8 @@
 		B20000000000000000000004 /* MeterNumberRecognizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterNumberRecognizing.swift; sourceTree = "<group>"; };
 		B20000000000000000000005 /* CameraImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraImagePicker.swift; sourceTree = "<group>"; };
 		B20000000000000000000006 /* ElectricalCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElectricalCaptureView.swift; sourceTree = "<group>"; };
+		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
+		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
 		B20000000000000000000007 /* BatteryGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryGeometry.swift; sourceTree = "<group>"; };
 		B20000000000000000000008 /* PlacementMeasuring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementMeasuring.swift; sourceTree = "<group>"; };
 		B20000000000000000000009 /* PlacementARView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementARView.swift; sourceTree = "<group>"; };
@@ -157,6 +161,8 @@
 			children = (
 				B20000000000000000000004 /* MeterNumberRecognizing.swift */,
 				B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */,
+				B20000000000000000000015 /* VisionElectricalRecognizer.swift */,
+				B20000000000000000000014 /* LiveLabelScanner.swift */,
 				B20000000000000000000005 /* CameraImagePicker.swift */,
 				B20000000000000000000006 /* ElectricalCaptureView.swift */,
 			);
@@ -300,6 +306,8 @@
 				B10000000000000000000003 /* ToneStyle.swift in Sources */,
 				B10000000000000000000004 /* MeterNumberRecognizing.swift in Sources */,
 				B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */,
+				B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */,
+				B10000000000000000000014 /* LiveLabelScanner.swift in Sources */,
 				B10000000000000000000005 /* CameraImagePicker.swift in Sources */,
 				B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */,
 				B10000000000000000000007 /* BatteryGeometry.swift in Sources */,

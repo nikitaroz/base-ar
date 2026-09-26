@@ -28,9 +28,21 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var lidarMeshAvailable: Bool = false
     /// World-space mesh vertices near the battery, sub-sampled from ARMeshAnchor. Used for footprint clearance.
     var meshPointsNearBattery: [PlacementAnchor] = []
+    var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
+    var footprintIsClear: Bool?
+    var frontWorkingSpaceIsClear: Bool?
+    var transferSwitchClearanceObserved: Bool?
+    var meterAndPanelShareWall: Bool?
+    var workingSpacePosition: PlacementAnchor?
+    var workingSpaceYawRadians: Float = 0
+    var draftMeasurementStart: MeasurementEndpoint?
+    var draftMeasurementEnd: MeasurementEndpoint?
 
     var hasPlacedContent: Bool {
         batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil || panelPosition != nil
+            || !confirmedMeasurements.isEmpty || workingSpacePosition != nil
+            || footprintIsClear != nil || frontWorkingSpaceIsClear != nil
+            || transferSwitchClearanceObserved != nil || meterAndPanelShareWall != nil
     }
 }
 
@@ -51,6 +63,12 @@ struct PlacementMeasurements: Sendable, Equatable {
     var panelPosition: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
     var batteryYawRadians: Float?
+    var confirmedMeasurements: [ConfirmedPlacementMeasurement]
+    var frontWorkingSpaceIsClear: Bool?
+    var transferSwitchClearanceObserved: Bool?
+    var meterAndPanelShareWall: Bool?
+    var workingSpacePosition: PlacementAnchor?
+    var workingSpaceYawRadians: Float?
 }
 
 /// AR placement boundary. Turns a scene snapshot into distances the rule set can read.
@@ -81,6 +99,12 @@ extension PlacementMeasuring {
         updated.panelPosition = measured.panelPosition
         updated.gasMeterPosition = measured.gasMeterPosition
         updated.batteryYawRadians = measured.batteryYawRadians
+        updated.confirmedMeasurements = measured.confirmedMeasurements
+        updated.frontWorkingSpaceIsClear = measured.frontWorkingSpaceIsClear
+        updated.transferSwitchClearanceObserved = measured.transferSwitchClearanceObserved
+        updated.meterAndPanelShareWall = measured.meterAndPanelShareWall
+        updated.workingSpacePosition = measured.workingSpacePosition
+        updated.workingSpaceYawRadians = measured.workingSpaceYawRadians
         return updated
     }
 }
@@ -92,12 +116,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     var wallParallelDotThreshold: Float = 0.96
 
     func measure(_ snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
-        let meterFeet = horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
-        let gasFeet = horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
-        let wallFeet = wallClearanceFeet(snapshot)
-        let heightFeet = meterHeightFeet(snapshot)
-        let sameWall = meterAndPanelSameWall(snapshot)
-        let footprint = footprintClearance(snapshot)
+        let meterFeet = confirmed(.batteryToMeter, in: snapshot)?.distanceFeet
+            ?? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
+        let gasFeet = confirmed(.batteryToGasMeter, in: snapshot)?.distanceFeet
+            ?? horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
+        let wallFeet = confirmed(.batteryToWall, in: snapshot)?.distanceFeet
+            ?? wallClearanceFeet(snapshot)
+        let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
+        let sameWall = meterAndPanelSameWall(snapshot) ?? snapshot.meterAndPanelShareWall
+        let footprint = footprintClearance(snapshot) ?? snapshot.footprintIsClear
         return PlacementMeasurements(
             batteryPlaced: snapshot.batteryPosition != nil,
             meterMarked: snapshot.meterPosition != nil,
@@ -114,8 +141,18 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             meterPosition: snapshot.meterPosition,
             panelPosition: snapshot.panelPosition,
             gasMeterPosition: snapshot.gasMeterPosition,
-            batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians
+            batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians,
+            confirmedMeasurements: snapshot.confirmedMeasurements,
+            frontWorkingSpaceIsClear: snapshot.frontWorkingSpaceIsClear,
+            transferSwitchClearanceObserved: snapshot.transferSwitchClearanceObserved,
+            meterAndPanelShareWall: snapshot.meterAndPanelShareWall,
+            workingSpacePosition: snapshot.workingSpacePosition,
+            workingSpaceYawRadians: snapshot.workingSpacePosition == nil ? nil : snapshot.workingSpaceYawRadians
         )
+    }
+
+    private func confirmed(_ kind: PlacementMeasurementKind, in snapshot: PlacementSceneSnapshot) -> ConfirmedPlacementMeasurement? {
+        snapshot.confirmedMeasurements.first { $0.kind == kind }
     }
 
     /// Any mesh vertex inside the 3 ft × 3 ft pad's XZ footprint whose Y is between the ground and the battery height counts as an obstruction.
@@ -210,5 +247,36 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let length = simd_length(vector)
         guard length > 0.001 else { return nil }
         return vector / length
+    }
+}
+
+extension PlacementMeasurementKind {
+    /// Battery distances start at the battery itself, which a raycast cannot hit, so the app supplies that end.
+    var startsAtBattery: Bool { self != .meterHeight }
+
+    /// Meter height is the vertical rise. Battery distances are horizontal, as the siting rules read them.
+    func feet(from start: SIMD3<Float>, to end: SIMD3<Float>) -> Double {
+        switch self {
+        case .meterHeight:
+            return Double(abs(end.y - start.y)) / 0.3048
+        case .batteryToMeter, .batteryToWall, .batteryToGasMeter:
+            let dx = Double(end.x - start.x)
+            let dz = Double(end.z - start.z)
+            return (dx * dx + dz * dz).squareRoot() / 0.3048
+        }
+    }
+}
+
+extension BatteryGeometry {
+    /// Closest point on the battery's base to `target`, on the ground under the battery.
+    static func nearestBasePoint(origin: SIMD3<Float>, yaw: Float, toward target: SIMD3<Float>) -> SIMD3<Float> {
+        let rotation = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0))
+        let local = rotation.inverse.act(target - origin)
+        let clamped = SIMD3<Float>(
+            min(max(local.x, -widthMeters / 2), widthMeters / 2),
+            0,
+            min(max(local.z, -depthMeters / 2), depthMeters / 2)
+        )
+        return origin + rotation.act(clamped)
     }
 }

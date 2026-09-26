@@ -1,0 +1,517 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* BaseARApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* BaseARApp.swift */; };
+		A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* ContentView.swift */; };
+		A10000000000000000000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* Assets.xcassets */; };
+		A10000000000000000000004 /* BaseARTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* BaseARTests.swift */; };
+		A10000000000000000000005 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* XCTest.framework */; };
+		B10000000000000000000001 /* SurveySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* SurveySession.swift */; };
+		B10000000000000000000002 /* SurveyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* SurveyStore.swift */; };
+		B10000000000000000000003 /* ToneStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* ToneStyle.swift */; };
+		B10000000000000000000004 /* MeterNumberRecognizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* MeterNumberRecognizing.swift */; };
+		B10000000000000000000005 /* CameraImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* CameraImagePicker.swift */; };
+		B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* ElectricalCaptureView.swift */; };
+		B10000000000000000000007 /* BatteryGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* BatteryGeometry.swift */; };
+		B10000000000000000000008 /* PlacementMeasuring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* PlacementMeasuring.swift */; };
+		B10000000000000000000009 /* PlacementARView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* PlacementARView.swift */; };
+		B1000000000000000000000A /* EligibilityRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000A /* EligibilityRule.swift */; };
+		B1000000000000000000000B /* BaseRuleSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000B /* BaseRuleSet.swift */; };
+		B1000000000000000000000C /* SurveyEvaluating.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000C /* SurveyEvaluating.swift */; };
+		B1000000000000000000000D /* SurveyExporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000D /* SurveyExporting.swift */; };
+		B1000000000000000000000E /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000E /* ReviewView.swift */; };
+		B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000F /* PropertyLocationProvider.swift */; };
+		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
+		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = BaseAR;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* BaseARApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseARApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000004 /* BaseAR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BaseAR.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000005 /* BaseARTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BaseARTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000006 /* BaseARTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseARTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		B20000000000000000000001 /* SurveySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveySession.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* SurveyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyStore.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* ToneStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToneStyle.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 /* MeterNumberRecognizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterNumberRecognizing.swift; sourceTree = "<group>"; };
+		B20000000000000000000005 /* CameraImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraImagePicker.swift; sourceTree = "<group>"; };
+		B20000000000000000000006 /* ElectricalCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElectricalCaptureView.swift; sourceTree = "<group>"; };
+		B20000000000000000000007 /* BatteryGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryGeometry.swift; sourceTree = "<group>"; };
+		B20000000000000000000008 /* PlacementMeasuring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementMeasuring.swift; sourceTree = "<group>"; };
+		B20000000000000000000009 /* PlacementARView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementARView.swift; sourceTree = "<group>"; };
+		B2000000000000000000000A /* EligibilityRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EligibilityRule.swift; sourceTree = "<group>"; };
+		B2000000000000000000000B /* BaseRuleSet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseRuleSet.swift; sourceTree = "<group>"; };
+		B2000000000000000000000C /* SurveyEvaluating.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyEvaluating.swift; sourceTree = "<group>"; };
+		B2000000000000000000000D /* SurveyExporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyExporting.swift; sourceTree = "<group>"; };
+		B2000000000000000000000E /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
+		B2000000000000000000000F /* PropertyLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationProvider.swift; sourceTree = "<group>"; };
+		B20000000000000000000010 /* AddressCompleter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressCompleter.swift; sourceTree = "<group>"; };
+		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
+		B20000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A60000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A60000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000005 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A70000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A70000000000000000000002 /* BaseAR */,
+				A70000000000000000000003 /* BaseARTests */,
+				A70000000000000000000004 /* Frameworks */,
+				A70000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A70000000000000000000002 /* BaseAR */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* BaseARApp.swift */,
+				A20000000000000000000002 /* ContentView.swift */,
+				B70000000000000000000010 /* Survey */,
+				B70000000000000000000011 /* Electrical */,
+				B70000000000000000000012 /* Placement */,
+				B70000000000000000000013 /* Rules */,
+				B70000000000000000000014 /* Review */,
+				B70000000000000000000015 /* Location */,
+				A20000000000000000000003 /* Assets.xcassets */,
+				B20000000000000000000012 /* Info.plist */,
+			);
+			path = BaseAR;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000010 /* Survey */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000001 /* SurveySession.swift */,
+				B20000000000000000000002 /* SurveyStore.swift */,
+				B20000000000000000000003 /* ToneStyle.swift */,
+			);
+			path = Survey;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000011 /* Electrical */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000004 /* MeterNumberRecognizing.swift */,
+				B20000000000000000000005 /* CameraImagePicker.swift */,
+				B20000000000000000000006 /* ElectricalCaptureView.swift */,
+			);
+			path = Electrical;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000012 /* Placement */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000007 /* BatteryGeometry.swift */,
+				B20000000000000000000008 /* PlacementMeasuring.swift */,
+				B20000000000000000000009 /* PlacementARView.swift */,
+			);
+			path = Placement;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000013 /* Rules */ = {
+			isa = PBXGroup;
+			children = (
+				B2000000000000000000000A /* EligibilityRule.swift */,
+				B2000000000000000000000B /* BaseRuleSet.swift */,
+				B2000000000000000000000C /* SurveyEvaluating.swift */,
+			);
+			path = Rules;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000014 /* Review */ = {
+			isa = PBXGroup;
+			children = (
+				B2000000000000000000000D /* SurveyExporting.swift */,
+				B2000000000000000000000E /* ReviewView.swift */,
+			);
+			path = Review;
+			sourceTree = "<group>";
+		};
+		B70000000000000000000015 /* Location */ = {
+			isa = PBXGroup;
+			children = (
+				B2000000000000000000000F /* PropertyLocationProvider.swift */,
+				B20000000000000000000010 /* AddressCompleter.swift */,
+				B20000000000000000000011 /* PropertyLocationMap.swift */,
+			);
+			path = Location;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000003 /* BaseARTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000006 /* BaseARTests.swift */,
+			);
+			path = BaseARTests;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000004 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* XCTest.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A70000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000004 /* BaseAR.app */,
+				A20000000000000000000005 /* BaseARTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 /* BaseAR */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "BaseAR" */;
+			buildPhases = (
+				A90000000000000000000001 /* Sources */,
+				A60000000000000000000001 /* Frameworks */,
+				AA0000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BaseAR;
+			productName = BaseAR;
+			productReference = A20000000000000000000004 /* BaseAR.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A50000000000000000000002 /* BaseARTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000003 /* Build configuration list for PBXNativeTarget "BaseARTests" */;
+			buildPhases = (
+				A90000000000000000000002 /* Sources */,
+				A60000000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AB0000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = BaseARTests;
+			productName = BaseARTests;
+			productReference = A20000000000000000000005 /* BaseARTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A40000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A50000000000000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = A50000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "BaseAR" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A70000000000000000000001;
+			productRefGroup = A70000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A50000000000000000000001 /* BaseAR */,
+				A50000000000000000000002 /* BaseARTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA0000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000003 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A90000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* BaseARApp.swift in Sources */,
+				A10000000000000000000002 /* ContentView.swift in Sources */,
+				B10000000000000000000001 /* SurveySession.swift in Sources */,
+				B10000000000000000000002 /* SurveyStore.swift in Sources */,
+				B10000000000000000000003 /* ToneStyle.swift in Sources */,
+				B10000000000000000000004 /* MeterNumberRecognizing.swift in Sources */,
+				B10000000000000000000005 /* CameraImagePicker.swift in Sources */,
+				B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */,
+				B10000000000000000000007 /* BatteryGeometry.swift in Sources */,
+				B10000000000000000000008 /* PlacementMeasuring.swift in Sources */,
+				B10000000000000000000009 /* PlacementARView.swift in Sources */,
+				B1000000000000000000000A /* EligibilityRule.swift in Sources */,
+				B1000000000000000000000B /* BaseRuleSet.swift in Sources */,
+				B1000000000000000000000C /* SurveyEvaluating.swift in Sources */,
+				B1000000000000000000000D /* SurveyExporting.swift in Sources */,
+				B1000000000000000000000E /* ReviewView.swift in Sources */,
+				B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */,
+				B10000000000000000000010 /* AddressCompleter.swift in Sources */,
+				B10000000000000000000011 /* PropertyLocationMap.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A90000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000004 /* BaseARTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* BaseAR */;
+			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		AC0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		AC0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62JVG6DVVU;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BaseAR/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Base Site Survey";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Base Site Survey uses the camera to photograph the electric meter and main breaker and to preview battery placement.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Base Site Survey uses your precise location to show this property on a map. This is not the battery position.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "If the camera is unavailable, Base Site Survey can choose a photo from the library.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AC0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 62JVG6DVVU;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BaseAR/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Base Site Survey";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Base Site Survey uses the camera to photograph the electric meter and main breaker and to preview battery placement.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Base Site Survey uses your precise location to show this property on a map. This is not the battery position.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "If the camera is unavailable, Base Site Survey can choose a photo from the library.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		AC0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseARTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BaseAR.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BaseAR";
+			};
+			name = Debug;
+		};
+		AC0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseARTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BaseAR.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/BaseAR";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000000000001 /* Build configuration list for PBXProject "BaseAR" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000001 /* Debug */,
+				AC0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "BaseAR" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000003 /* Debug */,
+				AC0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000003 /* Build configuration list for PBXNativeTarget "BaseARTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AC0000000000000000000005 /* Debug */,
+				AC0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A40000000000000000000001 /* Project object */;
+}

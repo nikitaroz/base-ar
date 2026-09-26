@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1254 1254" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#343B46"/>
+      <stop offset="1" stop-color="#1A1E25"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F7F8FA"/>
+      <stop offset="1" stop-color="#D8DBE0"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5DB8D8"/>
+      <stop offset="1" stop-color="#3E95B5"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Full-bleed background; iOS applies the rounded mask -->
+  <rect width="1254" height="1254" fill="url(#bg)"/>
+
+  <!-- Viewfinder corners and move chevrons -->
+  <g fill="none" stroke="#EEF0F3" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M188 352 V184 H364"/>
+    <path d="M890 184 H1066 V352"/>
+    <path d="M188 902 V1066 H364"/>
+    <path d="M890 1066 H1066 V902"/>
+    <path d="M576 192 L626 142 L676 192"/>
+    <path d="M576 1034 L626 1084 L676 1034"/>
+    <path d="M254 562 L198 618 L254 674"/>
+    <path d="M1000 562 L1056 618 L1000 674"/>
+  </g>
+
+  <!-- Battery -->
+  <rect x="494" y="270" width="268" height="60" rx="18" fill="#F1F2F5"/>
+  <rect x="389" y="302" width="476" height="652" rx="36" fill="url(#body)"/>
+  <rect x="389" y="419" width="476" height="8" fill="#A9ADB5"/>
+
+  <!-- Bolt -->
+  <path d="M656 504 L536 668 L598 676 L576 798 L713 616 L648 606 Z"
+        fill="url(#bolt)" stroke="url(#bolt)" stroke-width="14" stroke-linejoin="round"/>
+</svg>

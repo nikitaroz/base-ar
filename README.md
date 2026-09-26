@@ -8,8 +8,9 @@ The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**
 
 1. Open `BaseAR.xcodeproj`.
 2. Select the `BaseAR` scheme and a physical iPhone running iOS 17 or later.
-3. Allow camera after choosing a photo task, and allow While Using location after tapping **Use current location**. Location is the phone’s property fix (latitude, longitude, time, and reported horizontal accuracy). It is not the battery position.
-4. Run the app outdoors, or somewhere the phone can see the ground and a wall.
+4. Allow camera after choosing a photo task, and allow While Using location after tapping **Use current location**. Location is the phone’s property fix (latitude, longitude, time, and reported horizontal accuracy). It is not the battery position.
+3. **(Optional)** To enable TypeSafe Jev advisory in the review screen, add `TYPESAFE_API_KEY` to the environment or Info.plist. Without the key, the advisory panel is hidden and the app works normally.
+5. Run the app outdoors, or somewhere the phone can see the ground and a wall.
 
 AR placement needs a physical iPhone. The simulator can open the survey, take library photos, and reach review, but world tracking stays unavailable there.
 
@@ -63,6 +64,19 @@ Base’s public request is two steps, researched 26 September 2026. [Get Started
 
 This app already asks the typed home-form questions and stores one meter photo, one breaker photo, typed meter number and amperage, and an AR screenshot. It does not yet capture Base’s wide meter-yard photos. Meter height (6 ft), working space in front of the meter and panel (about 30 × 36 in), and whether the meter and panel share a wall belong to AR placement, not the home form. The survey stays on the phone.
 
+
+## TypeSafe Jev Advisory
+
+When `TYPESAFE_API_KEY` is configured, the review screen includes an optional TypeSafe Jev advisory panel. It calls `POST https://api.typesafe.ai/v1/systemone` with a compact survey state (photos, distances, rule results, form summary, and Austin+Houston policy catalogs) and asks four questions:
+
+- **visit_ready** (noul): Is the survey ready for a Base engineer visit?
+- **next_action** (choice): What should the homeowner do next?
+- **blocking_gap** (choice): Which missing or failing evidence is the highest-priority blocker?
+- **readiness_score** (score 0-3): How ready is this survey for engineer review?
+
+The advisory is **event-driven and throttled** — it fetches only when the user taps Refresh or when the review screen first appears, not on every AR frame or survey change. Gracefully degrades on 401/422/429/timeout to "advisoryUnavailable" without blocking survey completion. The panel is hidden when the key is missing.
+
+**Advisory only** — it never overrides measured green/amber/red placement color or rule pass/conflict/unknown outcomes from `EligibilityRule`.
 ## What is stubbed
 
 - AR measurements are preliminary raycast estimates and still need physical-device field verification; they do not replace an installer measurement.

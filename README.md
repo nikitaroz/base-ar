@@ -4,17 +4,32 @@ A small iPhone app for a preliminary Base Power site survey. It collects meter a
 
 The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
 
-## Xcode and device setup
+## First-time setup (once per Mac)
 
-1. Open `BaseAR.xcodeproj`.
-2. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`, then enter your Apple development team and a bundle identifier unique to your account. The local file is ignored by Git.
-3. Select the `BaseAR` scheme and a physical iPhone running iOS 17 or later.
-4. Allow camera after choosing a photo task, and allow While Using location after tapping **Use current location**. Location is the phone’s property fix (latitude, longitude, time, and reported horizontal accuracy). It is not the battery position.
-5. Run the app outdoors, or somewhere the phone can see the ground and a wall.
+Each teammate does this once. `git pull` won't disturb any of it — signing config lives in files git ignores.
+
+1. **Sign in to Xcode with your Apple ID.**
+   Xcode → Settings → Accounts → **+** → Apple ID. This downloads your Apple Development certificate to the keychain. Without this step Xcode has no way to sign the app, and every build will fail with *"No Account for Team … / No profiles for …"*.
+2. **Generate your local signing config.**
+   From the repo root:
+   ```sh
+   ./scripts/bootstrap-signing.sh
+   ```
+   The script reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig`. That file is gitignored, so it is per-machine and never shared. If you'd rather set it up by hand, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
+3. **Open the project and let Xcode fetch a provisioning profile.**
+   Open `BaseAR.xcodeproj`. In *Signing & Capabilities* on the `BaseAR` target, confirm **Automatically manage signing** is checked. The first build (or Product → Clean Build Folder → Build) will pull down a profile for your bundle ID.
+4. **On your iPhone, trust the developer profile.**
+   First device install: Settings → General → VPN & Device Management → tap your developer profile → **Trust**.
+
+That's the whole loop. From this point on, `git pull` just applies code — signing is untouched.
+
+## Running the app
+
+Select the `BaseAR` scheme and a physical iPhone running iOS 17 or later. Allow camera when a photo task starts, and allow While Using location when Site Measurements opens. Location is the phone's property fix (latitude, longitude, time, and reported horizontal accuracy) — it is not the battery position. Run outdoors, or somewhere the phone can see the ground and a wall.
 
 AR placement needs a physical iPhone. The simulator can open the survey, take library photos, and reach review, but world tracking stays unavailable there.
 
-If command-line builds use Command Line Tools instead of Xcode:
+For a signing-free simulator sanity build (useful in CI or a clean checkout):
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
@@ -25,7 +40,18 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-Or select Xcode once with `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
+For a device build from the command line (after step 1 above):
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project BaseAR.xcodeproj \
+  -scheme BaseAR \
+  -destination 'generic/platform=iOS' \
+  -configuration Debug \
+  -allowProvisioningUpdates build
+```
+
+If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either prefix with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` (as above) or run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once.
 
 ## Project structure
 

@@ -54,6 +54,11 @@ private extension PlacementSceneSnapshot {
     }
 }
 
+private struct PlacementSaveRequest {
+    let snapshot: PlacementSceneSnapshot
+    let identity: PlacementCaptureIdentity
+}
+
 struct PlacementARView: View {
     var store: SurveyStore
     var onContinue: () -> Void
@@ -69,7 +74,7 @@ struct PlacementARView: View {
     @State private var liveReadout = LiveDistanceReadout()
     @State private var screenshotToken: UUID? = nil
     /// Set while a save waits for its screenshot. Cleared when it advances, so the view can save again after Back.
-    @State private var pendingSave: UUID? = nil
+    @State private var pendingSave: PlacementSaveRequest? = nil
     @State private var statusMessage: String? = nil
     @State private var trackingMessage: String? = nil
     @State private var isVisible = false
@@ -99,14 +104,8 @@ struct PlacementARView: View {
     }
 
     private var liveAssessment: SurveyAssessment {
-        if scene.hasPlacedContent {
-            return store.assessment(applying: scene)
-        }
-        return SurveyAssessment(
-            results: store.session.ruleResults,
-            placementTone: store.session.placementTone,
-            missingInformation: store.session.missingInformation
-        )
+        // A new/paused live scan must not display an older capture's passing assessment.
+        store.assessment(applying: scene)
     }
 
     var body: some View {
@@ -134,7 +133,7 @@ struct PlacementARView: View {
         }
         .onDisappear {
             isVisible = false
-            pendingSave = nil
+            cancelPendingSave()
             commitLiveScene()
             store.placementController?.pauseIfIdle()
         }
@@ -142,9 +141,13 @@ struct PlacementARView: View {
             guard isVisible, arSupported, hasStartedAR else { return }
             if phase == .active {
                 store.placementController?.resume()
-            } else if phase == .background {
+            } else {
+                cancelPendingSave()
                 store.placementController?.pauseIfIdle()
             }
+        }
+        .onChange(of: store.session.selectedBatteryModelId) { _, _ in
+            cancelPendingSave()
         }
         .onChange(of: step) { _, new in
             store.placementController?.walkStep = new
@@ -224,6 +227,7 @@ struct PlacementARView: View {
                 ForEach(BatteryCatalog.all) { model in
                     let selected = store.session.selectedBatteryModelId == model.id
                     Button {
+                        cancelPendingSave()
                         store.setSelectedBatteryModel(model.id)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
@@ -264,8 +268,7 @@ struct PlacementARView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             Button {
-                commitLiveScene()
-                onContinue()
+                saveAndReview()
             } label: {
                 Text("Done")
                     .frame(maxWidth: 100)
@@ -463,8 +466,9 @@ struct PlacementARView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isSaving || scene.batteryPosition == nil)
+            .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
             Button("Skip for now") {
+                cancelPendingSave()
                 commitLiveScene()
                 onContinue()
             }
@@ -598,7 +602,7 @@ struct PlacementARView: View {
     }
 
     private var inputEnabled: Bool {
-        step != .finish
+        step != .finish && !isSaving
     }
 
     /// Taps place a mark. The scan itself does not use the center dot.
@@ -681,13 +685,16 @@ struct PlacementARView: View {
         }
     }
 
-    /// Plane updates arrive several times a second and would otherwise rebuild the buttons mid-tap.
+    /// Ignore queued snapshots superseded by a newer controller revision.
     private func acceptScene(_ snapshot: PlacementSceneSnapshot) {
-        var incoming = snapshot
-        var current = scene
-        incoming.verticalPlanes = []
-        current.verticalPlanes = []
-        guard incoming != current else { return }
+        guard isVisible, let live = store.placementController?.scene,
+              snapshot.scanID == live.scanID, snapshot.revision == live.revision,
+              snapshot.batteryModelID == live.batteryModelID else { return }
+        if let request = pendingSave, !matches(request.identity, snapshot) {
+            cancelPendingSave()
+            statusMessage = "The scan changed during capture. Hold steady and tap Save again."
+        }
+        guard snapshot != scene else { return }
         scene = snapshot
     }
 
@@ -741,6 +748,7 @@ struct PlacementARView: View {
     }
 
     private func goBack() {
+        cancelPendingSave()
         switch step {
         case .scan:
             manualMark = nil
@@ -751,13 +759,20 @@ struct PlacementARView: View {
     }
 
     private func saveAndReview() {
-        guard !isSaving else { return }
-        guard scene.batteryPosition != nil else { return }
-        var committed = store.placementController?.scene ?? scene
-        committed.batteryYawRadians = yawRadians
-        store.commitPlacement(committed)
+        guard !isSaving, isVisible, scenePhase == .active,
+              let controller = store.placementController else { return }
+        let snapshot = controller.snapshotForCapture()
+        guard snapshot.batteryPosition != nil, snapshot.trackingIsNormal,
+              snapshot.batteryModelID == store.session.selectedBatteryModelId else {
+            statusMessage = "Wait for tracking and place the battery on a detected surface before saving."
+            return
+        }
         let token = UUID()
-        pendingSave = token
+        let identity = PlacementCaptureIdentity(
+            captureID: token, scanID: snapshot.scanID, revision: snapshot.revision,
+            batteryModelID: snapshot.batteryModelID, capturedAt: Date()
+        )
+        pendingSave = PlacementSaveRequest(snapshot: snapshot, identity: identity)
         screenshotToken = token
         statusMessage = nil
         Task {
@@ -768,30 +783,44 @@ struct PlacementARView: View {
 
     /// Keeps review and export in step with the scene when the user leaves without Save.
     private func commitLiveScene() {
-        guard let live = store.placementController?.scene, live.hasPlacedContent else { return }
+        guard let controller = store.placementController else { return }
+        let live = controller.snapshotForCapture()
         store.commitPlacement(live)
     }
 
-    private func handleScreenshot(_ image: UIImage?) {
-        if let image {
-            store.attachPlacementScreenshot(image)
-            advance(pendingSave)
-        } else {
-            failScreenshot(pendingSave)
-        }
+    private func matches(_ identity: PlacementCaptureIdentity, _ snapshot: PlacementSceneSnapshot) -> Bool {
+        snapshot.trackingIsNormal && identity.scanID == snapshot.scanID
+            && identity.revision == snapshot.revision && identity.batteryModelID == snapshot.batteryModelID
     }
 
-    private func advance(_ token: UUID?) {
-        guard let token, token == pendingSave else { return }
-        pendingSave = nil
+    private func handleScreenshot(_ token: UUID, _ image: UIImage?) {
+        guard let request = pendingSave, token == request.identity.captureID else { return }
+        guard isVisible, scenePhase == .active, let image,
+              let controller = store.placementController,
+              matches(request.identity, controller.snapshotForCapture()),
+              request.identity.batteryModelID == store.session.selectedBatteryModelId else {
+            failScreenshot(token)
+            return
+        }
+        guard store.commitPlacementCapture(request.snapshot, image: image, identity: request.identity) else {
+            cancelPendingSave()
+            statusMessage = "Placement could not be saved on this device. Tap Save to retry."
+            return
+        }
+        cancelPendingSave()
         onContinue()
     }
 
     private func failScreenshot(_ token: UUID?) {
-        guard let token, token == pendingSave else { return }
+        guard let token, token == pendingSave?.identity.captureID else { return }
+        cancelPendingSave()
+        statusMessage = "Placement screenshot did not capture an unchanged scan. Tap Save again."
+    }
+
+    private func cancelPendingSave() {
         pendingSave = nil
         screenshotToken = nil
-        statusMessage = "Placement screenshot did not capture. Tap Save again."
+        store.placementController?.cancelScreenshot()
     }
 }
 
@@ -805,6 +834,7 @@ private struct EquipmentLock {
     struct Sample {
         var point: SIMD3<Float>
         var normal: SIMD3<Float>
+        var normalIsMeasured: Bool = true
     }
 
     var samples: [Sample] = []
@@ -825,7 +855,7 @@ private struct EquipmentLock {
         let normalSum = samples.reduce(SIMD3<Float>.zero) { $0 + $1.normal }
         let length = simd_length(normalSum)
         let normal = length > 0.001 ? normalSum / length : sample.normal
-        return Sample(point: point, normal: normal)
+        return Sample(point: point, normal: normal, normalIsMeasured: samples.allSatisfy(\.normalIsMeasured))
     }
 }
 
@@ -884,7 +914,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onSceneChange: (PlacementSceneSnapshot) -> Void
     var onYawChange: (Float) -> Void
     var onLiveFeet: (Double?) -> Void
-    var onScreenshot: (UIImage?) -> Void
+    var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
@@ -952,11 +982,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var coachingActive = false
     private var configuration: ARWorldTrackingConfiguration?
     private var isPrepared = false
-    private var screenshotInFlight = false
-    private var pauseRequested = false
+    private var screenshotInFlight: UUID?
+    private var isRunning = false
+    private var lastEmittedSnapshot: PlacementSceneSnapshot?
+    /// Guards queued AR delegate work across pause, interruption, and resume.
+    private let callbackEpoch = OSAllocatedUnfairLock<UUID>(initialState: UUID())
     private var onSceneChange: ((PlacementSceneSnapshot) -> Void)?
     private var onYawChange: ((Float) -> Void)?
-    private var onScreenshot: ((UIImage?) -> Void)?
+    private var onScreenshot: (@MainActor (UUID, UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
     private var onTrackingStatus: ((String?) -> Void)?
     private var onCoachingActiveChange: ((Bool) -> Void)?
@@ -968,6 +1001,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var draggedMeasurementIndex: Int?
         var measurementIsConfirmed = false
         var workingSpaceOverlay: ModelEntity?
+        private var workingSpaceIsDerived = false
         var batteryRig: Entity?
         var batteryBody: ModelEntity?
         var batteryFaceMark: ModelEntity?
@@ -978,9 +1012,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var meterMarker: ModelEntity?
         var meterWallMarker: ModelEntity?
         var meterWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
+        private var meterWallNormalIsMeasured = false
         var panelMarker: ModelEntity?
         var panelWallMarker: ModelEntity?
         var panelWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
+        private var panelWallNormalIsMeasured = false
         var gasMarker: ModelEntity?
         var planes: [UUID: PlaneSample] = [:]
         /// Classified face samples, keyed by ARMeshAnchor identifier so removals stay cheap.
@@ -989,8 +1025,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         fileprivate var pendingMeshDraws: [UUID: MeshDrawBuffers] = [:]
         var lastMeshDraw = Date.distantPast
         var transferBox: ModelEntity?
-        var trackingBlockedMessage: String?
-        private let trackingNotice = OSAllocatedUnfairLock<String?>(initialState: nil)
+        var trackingBlockedMessage: String? = "Tracking is starting. Hold still a moment before placing a point."
+        private let trackingNotice = OSAllocatedUnfairLock<String?>(initialState: "Tracking is starting. Hold still a moment before placing a point.")
         nonisolated let equipmentBridge = EquipmentScanBridge()
         private let boxOverlay = EquipmentBoxOverlay(frame: .zero)
         private var meterGroundPosition: SIMD3<Float>?
@@ -1087,7 +1123,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onSceneChange: @escaping (PlacementSceneSnapshot) -> Void,
             onYawChange: @escaping (Float) -> Void,
             onLiveFeet: @escaping (Double?) -> Void,
-            onScreenshot: @escaping (UIImage?) -> Void,
+            onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void
@@ -1104,7 +1140,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.tapEnabled = tapEnabled
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
-            equipmentBridge.setEnabled(scanning && !coachingActive)
+            equipmentBridge.setEnabled(isRunning && scene.trackingIsNormal && scanning && !coachingActive)
             if !scanning {
                 boxOverlay.items = []
             }
@@ -1136,25 +1172,30 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             if let screenshotToken, screenshotToken != lastScreenshotToken {
                 lastScreenshotToken = screenshotToken
-                takeScreenshot()
+                takeScreenshot(token: screenshotToken)
+            } else if screenshotToken == nil {
+                cancelScreenshot()
             }
         }
 
         func resume() {
-            pauseRequested = false
             prepareIfNeeded()
+            guard !isRunning else { return }
             guard let configuration else { return }
+            callbackEpoch.withLock { $0 = UUID() }
+            isRunning = true
+            setTrackingMessage("Tracking is starting. Hold still a moment before placing a point.")
             arView.session.run(configuration, options: [])
             startAiming()
         }
 
         func pauseIfIdle() {
             guard isPrepared else { return }
-            guard !screenshotInFlight else {
-                pauseRequested = true
-                return
-            }
-            pauseRequested = false
+            cancelScreenshot()
+            isRunning = false
+            callbackEpoch.withLock { $0 = UUID() }
+            equipmentBridge.setEnabled(false)
+            setTrackingMessage("Tracking is paused. Resume the scan before saving.")
             // Any in-flight rotation gesture is invalidated by pausing the session.
             rotationStartYaw = appliedYaw
             stopAiming()
@@ -1162,6 +1203,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func stop() {
+            pauseIfIdle()
             stopAiming()
             onSceneChange = nil
             onYawChange = nil
@@ -1170,8 +1212,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onTrackingStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
-            screenshotInFlight = false
-            pauseRequested = false
+            cancelScreenshot()
+            // This controller must not reuse world coordinates after being stopped.
+            scene.scanID = UUID()
+            scene.trackingIsNormal = false
             if isPrepared {
                 arView.session.pause()
                 arView.session.delegate = nil
@@ -1180,7 +1224,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func coachingOverlayViewWillActivate(_ coachingOverlayView: ARCoachingOverlayView) {
+            let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 self.coachingActive = true
                 self.aimDot.isHidden = true
                 self.equipmentBridge.setEnabled(false)
@@ -1189,10 +1235,22 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
+            let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 self.coachingActive = false
-                self.equipmentBridge.setEnabled(self.scanningEquipment)
+                self.equipmentBridge.setEnabled(self.scanningEquipment && self.scene.trackingIsNormal)
                 self.onCoachingActiveChange?(false)
+            }
+        }
+
+        nonisolated func coachingOverlayViewDidRequestSessionReset(_ coachingOverlayView: ARCoachingOverlayView) {
+            // Do not reset world tracking underneath existing evidence.
+            let epoch = callbackEpoch.withLock { $0 }
+            Task { @MainActor in
+                guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
+                self.pauseIfIdle()
+                self.onFailure?("Tracking needs a new scan. Start a new survey rather than reuse these world positions.")
             }
         }
 
@@ -1267,7 +1325,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         @objc func handleRotation(_ gesture: UIRotationGestureRecognizer) {
-            guard inputEnabled else { return }
+            guard inputEnabled, trackingAllowsConfirmation(report: false) else { return }
             if measurementMode {
                 guard editingWorkingSpace, workingSpaceOverlay != nil else { return }
                 switch gesture.state {
@@ -1319,35 +1377,83 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             footprintPad?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.35))]
         }
 
-        func takeScreenshot() {
-            screenshotInFlight = true
+        func cancelScreenshot() {
+            screenshotInFlight = nil
+        }
+
+        private func takeScreenshot(token: UUID) {
+            let snapshot = snapshotForCapture()
+            let epoch = callbackEpoch.withLock { $0 }
+            let completion = onScreenshot
+            guard isRunning, snapshot.trackingIsNormal else {
+                Task { @MainActor in completion?(token, nil) }
+                return
+            }
+            screenshotInFlight = token
             arView.snapshot(saveToHDR: false) { [weak self] image in
                 Task { @MainActor in
-                    self?.finishScreenshot(image)
+                    guard let self, self.screenshotInFlight == token,
+                          self.callbackEpoch.withLock({ $0 }) == epoch else { return }
+                    let live = self.snapshotForCapture()
+                    // Use the callback that originated the request, never a newly bound screen.
+                    let valid = self.isRunning && live.trackingIsNormal
+                        && live.scanID == snapshot.scanID && live.revision == snapshot.revision
+                        && live.batteryModelID == snapshot.batteryModelID
+                    self.screenshotInFlight = nil
+                    completion?(token, valid ? image : nil)
                 }
             }
         }
 
-        private func finishScreenshot(_ image: UIImage?) {
-            screenshotInFlight = false
-            onScreenshot?(image)
-            if pauseRequested {
-                pauseIfIdle()
-            }
+        /// Flush buffered geometry before requesting or accepting an image.
+        func snapshotForCapture() -> PlacementSceneSnapshot {
+            emit()
+            return scene
         }
 
         func emit() {
             placeDerivedWorkingSpace()
-            let snapshot = makeSnapshot()
+            var snapshot = makeSnapshot()
+            if let previous = lastEmittedSnapshot {
+                let batteryChanged = previous.batteryPosition != snapshot.batteryPosition
+                    || previous.batteryYawRadians != snapshot.batteryYawRadians
+                    || previous.batteryModelID != snapshot.batteryModelID
+                let meterChanged = previous.meterPosition != snapshot.meterPosition
+                    || previous.meterWallPosition != snapshot.meterWallPosition
+                    || previous.meterWallNormal != snapshot.meterWallNormal
+                let gasChanged = previous.gasMeterPosition != snapshot.gasMeterPosition
+                snapshot.confirmedMeasurements.removeAll {
+                    (batteryChanged && $0.kind.startsAtBattery)
+                        || (meterChanged && ($0.kind == .batteryToMeter || $0.kind == .meterHeight))
+                        || (gasChanged && $0.kind == .batteryToGasMeter)
+                }
+                guard snapshot != previous else {
+                    scene = snapshot
+                    return
+                }
+                if previous.revision == UInt64.max {
+                    snapshot.scanID = UUID()
+                    snapshot.revision = 0
+                } else {
+                    snapshot.revision = previous.revision + 1
+                }
+            }
             scene = snapshot
+            lastEmittedSnapshot = snapshot
             updateTransferBox(snapshot)
             let change = onSceneChange
-            Task { @MainActor in
-                change?(snapshot)
+            let epoch = callbackEpoch.withLock { $0 }
+            let emittedSnapshot = snapshot
+            Task { @MainActor [weak self] in
+                guard let self, self.callbackEpoch.withLock({ $0 }) == epoch,
+                      self.scene.scanID == emittedSnapshot.scanID,
+                      self.scene.revision == emittedSnapshot.revision else { return }
+                change?(emittedSnapshot)
             }
         }
 
         nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+            let epoch = callbackEpoch.withLock { $0 }
             equipmentBridge.consider(frame)
             let message = Self.trackingMessage(for: frame.camera.trackingState)
             let changed = trackingNotice.withLock { current -> Bool in
@@ -1357,9 +1463,20 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             guard changed else { return }
             Task { @MainActor in
-                self.trackingBlockedMessage = message
-                self.onTrackingStatus?(message)
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch,
+                      self.trackingNotice.withLock({ $0 }) == message else { return }
+                self.setTrackingMessage(message)
             }
+        }
+
+        private func setTrackingMessage(_ message: String?) {
+            trackingNotice.withLock { $0 = message }
+            trackingBlockedMessage = message
+            if message != nil { cancelScreenshot() }
+            scene.trackingIsNormal = isRunning && message == nil
+            equipmentBridge.setEnabled(isRunning && message == nil && scanningEquipment && !coachingActive)
+            onTrackingStatus?(message)
+            emit()
         }
 
         nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
@@ -1375,35 +1492,43 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         private nonisolated func maybeAutoPlace(from anchors: [ARAnchor]) {
+            let epoch = callbackEpoch.withLock { $0 }
             let hasHorizontal = anchors.contains { anchor in
                 (anchor as? ARPlaneAnchor)?.alignment == .horizontal
             }
             guard hasHorizontal else { return }
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 self.autoPlaceIfPossible()
             }
         }
 
         /// LiDAR mesh anchors update many times a second; skip the hop to the main actor when no wall changed.
         private nonisolated func upsertPlanes(from anchors: [ARAnchor]) {
+            let epoch = callbackEpoch.withLock { $0 }
             let samples = Self.planeSamples(from: anchors)
             guard !samples.isEmpty else { return }
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 self.upsert(samples)
             }
         }
 
         private nonisolated func upsertMesh(from anchors: [ARAnchor]) {
+            let epoch = callbackEpoch.withLock { $0 }
             let samples = Self.classifiedMeshes(from: anchors)
             guard !samples.isEmpty else { return }
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 self.upsertMesh(samples)
             }
         }
 
         nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+            let epoch = callbackEpoch.withLock { $0 }
             let ids = anchors.map(\.identifier)
             Task { @MainActor in
+                guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }
                 for id in ids {
                     self.planes.removeValue(forKey: id)
                     self.meshSamples.removeValue(forKey: id)
@@ -1411,14 +1536,34 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     self.meshVisuals[id]?.removeFromParent()
                     self.meshVisuals.removeValue(forKey: id)
                 }
-                self.emitPlanesIfNeeded()
+                self.emit()
             }
         }
 
         nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
             let message = error.localizedDescription
+            let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
+                guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
+                self.pauseIfIdle()
                 self.onFailure?(message)
+            }
+        }
+
+        nonisolated func sessionWasInterrupted(_ session: ARSession) {
+            let epoch = callbackEpoch.withLock { $0 }
+            Task { @MainActor in
+                guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
+                self.pauseIfIdle()
+            }
+        }
+
+        nonisolated func sessionInterruptionEnded(_ session: ARSession) {
+            // The visible view's lifecycle resumes the session. Never auto-resume a departed screen.
+            let epoch = callbackEpoch.withLock { $0 }
+            Task { @MainActor in
+                guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
+                self.onFailure?("The scan was interrupted. Return to placement to resume tracking.")
             }
         }
 
@@ -1449,7 +1594,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         private func emitPlanesIfNeeded() {
-            guard batteryRig != nil else { return }
             let now = Date()
             guard now.timeIntervalSince(lastPlaneEmit) > 0.4 else { return }
             lastPlaneEmit = now
@@ -1517,43 +1661,29 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         func setActiveModel(_ model: BatteryModel) {
             guard model != activeModel else { return }
+            cancelScreenshot()
             activeModel = model
             if batteryRig != nil {
                 buildBatteryRig()
                 applyYaw()
-                emit()
             }
+            emit()
         }
 
-        /// Tries a forward raycast against a detected horizontal plane and places the battery ~1.5 m ahead.
-        /// No-op if the battery is already placed, if we've already tried, or if there's no camera transform yet.
+        /// Automatic placement requires a detected horizontal plane, never a camera-relative guess.
         func autoPlaceIfPossible() {
             guard !didAttemptAutoPlace, batteryRig == nil else { return }
-            guard let frame = arView.session.currentFrame else { return }
+            guard trackingAllowsConfirmation(report: false) else { return }
             let viewCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
-            let hit = arView.raycast(from: viewCenter, allowing: .existingPlaneGeometry, alignment: .horizontal).first
-                ?? arView.raycast(from: viewCenter, allowing: .estimatedPlane, alignment: .horizontal).first
-            let placement: SIMD3<Float>?
-            if let hit {
-                let column = hit.worldTransform.columns.3
-                placement = SIMD3(column.x, column.y, column.z)
-            } else {
-                // Fallback: 1.5 m ahead of the camera at the camera's Y-1 (approximate ground).
-                let cameraTransform = frame.camera.transform
-                let cameraForward = -SIMD3<Float>(cameraTransform.columns.2.x, 0, cameraTransform.columns.2.z)
-                let forwardLen = simd_length(cameraForward)
-                guard forwardLen > 0.001 else { return }
-                let normalized = cameraForward / forwardLen
-                let cameraPos = SIMD3(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-                placement = SIMD3(cameraPos.x + normalized.x * 1.5, cameraPos.y - 1.0, cameraPos.z + normalized.z * 1.5)
-            }
-            guard let placement else { return }
+            guard let placement = groundPosition(in: arView, at: viewCenter) else { return }
             didAttemptAutoPlace = true
             placeBattery(at: placement)
             emit()
         }
 
         private func placeMarker(kind: PlacementTarget, at position: SIMD3<Float>) {
+            if kind == .meter { meterGroundPosition = position }
+            if kind == .panel { panelGroundPosition = position }
             let existing: ModelEntity?
             switch kind {
             case .meter: existing = meterMarker
@@ -1623,9 +1753,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             switch kind {
             case .meter:
                 meterWallHit = hit
+                meterWallNormalIsMeasured = true
+                meterGroundPosition = groundUnder(hit.position, normal: hit.normal)
+                meterMarker?.removeFromParent()
+                meterMarker = nil
                 meterLock.locked = true
             case .panel:
                 panelWallHit = hit
+                panelWallNormalIsMeasured = true
+                panelGroundPosition = groundUnder(hit.position, normal: hit.normal)
+                panelMarker?.removeFromParent()
+                panelMarker = nil
                 panelLock.locked = true
             default: break
             }
@@ -1742,7 +1880,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 start = measurementEndpoints[0].position.simd
             } else if measurementMode, !editingWorkingSpace, measurementEndpoints.isEmpty,
                       measurementKind.startsAtBattery, let battery = batteryRig?.position(relativeTo: nil) {
-                start = BatteryGeometry.nearestBasePoint(origin: battery, yaw: appliedYaw, toward: position)
+                start = BatteryGeometry.nearestBasePoint(origin: battery, yaw: appliedYaw, toward: position, model: activeModel)
             } else {
                 hideLiveLine()
                 publishLiveFeet(nil)
@@ -1843,17 +1981,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func confirmMeasurement() {
+            guard trackingAllowsConfirmation(report: true) else { return }
             guard measurementEndpoints.count == 2 else { return }
+            guard !measurementEndpoints.contains(where: { $0.captureMethod == .estimatedPlane }) else {
+                onFailure?("Scan a detected surface before confirming this measurement.")
+                return
+            }
             let distanceFeet = measurementKind.feet(
                 from: measurementEndpoints[0].position.simd,
                 to: measurementEndpoints[1].position.simd
             )
-            let method: MeasurementCaptureMethod
-            if measurementEndpoints.contains(where: { $0.captureMethod == .estimatedPlane }) {
-                method = .estimatedPlane
-            } else {
-                method = .existingPlane
-            }
+            let method: MeasurementCaptureMethod = .existingPlane
             let confirmed = ConfirmedPlacementMeasurement(
                 kind: measurementKind,
                 start: measurementEndpoints[0],
@@ -1920,7 +2058,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// The raycast cannot hit the virtual battery, so its end is the base edge nearest the target.
         private func batteryEndpoint(toward target: MeasurementEndpoint) -> MeasurementEndpoint? {
             guard let battery = batteryRig?.position(relativeTo: nil) else { return nil }
-            let point = BatteryGeometry.nearestBasePoint(origin: battery, yaw: appliedYaw, toward: target.position.simd)
+            let point = BatteryGeometry.nearestBasePoint(origin: battery, yaw: appliedYaw, toward: target.position.simd, model: activeModel)
             return MeasurementEndpoint(position: PlacementAnchor(point), captureMethod: target.captureMethod)
         }
 
@@ -2001,12 +2139,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 let column = hit.worldTransform.columns.3
                 return MeasurementEndpoint(position: PlacementAnchor(SIMD3(column.x, column.y, column.z)), captureMethod: .existingPlane)
             }
-            guard let hit = arView.raycast(from: point, allowing: .estimatedPlane, alignment: alignment).first else { return nil }
-            let column = hit.worldTransform.columns.3
-            return MeasurementEndpoint(
-                position: PlacementAnchor(SIMD3(column.x, column.y, column.z)),
-                captureMethod: .estimatedPlane
-            )
+            return nil
         }
 
         /// Battery and electric-meter marks sit on the ground. The gas meter is marked where the user aims at it.
@@ -2019,7 +2152,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         private func groundPosition(in arView: ARView, at point: CGPoint) -> SIMD3<Float>? {
             let hit = arView.raycast(from: point, allowing: .existingPlaneGeometry, alignment: .horizontal).first
-                ?? arView.raycast(from: point, allowing: .estimatedPlane, alignment: .horizontal).first
             guard let hit else { return nil }
             let column = hit.worldTransform.columns.3
             return SIMD3(column.x, column.y, column.z)
@@ -2030,6 +2162,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .meter:
                 meterLock = EquipmentLock()
                 meterWallHit = nil
+                meterWallNormalIsMeasured = false
                 meterGroundPosition = nil
                 meterMarker?.removeFromParent()
                 meterMarker = nil
@@ -2041,6 +2174,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .panel:
                 panelLock = EquipmentLock()
                 panelWallHit = nil
+                panelWallNormalIsMeasured = false
                 panelGroundPosition = nil
                 panelMarker?.removeFromParent()
                 panelMarker = nil
@@ -2057,7 +2191,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         /// Boxes stay on the camera. A hit counts toward a lock only after it lands on a wall or, failing that, LiDAR depth.
         private func applyScan(_ packet: EquipmentScanFrame) {
-            guard scanningEquipment, !coachingActive, trackingBlockedMessage == nil else {
+            guard isRunning, scanningEquipment, !coachingActive, trackingAllowsConfirmation(report: false) else {
                 boxOverlay.items = []
                 return
             }
@@ -2088,7 +2222,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     items.append(EquipmentBoxOverlay.Item(rect: rect, color: color, title: title))
                 }
                 guard let landing, !alreadyLocked else { continue }
-                let sample = EquipmentLock.Sample(point: landing.position, normal: landing.normal)
+                let sample = EquipmentLock.Sample(
+                    point: landing.position, normal: landing.normal, normalIsMeasured: landing.normalIsMeasured
+                )
                 let settled: EquipmentLock.Sample?
                 switch detection.kind {
                 case .electricMeter: settled = meterLock.absorb(sample)
@@ -2106,14 +2242,16 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
         }
 
-        private func project(_ detection: EquipmentDetection, in packet: EquipmentScanFrame) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
+        private func project(_ detection: EquipmentDetection, in packet: EquipmentScanFrame) -> (position: SIMD3<Float>, normal: SIMD3<Float>, normalIsMeasured: Bool)? {
             let center = CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
             let pixel = Self.bufferPixel(visionPoint: center, imageSize: packet.imageSize, orientation: packet.visionOrientation)
             let ray = Self.cameraRay(through: pixel, intrinsics: packet.intrinsics, transform: packet.cameraTransform)
             if let wall = wallHit(origin: ray.origin, direction: ray.direction) {
-                return wall
+                return (wall.position, wall.normal, true)
             }
-            return depthHit(at: pixel, packet: packet, cameraOrigin: ray.origin)
+            guard let depth = depthHit(at: pixel, packet: packet, cameraOrigin: ray.origin) else { return nil }
+            // Depth locates equipment; a camera-facing direction is not an observed wall normal.
+            return (depth.position, depth.normal, false)
         }
 
         private func depthHit(
@@ -2156,6 +2294,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterMarker?.removeFromParent()
                 meterMarker = nil
                 meterWallHit = (sample.point, sample.normal)
+                meterWallNormalIsMeasured = sample.normalIsMeasured
                 meterGroundPosition = ground
             case .breakerPanel:
                 panelWallMarker?.removeFromParent()
@@ -2163,6 +2302,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelMarker?.removeFromParent()
                 panelMarker = nil
                 panelWallHit = (sample.point, sample.normal)
+                panelWallNormalIsMeasured = sample.normalIsMeasured
                 panelGroundPosition = ground
             }
         }
@@ -2173,13 +2313,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let length = simd_length(flat)
             let outward = length > 0.001 ? flat / length : SIMD3<Float>(0, 0, 1)
             let origin = point + outward * 0.12 + SIMD3<Float>(0, 0.05, 0)
-            for allowing: ARRaycastQuery.Target in [.existingPlaneGeometry, .estimatedPlane] {
-                let query = ARRaycastQuery(origin: origin, direction: SIMD3(0, -1, 0), allowing: allowing, alignment: .horizontal)
-                if let hit = arView.session.raycast(query).first {
-                    return SIMD3(point.x, hit.worldTransform.columns.3.y, point.z)
-                }
-            }
-            return nil
+            let query = ARRaycastQuery(origin: origin, direction: SIMD3(0, -1, 0), allowing: .existingPlaneGeometry, alignment: .horizontal)
+            guard let hit = arView.session.raycast(query).first else { return nil }
+            return SIMD3(point.x, hit.worldTransform.columns.3.y, point.z)
         }
 
         /// The 30 × 36 in slab sits in front of the locked meter (or panel) once the battery exists, so the mesh check has a volume.
@@ -2187,13 +2323,19 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard batteryRig != nil else { return }
             let sample: (position: SIMD3<Float>, normal: SIMD3<Float>)?
             let groundY: Float
-            if let meterWallHit {
+            if meterWallNormalIsMeasured, let meterWallHit, let meterGroundPosition {
                 sample = meterWallHit
-                groundY = meterGroundPosition?.y ?? meterWallHit.position.y
-            } else if let panelWallHit {
+                groundY = meterGroundPosition.y
+            } else if panelWallNormalIsMeasured, let panelWallHit, let panelGroundPosition {
                 sample = panelWallHit
-                groundY = panelGroundPosition?.y ?? panelWallHit.position.y
+                groundY = panelGroundPosition.y
             } else {
+                if workingSpaceIsDerived {
+                    workingSpaceOverlay?.removeFromParent()
+                    workingSpaceOverlay = nil
+                    scene.workingSpacePosition = nil
+                    workingSpaceIsDerived = false
+                }
                 return
             }
             guard let sample else { return }
@@ -2205,6 +2347,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 + normal * (BatteryGeometry.workingSpaceDepthMeters / 2)
             scene.workingSpaceYawRadians = atan2(normal.x, normal.z)
             placeWorkingSpace(at: center)
+            workingSpaceIsDerived = true
         }
 
         private static func viewRect(for box: CGRect, in packet: EquipmentScanFrame) -> CGRect {
@@ -2281,59 +2424,37 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         /// Real vertical planes only, same normal the wall tap uses. Estimated planes are not a meter.
-        private func interpretWallHit(_ hit: ARRaycastResult) -> (position: SIMD3<Float>, normal: SIMD3<Float>) {
+        private func interpretWallHit(_ hit: ARRaycastResult) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
+            guard let planeAnchor = hit.anchor as? ARPlaneAnchor else { return nil }
             let column = hit.worldTransform.columns.3
             let position = SIMD3<Float>(column.x, column.y, column.z)
-            var normal = SIMD3<Float>(0, 0, 1)
-            if let planeAnchor = hit.anchor as? ARPlaneAnchor {
-                let up = planeAnchor.transform * SIMD4<Float>(0, 1, 0, 0)
-                normal = SIMD3(up.x, up.y, up.z)
-                let len = simd_length(normal)
-                if len > 0.0001 { normal /= len }
-            }
+            let up = planeAnchor.transform * SIMD4<Float>(0, 1, 0, 0)
+            var normal = SIMD3(up.x, up.y, up.z)
+            let len = simd_length(normal)
+            guard len.isFinite, len > 0.0001 else { return nil }
+            normal /= len
             return (position, normal)
         }
 
         private func makeSnapshot() -> PlacementSceneSnapshot {
             var snapshot = scene
+            snapshot.batteryModelID = activeModel.id
+            snapshot.trackingIsNormal = trackingAllowsConfirmation(report: false)
             snapshot.lidarMeshAvailable = lidarMeshAvailable
-            snapshot.verticalPlanes = Array(planes.values)
+            snapshot.verticalPlanes = planes.values.sorted { $0.id.uuidString < $1.id.uuidString }
             snapshot.batteryYawRadians = appliedYaw
-            if let batteryRig {
-                snapshot.batteryPosition = PlacementAnchor(batteryRig.position(relativeTo: nil))
-            }
-            if let meterGroundPosition {
-                snapshot.meterPosition = PlacementAnchor(meterGroundPosition)
-            } else if let meterMarker {
-                snapshot.meterPosition = PlacementAnchor(grounded(meterMarker.position(relativeTo: nil)))
-            }
-            if let meterWallHit {
-                snapshot.meterWallPosition = PlacementAnchor(meterWallHit.position)
-                snapshot.meterWallNormal = PlacementAnchor(meterWallHit.normal)
-                // Fall back to projecting the wall X/Z as the ground position when the user only tapped the wall.
-                if snapshot.meterPosition == nil {
-                    snapshot.meterPosition = PlacementAnchor(SIMD3(meterWallHit.position.x, meterWallHit.position.y, meterWallHit.position.z))
-                }
-            }
-            if let panelGroundPosition {
-                snapshot.panelPosition = PlacementAnchor(panelGroundPosition)
-            } else if let panelMarker {
-                snapshot.panelPosition = PlacementAnchor(grounded(panelMarker.position(relativeTo: nil)))
-            }
-            if let panelWallHit {
-                snapshot.panelWallPosition = PlacementAnchor(panelWallHit.position)
-                snapshot.panelWallNormal = PlacementAnchor(panelWallHit.normal)
-                if snapshot.panelPosition == nil {
-                    snapshot.panelPosition = PlacementAnchor(SIMD3(panelWallHit.position.x, panelWallHit.position.y, panelWallHit.position.z))
-                }
-            }
-            if let gasMarker {
-                snapshot.gasMeterPosition = PlacementAnchor(gasMarker.position(relativeTo: nil))
-            }
+            snapshot.batteryPosition = batteryRig.map { PlacementAnchor($0.position(relativeTo: nil)) }
+            snapshot.meterPosition = meterGroundPosition.map { PlacementAnchor($0) }
+            snapshot.meterWallPosition = meterWallHit.map { PlacementAnchor($0.position) }
+            snapshot.meterWallNormal = meterWallNormalIsMeasured ? meterWallHit.map { PlacementAnchor($0.normal) } : nil
+            snapshot.panelPosition = panelGroundPosition.map { PlacementAnchor($0) }
+            snapshot.panelWallPosition = panelWallHit.map { PlacementAnchor($0.position) }
+            snapshot.panelWallNormal = panelWallNormalIsMeasured ? panelWallHit.map { PlacementAnchor($0.normal) } : nil
+            snapshot.gasMeterPosition = gasMarker.map { PlacementAnchor($0.position(relativeTo: nil)) }
             snapshot.draftMeasurementStart = measurementEndpoints.first
             snapshot.draftMeasurementEnd = measurementEndpoints.count > 1 ? measurementEndpoints[1] : nil
-            if let workingSpaceOverlay {
-                snapshot.workingSpacePosition = PlacementAnchor(workingSpaceOverlay.position(relativeTo: nil))
+            snapshot.workingSpacePosition = workingSpaceOverlay.map {
+                PlacementAnchor($0.position(relativeTo: nil) - SIMD3<Float>(0, 0.005, 0))
             }
             snapshot.classifiedMesh = classifiedSamplesNearPlacement()
             if let feet = placementMeasurer.wallClearance(in: snapshot)?.distanceFeet {
@@ -2344,14 +2465,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return snapshot
         }
 
-        private func grounded(_ position: SIMD3<Float>) -> SIMD3<Float> {
-            SIMD3(position.x, position.y - 0.14, position.z)
-        }
-
         private func trackingAllowsConfirmation(report: Bool) -> Bool {
-            guard let trackingBlockedMessage else { return true }
+            if isRunning, trackingBlockedMessage == nil,
+               let frame = arView.session.currentFrame, case .normal = frame.camera.trackingState {
+                return true
+            }
             if report {
-                onFailure?(trackingBlockedMessage)
+                onFailure?(trackingBlockedMessage ?? "Wait for normal tracking before placing or saving.")
             }
             return false
         }
@@ -2446,7 +2566,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard !origins.isEmpty else { return [] }
             let limit: Float = 8 * 8
             var result: [ClassifiedMeshSample] = []
-            for samples in meshSamples.values {
+            for id in meshSamples.keys.sorted(by: { $0.uuidString < $1.uuidString }) {
+                guard let samples = meshSamples[id] else { continue }
                 for sample in samples {
                     for origin in origins {
                         let dx = sample.point.x - origin.x

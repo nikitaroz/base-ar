@@ -75,6 +75,8 @@ struct PlacementARView: View {
     @State private var screenshotToken: UUID? = nil
     /// Set while a save waits for its screenshot. Cleared when it advances, so the view can save again after Back.
     @State private var pendingSave: PlacementSaveRequest? = nil
+    /// A successful handoff keeps its durable packet even if AR updates before disappearance.
+    @State private var departingAfterCapture = false
     @State private var statusMessage: String? = nil
     @State private var trackingMessage: String? = nil
     @State private var isVisible = false
@@ -125,6 +127,7 @@ struct PlacementARView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
             guard arSupported, hasStartedAR else { return }
+            departingAfterCapture = false
             isVisible = true
             let controller = store.requirePlacementController()
             controller.resume()
@@ -134,7 +137,7 @@ struct PlacementARView: View {
         .onDisappear {
             isVisible = false
             cancelPendingSave()
-            commitLiveScene()
+            if !departingAfterCapture { commitLiveScene() }
             store.placementController?.pauseIfIdle()
         }
         .onChange(of: scenePhase) { _, phase in
@@ -147,9 +150,11 @@ struct PlacementARView: View {
             }
         }
         .onChange(of: store.session.selectedBatteryModelId) { _, _ in
+            departingAfterCapture = false
             cancelPendingSave()
         }
         .onChange(of: step) { _, new in
+            departingAfterCapture = false
             store.placementController?.walkStep = new
             store.placementController?.hasChosenWalkStep = true
             statusMessage = nil
@@ -179,7 +184,10 @@ struct PlacementARView: View {
                         tone: tone,
                         screenshotToken: screenshotToken,
                         onSceneChange: acceptScene,
-                        onYawChange: { yawRadians = $0 },
+                        onYawChange: {
+                            departingAfterCapture = false
+                            yawRadians = $0
+                        },
                         onLiveFeet: acceptLiveFeet,
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
@@ -227,6 +235,7 @@ struct PlacementARView: View {
                 ForEach(BatteryCatalog.all) { model in
                     let selected = store.session.selectedBatteryModelId == model.id
                     Button {
+                        departingAfterCapture = false
                         cancelPendingSave()
                         store.setSelectedBatteryModel(model.id)
                     } label: {
@@ -500,14 +509,20 @@ struct PlacementARView: View {
     private var footprintAttestBinding: Binding<Bool> {
         Binding(
             get: { store.session.placement.footprintClearAttested == true },
-            set: { store.setFootprintClearAttested($0) }
+            set: {
+                departingAfterCapture = false
+                store.setFootprintClearAttested($0)
+            }
         )
     }
 
     private var transferSwitchAttestBinding: Binding<Bool> {
         Binding(
             get: { store.session.placement.transferSwitchSpaceAttested == true },
-            set: { store.setTransferSwitchSpaceAttested($0) }
+            set: {
+                departingAfterCapture = false
+                store.setTransferSwitchSpaceAttested($0)
+            }
         )
     }
 
@@ -602,7 +617,7 @@ struct PlacementARView: View {
     }
 
     private var inputEnabled: Bool {
-        step != .finish && !isSaving
+        step != .finish && !isSaving && !departingAfterCapture
     }
 
     /// Taps place a mark. The scan itself does not use the center dot.
@@ -714,6 +729,7 @@ struct PlacementARView: View {
     }
 
     private func primaryAction() {
+        departingAfterCapture = false
         if primaryIsAdvance {
             goForward()
         } else {
@@ -723,6 +739,7 @@ struct PlacementARView: View {
     }
 
     private func secondaryAction() {
+        departingAfterCapture = false
         guard step == .gas else { return }
         store.setGasMeterNotVisible(true)
         store.placementController?.clearGasMarker()
@@ -748,6 +765,7 @@ struct PlacementARView: View {
     }
 
     private func goBack() {
+        departingAfterCapture = false
         cancelPendingSave()
         switch step {
         case .scan:
@@ -761,6 +779,7 @@ struct PlacementARView: View {
     private func saveAndReview() {
         guard !isSaving, isVisible, scenePhase == .active,
               let controller = store.placementController else { return }
+        departingAfterCapture = false
         let snapshot = controller.snapshotForCapture()
         guard snapshot.batteryPosition != nil, snapshot.trackingIsNormal,
               snapshot.batteryModelID == store.session.selectedBatteryModelId else {
@@ -807,6 +826,7 @@ struct PlacementARView: View {
             statusMessage = "Placement could not be saved on this device. Tap Save to retry."
             return
         }
+        departingAfterCapture = true
         cancelPendingSave()
         onContinue()
     }

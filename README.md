@@ -10,6 +10,8 @@ This branch implements a nine-step guided capture flow, wider context photos, ex
 
 The workflow document is the current behavior reference for this branch; the older feature notes below describe the original hub implementation. Native Xcode compilation and physical-device validation are still required.
 
+New context: [team brief and vision-discussion snapshot](docs/context-snapshot-2026-09-26.md), [real-time guidance assessment and Jev recommendation](docs/realtime-guidance-assessment.pplx.md), and [separate bot workstreams](docs/realtime-agent-workstreams.md). The assessment records unresolved spatial-evidence issues; those findings are not fixed merely by saving this documentation.
+
 ## Xcode and device setup
 
 Each teammate does this once. `git pull` won't disturb any of it — signing config lives in files git ignores.

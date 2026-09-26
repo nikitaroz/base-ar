@@ -18,6 +18,7 @@ struct ElectricalCaptureView: View {
     @State private var scanMessage: String?
     @State private var amperageText = ""
     @State private var showCameraDeniedAlert = false
+    @State private var autoLaunchedScan = false
     @FocusState private var fieldIsFocused: Bool
 
     var body: some View {
@@ -33,20 +34,29 @@ struct ElectricalCaptureView: View {
             case .breaker:
                 breakerSection
             }
-            Section("Check before continuing") {
-                Toggle("The image is clear and this value matches the printed label", isOn: Binding(
-                    get: {
-                        focus == .meter
-                            ? store.session.guidedProgress?.meterConfirmed == true
-                            : store.session.guidedProgress?.breakerConfirmed == true
-                    },
-                    set: { store.confirmElectrical(focus, confirmed: $0) }
-                ))
-                .disabled(focus == .meter
-                    ? store.session.electrical.meterPhotoFilename == nil || (store.session.electrical.meterNumber ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    : store.session.electrical.breakerPhotoFilename == nil || (store.session.electrical.mainBreakerAmperage ?? 0) <= 0)
-                Text("Scanning only proposes a value. Retaking the photo or editing the value clears this confirmation. If it is unreadable, retake, enter a visible value manually, or defer for human review.")
-                    .font(.footnote).foregroundStyle(.secondary)
+            if focus == .meter, let number = store.session.electrical.meterNumber, !number.isEmpty {
+                Section("Captured value") {
+                    HStack {
+                        Text("Meter number: \(number)")
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                    Text("Edit the number above if it doesn't match the meter label. Otherwise you can continue.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            if focus == .breaker, let amps = store.session.electrical.mainBreakerAmperage {
+                Section("Captured value") {
+                    HStack {
+                        Text("Main breaker: \(amps) A")
+                        Spacer()
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                    Text("Edit the amperage above if it doesn't match the main disconnect label. Otherwise you can continue.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle(focus == .meter ? "Electrical Meter" : "Breaker box")
@@ -54,6 +64,21 @@ struct ElectricalCaptureView: View {
         .onAppear {
             if focus == .breaker, amperageText.isEmpty, let amps = store.session.electrical.mainBreakerAmperage {
                 amperageText = String(amps)
+            }
+            // Auto-launch live scanner on first appearance if no value captured yet
+            if !autoLaunchedScan, LiveLabelScanner.isSupported {
+                let shouldAutoLaunch = focus == .meter
+                    ? store.session.electrical.meterNumber == nil
+                    : store.session.electrical.mainBreakerAmperage == nil
+                if shouldAutoLaunch {
+                    autoLaunchedScan = true
+                    Task {
+                        let target: LabelScanTarget = focus == .meter ? .meterNumber : .breakerAmperage
+                        if await LiveLabelScanner.prepare() == nil {
+                            scanTarget = target
+                        }
+                    }
+                }
             }
         }
         .onChange(of: store.session.electrical.mainBreakerAmperage) { _, amps in

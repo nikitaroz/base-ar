@@ -141,8 +141,14 @@ struct GuidedSurveyView: View {
                 .buttonStyle(.bordered)
             Text("Self-reported, not verified against a service territory. Unknown and other programs require review. This app does not decide meter replacement or connection topology.")
                 .font(.footnote).foregroundStyle(.secondary)
-        case .meter: openButton("Capture and confirm meter ID", route: .meter)
-        case .breaker: openButton("Capture and confirm main rating", route: .breaker)
+        case .meter: 
+            openButton("Scan meter number", route: .meter)
+            Text("The live scanner opens automatically. When it reads a stable value, it saves both the number and a photo. You can also enter the value manually.")
+                .font(.footnote).foregroundStyle(.secondary)
+        case .breaker: 
+            openButton("Scan main breaker", route: .breaker)
+            Text("The live scanner opens automatically. When it reads a stable amperage, it saves both the value and a photo. You can also enter the amperage manually.")
+                .font(.footnote).foregroundStyle(.secondary)
         case .meterContext, .panelContext:
             if step == .meterContext {
                 Picker("Is there a fence obstructing the area?", selection: Binding(

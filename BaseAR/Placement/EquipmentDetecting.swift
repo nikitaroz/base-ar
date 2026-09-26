@@ -31,6 +31,37 @@ protocol EquipmentDetecting: AnyObject {
     func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection]
 }
 
+/// "No detections" means a supported model output was read, not that the scene is clear.
+enum EquipmentObservationStatus: String, Sendable {
+    case success
+    case noDetections
+    case modelUnavailable
+    case inferenceFailed
+    case frameUnavailable
+
+    var isSuccessfulInference: Bool {
+        self == .success || self == .noDetections
+    }
+}
+
+struct EquipmentDetectionResult: Sendable {
+    let detections: [EquipmentDetection]
+    let status: EquipmentObservationStatus
+    let errorMessage: String?
+}
+
+/// All times use the monotonic, seconds-since-boot clock, not wall-clock dates.
+struct EquipmentScanObservation: Sendable, Equatable {
+    let id: UUID
+    let generation: UInt64
+    let capturedAt: TimeInterval
+    let completedAt: TimeInterval
+    /// Copying, depth extraction and inference time on the worker; excludes queue wait.
+    let processingDuration: TimeInterval
+    let status: EquipmentObservationStatus
+    let errorMessage: String?
+}
+
 /// YOLOE prompts are baked into EquipmentScan. The recognizer only reads that package.
 final class YOLOEEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
     private let request: VNCoreMLRequest?
@@ -47,19 +78,39 @@ final class YOLOEEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
         }
     }
 
+    /// Compatibility only: callers needing failure semantics must use detectResult.
     func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection] {
-        guard let request else { return [] }
+        detectResult(in: pixelBuffer, orientation: orientation).detections
+    }
+
+    func detectResult(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> EquipmentDetectionResult {
+        guard let request else {
+            return EquipmentDetectionResult(
+                detections: [], status: .modelUnavailable, errorMessage: loadError ?? "Equipment model unavailable."
+            )
+        }
+        // Vision requests have mutable results. Serialize legacy callers as well as bridge work.
         lock.lock()
         defer { lock.unlock() }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
             try handler.perform([request])
+            let detections: [EquipmentDetection]
+            if let objects = request.results as? [VNRecognizedObjectObservation] {
+                detections = try Self.recognizedObjects(in: objects)
+            } else {
+                detections = try Self.featureBoxes(in: request.results)
+            }
+            return EquipmentDetectionResult(
+                detections: detections,
+                status: detections.isEmpty ? .noDetections : .success,
+                errorMessage: nil
+            )
         } catch {
-            return []
+            return EquipmentDetectionResult(
+                detections: [], status: .inferenceFailed, errorMessage: error.localizedDescription
+            )
         }
-        let recognized = Self.recognizedObjects(in: request.results)
-        if !recognized.isEmpty { return recognized }
-        return Self.featureBoxes(in: request.results)
     }
 
     private static func makeRequest() throws -> VNCoreMLRequest {
@@ -76,17 +127,33 @@ final class YOLOEEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
         return request
     }
 
-    private static func recognizedObjects(in results: [VNObservation]?) -> [EquipmentDetection] {
-        (results ?? []).compactMap { result in
-            guard let object = result as? VNRecognizedObjectObservation,
-                  let label = object.labels.first,
-                  let kind = kind(for: label.identifier) else { return nil }
+    private enum OutputError: LocalizedError {
+        case unsupportedOutput
+        case malformedOutput
+
+        var errorDescription: String? {
+            switch self {
+            case .unsupportedOutput: "Equipment model output is not supported."
+            case .malformedOutput: "Equipment model output has invalid dimensions or values."
+            }
+        }
+    }
+
+    private static func recognizedObjects(in objects: [VNRecognizedObjectObservation]) throws -> [EquipmentDetection] {
+        try objects.map { object in
+            guard let label = object.labels.first,
+                  let kind = kind(for: label.identifier) else { throw OutputError.unsupportedOutput }
+            let box = object.boundingBox
+            guard label.confidence.isFinite, (0...1).contains(label.confidence),
+                  box.origin.x.isFinite, box.origin.y.isFinite,
+                  box.width.isFinite, box.height.isFinite,
+                  box.width > 0, box.height > 0 else { throw OutputError.malformedOutput }
             return EquipmentDetection(kind: kind, confidence: label.confidence, boundingBox: object.boundingBox)
         }
     }
 
     /// Ultralytics NMS exports confidence and coordinates when Vision does not wrap them as objects.
-    private static func featureBoxes(in results: [VNObservation]?) -> [EquipmentDetection] {
+    private static func featureBoxes(in results: [VNObservation]?) throws -> [EquipmentDetection] {
         var confidence: MLMultiArray?
         var coordinates: MLMultiArray?
         for result in results ?? [] {
@@ -98,27 +165,40 @@ final class YOLOEEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
             default: break
             }
         }
-        guard let confidence, let coordinates else { return [] }
-        let boxes = max(coordinates.shape[0].intValue, 0)
-        let classes = confidence.shape.count > 1 ? confidence.shape[1].intValue : 1
-        guard boxes > 0, coordinates.shape.last?.intValue == 4 else { return [] }
+        guard let confidence, let coordinates else { throw OutputError.unsupportedOutput }
+        // Support only the known NMS contract [N, 4] / [N, 2]. Check ranks before indexing.
+        guard coordinates.shape.count == 2, confidence.shape.count == 2,
+              coordinates.shape[1].intValue == 4,
+              confidence.shape[1].intValue == 2,
+              coordinates.shape[0].intValue >= 0,
+              coordinates.shape[0].intValue == confidence.shape[0].intValue else {
+            throw OutputError.malformedOutput
+        }
+        let boxes = coordinates.shape[0].intValue
+        let classes = confidence.shape[1].intValue
+        guard boxes <= coordinates.count / 4, boxes <= confidence.count / classes else {
+            throw OutputError.malformedOutput
+        }
         var found: [EquipmentDetection] = []
         for box in 0..<boxes {
             var bestClass = 0
             var bestScore: Float = 0
             for klass in 0..<classes {
-                let score = confidence[box * classes + klass].floatValue
+                // Multi-index access respects MLMultiArray strides; flattened storage need not be contiguous.
+                let score = confidence[[NSNumber(value: box), NSNumber(value: klass)]].floatValue
+                guard score.isFinite, (0...1).contains(score) else { throw OutputError.malformedOutput }
                 if score > bestScore {
                     bestScore = score
                     bestClass = klass
                 }
             }
-            guard bestScore > 0, let kind = kind(at: bestClass) ?? kind(for: "\(bestClass)") else { continue }
-            let centerX = CGFloat(coordinates[box * 4].floatValue)
-            let centerY = CGFloat(coordinates[box * 4 + 1].floatValue)
-            let width = CGFloat(coordinates[box * 4 + 2].floatValue)
-            let height = CGFloat(coordinates[box * 4 + 3].floatValue)
-            guard width > 0.01, height > 0.01 else { continue }
+            guard bestScore > 0, let kind = kind(at: bestClass) else { continue }
+            let centerX = CGFloat(coordinates[[NSNumber(value: box), 0]].floatValue)
+            let centerY = CGFloat(coordinates[[NSNumber(value: box), 1]].floatValue)
+            let width = CGFloat(coordinates[[NSNumber(value: box), 2]].floatValue)
+            let height = CGFloat(coordinates[[NSNumber(value: box), 3]].floatValue)
+            guard centerX.isFinite, centerY.isFinite, width.isFinite, height.isFinite,
+                  width > 0, height > 0 else { throw OutputError.malformedOutput }
             // Ultralytics NMS boxes are center xywh with the origin at the top of the upright image.
             let originX = centerX - width / 2
             let originY = 1 - centerY - height / 2
@@ -170,70 +250,167 @@ struct EquipmentScanFrame: Sendable {
     var displayTX: CGFloat
     var displayTY: CGFloat
     var depth: DepthSample?
+    /// Nil only for legacy, manually constructed packets. Bridge packets always carry metadata.
+    var observation: EquipmentScanObservation? = nil
 
     var displayTransform: CGAffineTransform {
         CGAffineTransform(a: displayA, b: displayB, c: displayC, d: displayD, tx: displayTX, ty: displayTY)
     }
 }
 
-/// Copies AR frames and runs YOLOE off the session callback. The latest packet is drained on the main thread.
+/// One serial worker, no frame backlog, and one replaceable result slot.
 final class EquipmentScanBridge: @unchecked Sendable {
     let detector = YOLOEEquipmentDetector()
+    /// Freshness policy, not a measured inference-performance guarantee.
+    let maximumObservationAge: TimeInterval
+    private let worker = DispatchQueue(label: "BaseAR.EquipmentScan", qos: .userInitiated)
+    // One lock protects generation, admission, publication and consumption atomically.
+    // Invalidation never clears busy: a running Vision request cannot be forcibly cancelled.
     private let gate = OSAllocatedUnfairLock(initialState: Gate())
-    private let latest = OSAllocatedUnfairLock<EquipmentScanFrame?>(initialState: nil)
 
     private struct Gate {
         var enabled = false
         var busy = false
-        var lastFire = 0.0
+        var trackingNormal = false
+        var generation: UInt64 = 0
+        var generationStartedAt: TimeInterval = 0
+        var lastFire: TimeInterval?
+        var lastFrameTimestamp: TimeInterval?
         var viewSize = CGSize.zero
         var orientation = UIInterfaceOrientation.portrait
+        var latestPacket: EquipmentScanFrame?
+        var latestObservation: EquipmentScanObservation?
+
+        mutating func invalidate() {
+            generation &+= 1
+            generationStartedAt = CACurrentMediaTime()
+            latestPacket = nil
+            latestObservation = nil
+            lastFire = nil
+        }
+    }
+
+    /// ARFrame owns its image/depth buffers. Retaining ONE immutable frame across the
+    /// dispatch boundary keeps those buffers and its pose alive until worker copying ends.
+    /// No mutable ARSession/ARView state is read on the worker; this is the Sendable boundary.
+    private struct CapturedFrame: @unchecked Sendable {
+        let frame: ARFrame
+        let id: UUID
+        let generation: UInt64
+        let viewSize: CGSize
+        let orientation: UIInterfaceOrientation
+    }
+
+    init(maximumObservationAge: TimeInterval = 2.0) {
+        precondition(maximumObservationAge.isFinite && maximumObservationAge > 0)
+        self.maximumObservationAge = maximumObservationAge
     }
 
     func setEnabled(_ enabled: Bool) {
-        gate.withLock { $0.enabled = enabled }
+        gate.withLock {
+            guard $0.enabled != enabled else { return }
+            $0.enabled = enabled
+            $0.invalidate()
+        }
     }
 
     func setViewport(_ size: CGSize, orientation: UIInterfaceOrientation) {
         gate.withLock {
+            guard $0.viewSize != size || $0.orientation != orientation else { return }
             $0.viewSize = size
             $0.orientation = orientation
+            $0.invalidate()
+        }
+    }
+
+    /// Call from ARSession interruption/failure/reset callbacks, even when no frames arrive.
+    /// The next normal frame reopens admission; no enable toggle is required for recovery.
+    func trackingInterrupted() {
+        gate.withLock {
+            $0.trackingNormal = false
+            $0.invalidate()
+        }
+    }
+
+    /// Includes failure metadata without passing an empty failure packet to legacy consumers.
+    /// Nil means no current observation (disabled, interrupted, invalidated or expired).
+    var latestObservation: EquipmentScanObservation? {
+        gate.withLock {
+            guard $0.enabled, $0.trackingNormal,
+                  let observation = $0.latestObservation,
+                  observation.generation == $0.generation,
+                  isFresh(observation.capturedAt, at: CACurrentMediaTime()) else { return nil }
+            return observation
         }
     }
 
     func takeLatest() -> EquipmentScanFrame? {
-        latest.withLock { packet in
-            let current = packet
-            packet = nil
-            return current
+        gate.withLock {
+            let packet = $0.latestPacket
+            $0.latestPacket = nil
+            // Independently validate on consumption, not just when the worker publishes.
+            guard $0.enabled, $0.trackingNormal,
+                  let packet, let observation = packet.observation,
+                  observation.generation == $0.generation,
+                  observation.status.isSuccessfulInference,
+                  isFresh(observation.capturedAt, at: CACurrentMediaTime()) else { return nil }
+            return packet
         }
     }
 
-    /// Schedules at most one Vision request every quarter second, and only while tracking is normal.
+    /// Admission only on the AR callback: copying, depth extraction and Vision run on worker.
+    /// Frames arriving while busy are dropped, not queued. A completed result replaces the old one.
     func consider(_ frame: ARFrame) {
-        guard case .normal = frame.camera.trackingState else { return }
-        let now = CACurrentMediaTime()
-        let snapshot: (CGSize, UIInterfaceOrientation)? = gate.withLock { gate in
-            guard gate.enabled, !gate.busy, gate.viewSize.width > 1, now - gate.lastFire >= 0.25 else { return nil }
-            gate.lastFire = now
-            gate.busy = true
-            return (gate.viewSize, gate.orientation)
-        }
-        guard let (viewSize, interface) = snapshot else { return }
-        let visionOrientation = Self.visionOrientation(for: interface)
-        guard let pixels = EquipmentPixelBuffer.copy(frame.capturedImage) else {
-            gate.withLock { $0.busy = false }
+        guard case .normal = frame.camera.trackingState else {
+            gate.withLock {
+                if $0.trackingNormal {
+                    $0.trackingNormal = false
+                    $0.invalidate()
+                }
+            }
             return
         }
-        let transform = frame.displayTransform(for: interface, viewportSize: viewSize)
-        let geometry = EquipmentScanFrame(
+        let now = CACurrentMediaTime()
+        let captured: CapturedFrame? = gate.withLock { gate in
+            // A delayed callback captured before interruption/viewport/enable invalidation
+            // must not resurrect tracking or acquire the new generation's identity.
+            guard frame.timestamp >= gate.generationStartedAt else { return nil }
+            gate.trackingNormal = true
+            guard gate.enabled, !gate.busy,
+                  gate.viewSize.width.isFinite, gate.viewSize.height.isFinite,
+                  gate.viewSize.width > 1, gate.viewSize.height > 1,
+                  isFresh(frame.timestamp, at: now),
+                  gate.lastFire.map({ now - $0 >= 0.25 }) ?? true,
+                  gate.lastFrameTimestamp.map({ frame.timestamp > $0 }) ?? true else { return nil }
+            gate.lastFire = now
+            gate.lastFrameTimestamp = frame.timestamp
+            gate.busy = true
+            return CapturedFrame(
+                frame: frame, id: UUID(), generation: gate.generation,
+                viewSize: gate.viewSize, orientation: gate.orientation
+            )
+        }
+        guard let captured else { return }
+        worker.async { [self, captured] in
+            autoreleasepool { process(captured) }
+        }
+    }
+
+    private func process(_ captured: CapturedFrame) {
+        defer { gate.withLock { $0.busy = false } }
+        guard isCurrent(captured) else { return }
+        let startedAt = CACurrentMediaTime()
+        let frame = captured.frame
+        let visionOrientation = Self.visionOrientation(for: captured.orientation)
+        let transform = frame.displayTransform(for: captured.orientation, viewportSize: captured.viewSize)
+        var packet = EquipmentScanFrame(
             detections: [],
             visionOrientation: visionOrientation,
             imageSize: CGSize(
                 width: CVPixelBufferGetWidth(frame.capturedImage),
                 height: CVPixelBufferGetHeight(frame.capturedImage)
             ),
-            viewSize: viewSize,
+            viewSize: captured.viewSize,
             intrinsics: frame.camera.intrinsics,
             cameraTransform: frame.camera.transform,
             displayA: transform.a,
@@ -242,13 +419,48 @@ final class EquipmentScanBridge: @unchecked Sendable {
             displayD: transform.d,
             displayTX: transform.tx,
             displayTY: transform.ty,
+            // Image, depth and pose all belong to the retained frame, never session.currentFrame.
             depth: EquipmentPixelBuffer.depthSample(from: frame.smoothedSceneDepth ?? frame.sceneDepth)
         )
-        var packet = geometry
-        packet.detections = detector.detect(in: pixels, orientation: visionOrientation)
+        let result: EquipmentDetectionResult
+        if let pixels = EquipmentPixelBuffer.copy(frame.capturedImage) {
+            guard isCurrent(captured) else { return }
+            result = detector.detectResult(in: pixels, orientation: visionOrientation)
+        } else {
+            result = EquipmentDetectionResult(
+                detections: [], status: .frameUnavailable, errorMessage: "Camera frame could not be copied."
+            )
+        }
+        let completedAt = CACurrentMediaTime()
+        let observation = EquipmentScanObservation(
+            id: captured.id, generation: captured.generation,
+            capturedAt: frame.timestamp, completedAt: completedAt,
+            processingDuration: completedAt - startedAt,
+            status: result.status, errorMessage: result.errorMessage
+        )
+        packet.detections = result.detections
+        packet.observation = observation
         let finished = packet
-        latest.withLock { $0 = finished }
-        gate.withLock { $0.busy = false }
+        gate.withLock {
+            guard $0.enabled, $0.trackingNormal, $0.generation == captured.generation,
+                  isFresh(frame.timestamp, at: CACurrentMediaTime()) else { return }
+            $0.latestObservation = observation
+            // Failures replace prior status and remove prior detections; they are never
+            // delivered as a confident empty scan. UI reads latestObservation separately.
+            $0.latestPacket = result.status.isSuccessfulInference ? finished : nil
+        }
+    }
+
+    private func isCurrent(_ captured: CapturedFrame) -> Bool {
+        gate.withLock {
+            $0.enabled && $0.trackingNormal && $0.generation == captured.generation
+                && isFresh(captured.frame.timestamp, at: CACurrentMediaTime())
+        }
+    }
+
+    private func isFresh(_ capturedAt: TimeInterval, at now: TimeInterval) -> Bool {
+        // ARFrame.timestamp and CACurrentMediaTime share the monotonic uptime timebase.
+        capturedAt.isFinite && now.isFinite && capturedAt <= now && now - capturedAt <= maximumObservationAge
     }
 
     private static func visionOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
@@ -271,18 +483,22 @@ enum EquipmentPixelBuffer {
         guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, format, nil, &destination) == kCVReturnSuccess,
               let destination else { return nil }
         guard transfer(from: source, to: destination) else { return nil }
+        CVBufferPropagateAttachments(source, destination)
         return destination
     }
 
     static func depthSample(from depth: ARDepthData?) -> DepthSample? {
         guard let depth else { return nil }
         let map = depth.depthMap
-        CVPixelBufferLockBaseAddress(map, .readOnly)
+        guard CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_DepthFloat32,
+              CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
         let width = CVPixelBufferGetWidth(map)
         let height = CVPixelBufferGetHeight(map)
         guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
         let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        guard width > 0, height > 0, width <= Int.max / height,
+              width <= rowBytes / MemoryLayout<Float>.stride else { return nil }
         var meters = [Float](repeating: 0, count: width * height)
         for row in 0..<height {
             let source = base.advanced(by: row * rowBytes).assumingMemoryBound(to: Float.self)
@@ -290,17 +506,21 @@ enum EquipmentPixelBuffer {
                 meters[row * width + column] = source[column]
             }
         }
-        return DepthSample(width: width, height: height, meters: meters, confidence: confidenceValues(depth.confidenceMap))
+        return DepthSample(
+            width: width, height: height, meters: meters,
+            confidence: confidenceValues(depth.confidenceMap, width: width, height: height)
+        )
     }
 
-    private static func confidenceValues(_ map: CVPixelBuffer?) -> [UInt8]? {
-        guard let map else { return nil }
-        CVPixelBufferLockBaseAddress(map, .readOnly)
+    private static func confidenceValues(_ map: CVPixelBuffer?, width: Int, height: Int) -> [UInt8]? {
+        guard let map,
+              CVPixelBufferGetWidth(map) == width, CVPixelBufferGetHeight(map) == height,
+              CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_OneComponent8,
+              CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
-        let width = CVPixelBufferGetWidth(map)
-        let height = CVPixelBufferGetHeight(map)
         guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
         let rowBytes = CVPixelBufferGetBytesPerRow(map)
+        guard rowBytes >= width else { return nil }
         var values = [UInt8](repeating: 0, count: width * height)
         for row in 0..<height {
             let source = base.advanced(by: row * rowBytes).assumingMemoryBound(to: UInt8.self)
@@ -312,13 +532,14 @@ enum EquipmentPixelBuffer {
     }
 
     private static func transfer(from source: CVPixelBuffer, to destination: CVPixelBuffer) -> Bool {
-        CVPixelBufferLockBaseAddress(source, .readOnly)
-        CVPixelBufferLockBaseAddress(destination, [])
+        guard CVPixelBufferLockBaseAddress(source, .readOnly) == kCVReturnSuccess else { return false }
+        defer { CVPixelBufferUnlockBaseAddress(source, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(destination, []) == kCVReturnSuccess else { return false }
         defer {
-            CVPixelBufferUnlockBaseAddress(source, .readOnly)
             CVPixelBufferUnlockBaseAddress(destination, [])
         }
         let planes = CVPixelBufferGetPlaneCount(source)
+        guard planes == CVPixelBufferGetPlaneCount(destination) else { return false }
         if planes == 0 {
             return copyPlane(from: source, to: destination, plane: nil)
         }

@@ -19,7 +19,7 @@ enum EquipmentKind: String, Sendable {
     }
 }
 
-/// One box from the baked YOLOE prompts. The rect is Vision-normalized, origin at the lower left of the upright image.
+/// One box from the EquipmentScan detector. The rect is Vision-normalized, origin at the lower left of the upright image.
 struct EquipmentDetection: Sendable {
     var kind: EquipmentKind
     var confidence: Float
@@ -31,8 +31,9 @@ protocol EquipmentDetecting: AnyObject {
     func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection]
 }
 
-/// YOLOE prompts are baked into EquipmentScan. The recognizer only reads that package.
-final class YOLOEEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
+/// EquipmentScan is a YOLO detector fine-tuned on meter and panel photos (scripts/train_equipment.py).
+/// The recognizer only reads that package.
+final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
     private let request: VNCoreMLRequest?
     private let lock = NSLock()
     let loadError: String?
@@ -176,9 +177,9 @@ struct EquipmentScanFrame: Sendable {
     }
 }
 
-/// Copies AR frames and runs YOLOE off the session callback. The latest packet is drained on the main thread.
+/// Copies AR frames and runs the detector off the session callback. The latest packet is drained on the main thread.
 final class EquipmentScanBridge: @unchecked Sendable {
-    let detector = YOLOEEquipmentDetector()
+    let detector = YOLOEquipmentDetector()
     private let gate = OSAllocatedUnfairLock(initialState: Gate())
     private let latest = OSAllocatedUnfairLock<EquipmentScanFrame?>(initialState: nil)
 

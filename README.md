@@ -58,6 +58,18 @@ Siting numbers follow Base’s published guidance: Austin main breakers 150–20
 - https://help.basepowercompany.com/en/articles/10280705
 - https://help.basepowercompany.com/en/articles/10280641
 
+## Equipment detector
+
+`BaseAR/Placement/EquipmentScan.mlpackage` is YOLO26n fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). Training data lives in `training/`, which is gitignored, so each machine rebuilds it:
+
+1. `uv venv --python 3.12 training/.venv && uv pip install --python training/.venv/bin/python ultralytics coremltools "git+https://github.com/ultralytics/CLIP.git"`
+2. `python3 scripts/fetch_commons.py`: about 400 CC-licensed Wikimedia Commons photos, with credits in `training/raw/sources.csv`.
+3. Put hand-labeled site photos in `training/site/`, each with a YOLO `.txt` label beside it. They are repeated three times in training, and four are held out for validation (`VAL_STEMS` in `autolabel.py`).
+4. `training/.venv/bin/python scripts/autolabel.py`: YOLOE-26l drafts meter boxes for the Commons photos. Check `training/review/` and list bad images in `training/exclude.txt`. Commons panels are skipped because they are European switchboards.
+5. `training/.venv/bin/python scripts/train_equipment.py`: trains on the Apple GPU and writes the Core ML package into the app.
+
+Every panel example so far comes from one demo wall. Expect weaker panel detection at other houses until more site photos are added.
+
 ## How this maps to Base
 
 Base’s public request is two steps, researched 26 September 2026. [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. The longer comparison is in `reports/Base battery form vs app.md`.

@@ -25,3 +25,5 @@ Config/Local.xcconfig
 
 # Local editor state
 .cursor/
+training/
+scripts/__pycache__/

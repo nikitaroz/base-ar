@@ -77,6 +77,7 @@ struct PlacementARView: View {
     @State private var pendingSave: PlacementSaveRequest? = nil
     @State private var statusMessage: String? = nil
     @State private var trackingMessage: String? = nil
+    @State private var equipmentMessage: String? = nil
     @State private var isVisible = false
     @State private var hasStartedAR: Bool
     @State private var coachingIsActive = false
@@ -184,6 +185,7 @@ struct PlacementARView: View {
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
+                        onEquipmentStatus: { equipmentMessage = $0 },
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
@@ -349,6 +351,11 @@ struct PlacementARView: View {
             }
             if let trackingMessage {
                 Text(trackingMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            } else if let equipmentMessage {
+                Text(equipmentMessage)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -917,6 +924,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
+    var onEquipmentStatus: (String?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
 
     func makeUIView(context: Context) -> ARView {
@@ -943,6 +951,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             onScreenshot: onScreenshot,
             onFailure: onFailure,
             onTrackingStatus: onTrackingStatus,
+            onEquipmentStatus: onEquipmentStatus,
             onCoachingActiveChange: onCoachingActiveChange
         )
     }
@@ -992,6 +1001,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var onScreenshot: (@MainActor (UUID, UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
     private var onTrackingStatus: ((String?) -> Void)?
+    private var onEquipmentStatus: ((String?) -> Void)?
+    private var lastEquipmentMessage: String?
+    private var lastEquipmentGeneration: UInt64?
     private var onCoachingActiveChange: ((Bool) -> Void)?
     private var onLiveFeet: ((Double?) -> Void)?
     private var root: AnchorEntity?
@@ -1126,6 +1138,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
+            onEquipmentStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void
         ) {
             self.mode = mode
@@ -1150,6 +1163,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onScreenshot = onScreenshot
             self.onFailure = onFailure
             self.onTrackingStatus = onTrackingStatus
+            self.onEquipmentStatus = onEquipmentStatus
             self.onCoachingActiveChange = onCoachingActiveChange
             if startedScanning, !reportedScanLoadError, let loadError = equipmentBridge.detector.loadError {
                 reportedScanLoadError = true
@@ -1191,6 +1205,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         func pauseIfIdle() {
             guard isPrepared else { return }
+            equipmentBridge.trackingInterrupted()
             cancelScreenshot()
             isRunning = false
             callbackEpoch.withLock { $0 = UUID() }
@@ -1210,6 +1225,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onScreenshot = nil
             onFailure = nil
             onTrackingStatus = nil
+            onEquipmentStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
             cancelScreenshot()
@@ -1245,6 +1261,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func coachingOverlayViewDidRequestSessionReset(_ coachingOverlayView: ARCoachingOverlayView) {
+            equipmentBridge.trackingInterrupted()
             // Do not reset world tracking underneath existing evidence.
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
@@ -1541,6 +1558,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
+            equipmentBridge.trackingInterrupted()
             let message = error.localizedDescription
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
@@ -1551,6 +1569,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func sessionWasInterrupted(_ session: ARSession) {
+            equipmentBridge.trackingInterrupted()
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
                 guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
@@ -1846,6 +1865,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         @objc func tickAim() {
             let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
             equipmentBridge.setViewport(arView.bounds.size, orientation: interface)
+            updateEquipmentStatus()
             if let packet = equipmentBridge.takeLatest() {
                 applyScan(packet)
             }
@@ -2189,6 +2209,46 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             emit()
         }
 
+        private func clearTransientEquipmentObservations() {
+            boxOverlay.items = []
+            if !meterLock.locked { meterLock = EquipmentLock() }
+            if !panelLock.locked { panelLock = EquipmentLock() }
+        }
+
+        private func publishEquipmentStatus(_ message: String?) {
+            guard message != lastEquipmentMessage else { return }
+            lastEquipmentMessage = message
+            onEquipmentStatus?(message)
+        }
+
+        private func updateEquipmentStatus() {
+            guard scanningEquipment, isRunning, !coachingActive else {
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus(nil)
+                return
+            }
+            guard let observation = equipmentBridge.latestObservation else {
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus(trackingBlockedMessage == nil
+                    ? "Waiting for a fresh equipment scan. You can also mark equipment manually." : nil)
+                return
+            }
+            if observation.generation != lastEquipmentGeneration {
+                clearTransientEquipmentObservations()
+                lastEquipmentGeneration = observation.generation
+            }
+            switch observation.status {
+            case .success:
+                publishEquipmentStatus(nil)
+            case .noDetections:
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus("No meter or panel detected in this frame. Reframe or mark it manually.")
+            case .modelUnavailable, .inferenceFailed, .frameUnavailable:
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus("Automatic equipment scanning is unavailable. Mark the meter and panel manually.")
+            }
+        }
+
         /// Boxes stay on the camera. A hit counts toward a lock only after it lands on a wall or, failing that, LiDAR depth.
         private func applyScan(_ packet: EquipmentScanFrame) {
             guard isRunning, scanningEquipment, !coachingActive, trackingAllowsConfirmation(report: false) else {
@@ -2200,6 +2260,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
+            // A lock requires a continuous run of usable observations, not unrelated
+            // hits accumulated across a failure, absence or generation change.
+            if best[.electricMeter] == nil, !meterLock.locked { meterLock = EquipmentLock() }
+            if best[.breakerPanel] == nil, !panelLock.locked { panelLock = EquipmentLock() }
             var items: [EquipmentBoxOverlay.Item] = []
             var lockedSomething = false
             for detection in best.values {

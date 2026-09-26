@@ -113,9 +113,11 @@ private struct WelcomeView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     Spacer(minLength: 56)
-                    Image(systemName: "bolt.house.fill")
-                        .font(.system(size: 64, weight: .light))
-                        .foregroundStyle(.primary)
+                    Image("BrandMark")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 88, height: 88)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .accessibilityHidden(true)
                     Text("Base Site Survey")
                         .font(.largeTitle.bold())

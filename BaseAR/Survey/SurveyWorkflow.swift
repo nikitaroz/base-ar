@@ -21,11 +21,11 @@ enum SurveyStep: String, Codable, CaseIterable, Identifiable, Sendable {
         case .safety: "Stay on safe, accessible ground. Never remove a cover, break a seal, operate a breaker, climb, or touch wiring. Stop if equipment is damaged or wet."
         case .home: "Confirm the property address before using location. Answer the energy setup questions so the photo checklist can adapt."
         case .program: "Read the utility name from your bill. A city name or GPS fix does not establish the utility, program, wiring topology, or eligibility."
-        case .meter: "Find the electric meter, not the gas meter. Stand still, keep the printed identity label sharp, and avoid glare. The meter ID is not the cycling usage reading."
+        case .meter: "Point your camera at the electric meter (not the gas meter). The live scanner reads the printed ID automatically. Hold steady when it shows a value. The meter ID is not the cycling usage reading."
         case .meterContext: "Check your surroundings before stepping back. Show the full wall, ground, windows, doors, pipes and obstructions. Do not walk backward while looking at the screen."
-        case .breaker: "Find the main disconnect rating, not a branch breaker or the meter's CL rating. Only capture markings already safely visible. Do not open a cover to find them."
+        case .breaker: "Point your camera at the main disconnect. The live scanner reads the amperage automatically. Hold steady when it shows a value. This is not a branch breaker or the panel bus rating."
         case .panelContext: "Show where the panel sits and any safely visible nameplate. A panel bus rating is separate from main-breaker amperage. Do not guess an unreadable rating."
-        case .placement: "Stand still to scan, then move slowly along safe ground. Mark equipment, check gas, and preview the battery. Weak tracking or missing measurements stay unknown."
+        case .placement: "Stand still to scan, then move slowly along safe ground. The app detects equipment, marks them in AR, and shows realtime clearance feedback as you preview the battery location. Weak tracking or missing measurements stay unknown."
         case .review: "Check the images and unresolved items. You can share an incomplete packet for help. Nothing is submitted to Base automatically, and no result authorizes installation."
         }
     }
@@ -129,11 +129,25 @@ enum SurveyWorkflow {
             return issues
         case .program: return p.programAnswered ? [] : ["Record your utility choice, including unknown if necessary."]
         case .meter:
-            return (s.electrical.meterPhotoFilename == nil ? ["Take a meter identity photo."] : []) +
-                (!p.meterConfirmed ? ["Compare the printed meter ID with the entered value and confirm it."] : [])
+            // With realtime feedback, a captured value (from scan or manual entry) is sufficient
+            var issues: [String] = []
+            if s.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true {
+                issues.append("Scan or enter the meter number.")
+            }
+            if s.electrical.meterPhotoFilename == nil {
+                issues.append("Capture at least one meter photo.")
+            }
+            return issues
         case .breaker:
-            return (s.electrical.breakerPhotoFilename == nil ? ["Take a main disconnect photo."] : []) +
-                (!p.breakerConfirmed ? ["Compare the main breaker rating with the entered value and confirm it."] : [])
+            // With realtime feedback, a captured value is sufficient
+            var issues: [String] = []
+            if s.electrical.mainBreakerAmperage == nil || s.electrical.mainBreakerAmperage == 0 {
+                issues.append("Scan or enter the main breaker amperage.")
+            }
+            if s.electrical.breakerPhotoFilename == nil {
+                issues.append("Capture at least one breaker photo.")
+            }
+            return issues
         case .meterContext, .panelContext:
             var issues = photos(for: step, session: s).compactMap { photo -> String? in
                 p.contextPhotos[photo.rawValue]?.accepted == true ? nil : "Capture and check: \(photo.title)."

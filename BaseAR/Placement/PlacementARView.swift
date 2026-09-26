@@ -1430,13 +1430,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         func applyTone() {
             guard let tone = appliedTone else { return }
             let color = ToneStyle.uiColor(tone)
-            if batteryConfirmed {
-                batteryBody?.model?.materials = [SimpleMaterial(color: color, isMetallic: false)]
-                footprintPad?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.35))]
+            
+            if tone == .conflict {
+                batteryBody?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.15))]
             } else {
-                batteryBody?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.45))]
-                footprintPad?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.22))]
+                batteryBody?.model?.materials = [SimpleMaterial(color: color, isMetallic: false)]
             }
+            footprintPad?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.35))]
         }
 
         func cancelScreenshot() {

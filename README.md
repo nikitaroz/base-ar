@@ -74,3 +74,9 @@ This app already asks the typed home-form questions and stores one meter photo, 
 1. **Electrical capture / OCR.** Done. Vision reads a meter number and main-breaker amperage from a photo, and a live card-style scan can fill either field. The typed value is still the one the user accepts.
 2. **AR placement and measurements.** Measure pad clearance into `footprintIsClear`, and transfer-switch space beside the meter into `transferSwitchClearanceObserved`. Add meter height, front working space, and whether the meter and panel share a wall. Tighten wall distance against the LiDAR mesh when it exists.
 3. **Rules and review export.** Extend `BaseRuleSet` only when those measurements exist. Keep each check at pass, conflict, or unknown, and keep green reserved for a full set of measured passes.
+
+## Research and proposed expansion
+
+The [site-survey research index](docs/site-survey-research/README.md) preserves the September 26, 2026 research, source links, product decisions, and a proposed end-to-end expansion of this app. It includes utility/program routing, public electrical/property data, placement constraints, a 30-rule research catalog, source coverage, and an implementation handoff.
+
+These documents are research context, not implemented functionality or installation approval. They retain their reviewed code snapshots; recheck code-specific findings against current `main`, and do not promote unresolved or model-specific guidance into universal rules.

@@ -1,0 +1,468 @@
+{
+  "title": "Base Site Survey: Research Rule Catalog",
+  "version": "2026-09-26-research-1",
+  "purpose": "Repo-aligned input for preliminary capture guidance and reviewer routing. Not executable permitting or installation approval.",
+  "installationApprovalAllowed": false,
+  "sourceSnapshotDate": "2026-09-26",
+  "repositoryBaseline": "605a6474deca0fbf9b0cd1675820857b14763404",
+  "defaultForMissingScopeOrEvidence": "unknown",
+  "scopeDimensions": [
+    "confirmedServiceAddress",
+    "unit",
+    "utility",
+    "baseProgram",
+    "authorityHavingJurisdiction",
+    "projectOrPermitDate",
+    "batteryModel",
+    "batteryCount",
+    "connectionDesign",
+    "existingSolar",
+    "existingGenerator",
+    "existingBattery"
+  ],
+  "sources": {
+    "base_spacing": "https://help.basepowercompany.com/en/articles/10280705",
+    "base_photos": "https://help.basepowercompany.com/en/articles/10280641",
+    "base_core": "https://www.basepowercompany.com/specs/core",
+    "base_legacy": "https://www.basepowercompany.com/specs/ground-mounted",
+    "base_ae": "https://www.basepowercompany.com/austinenergy",
+    "base_utilities": "https://www.basepowercompany.com/utilities",
+    "base_farmers": "https://help.basepowercompany.com/en/articles/11390529",
+    "base_coserv": "https://help.basepowercompany.com/en/articles/11390465",
+    "base_gvec": "https://help.basepowercompany.com/en/articles/11390721",
+    "base_epe": "https://help.basepowercompany.com/en/articles/11390785",
+    "base_soft_start": "https://help.basepowercompany.com/en/articles/10280897",
+    "base_lra": "https://help.basepowercompany.com/en/articles/12867073",
+    "base_solar_ia": "https://help.basepowercompany.com/en/articles/10283777",
+    "base_oncor_agreements": "https://help.basepowercompany.com/en/articles/10283841",
+    "base_existing_battery": "https://help.basepowercompany.com/en/articles/13806657",
+    "base_generator": "https://help.basepowercompany.com/en/articles/10282049",
+    "ae_design_2023": "https://austinenergy.com/-/media/project/websites/austinenergy/contractors/designcriteriamanual.pdf",
+    "ae_interconnection_2025": "https://austinenergy.com/-/media/Project/Websites/AustinEnergy/Contractors/AE_DG_Interconnection_Guide.pdf?rev=e5d375562efb4515bae892387b29e4d9&hash=A9043CEE17BBF4514E6503A1E786423E",
+    "centerpoint_der": "https://www.centerpointenergy.com/en-us/Documents/DistributedGenerationDocs/SmallScale-DER-Project-Documentation.pdf",
+    "oncor_service_2025": "https://www.oncor.com/content/dam/oncorwww/documents/new-construction/construction-guidelines/Electric%20Service%20Guidelines%20Book.pdf",
+    "irc_2024_public_worksheet": "http://www.dli.mn.gov/sites/default/files/pdf/TAG-residential-070125-worksheet.pdf",
+    "tx_sb1252": "https://www.tdlr.texas.gov/news/2025/08/14/sb-1252-changes-to-residential-energy-backup-system-regulations/",
+    "houston_backup": "https://www.houstonpermittingcenter.org/news-events/notice-process-updates-residential-backup-power-systems",
+    "dallas_backup": "https://dallascityhall.com/departments/sustainabledevelopment/DCH%20documents/SFB%20%23204.pdf"
+  },
+  "programProfiles": [
+    {
+      "id": "base-austin-energy",
+      "utility": "Austin Energy",
+      "connectionTopology": "front_of_customer_billing_meter",
+      "evidenceStatus": "explicit_base_program_statement",
+      "sources": ["base_ae"],
+      "requiresApprovedOneLineForInstallation": true
+    },
+    {
+      "id": "base-farmers",
+      "utility": "Farmers Electric Cooperative",
+      "connectionTopology": "front_of_customer_billing_meter",
+      "evidenceStatus": "explicit_base_program_statement",
+      "sources": ["base_farmers"],
+      "requiresApprovedOneLineForInstallation": true
+    },
+    {
+      "id": "base-coserv",
+      "utility": "CoServ",
+      "connectionTopology": "unknown_requires_program_design",
+      "billingTreatment": "battery_energy_credit",
+      "sources": ["base_coserv"],
+      "requiresApprovedOneLineForInstallation": true
+    },
+    {
+      "id": "base-gvec",
+      "utility": "GVEC",
+      "connectionTopology": "unknown_requires_program_design",
+      "billingTreatment": "net_metering_and_battery_activity_credit",
+      "sources": ["base_gvec"],
+      "requiresApprovedOneLineForInstallation": true
+    },
+    {
+      "id": "base-el-paso",
+      "utility": "El Paso Electric",
+      "connectionTopology": "separate_program_meter_details_unverified",
+      "evidenceStatus": "explicit_base_program_statement",
+      "sources": ["base_epe"],
+      "requiresApprovedOneLineForInstallation": true
+    },
+    {
+      "id": "base-competitive-texas",
+      "utility": "must_confirm_individually",
+      "connectionTopology": "behind_meter_candidate_not_universal",
+      "evidenceStatus": "general_base_description_not_property_design",
+      "sources": ["base_utilities"],
+      "requiresApprovedOneLineForInstallation": true
+    }
+  ],
+  "rules": [
+    {
+      "id": "base-outdoor-only",
+      "layer": "base_policy",
+      "subject": "battery_location",
+      "statement": "Base's public photo guidance excludes indoor and garage installation.",
+      "action": "capture_location_context_and_flag_indoor_candidate",
+      "neededEvidence": ["wide_site_photo", "location_type"],
+      "sources": ["base_photos"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-austin-main-breaker",
+      "layer": "base_policy",
+      "scope": "Base FAQ says Austin; geographic versus utility-program scope requires Base confirmation",
+      "subject": "confirmed_main_disconnect_rating",
+      "threshold": {"minimum": 150, "maximum": 200, "unit": "A"},
+      "action": "show_candidate_range_only_when_austin_profile_is_confirmed",
+      "neededEvidence": ["main_disconnect_photo", "accepted_rating", "confirmed_program"],
+      "sources": ["base_spacing"],
+      "automation": "scope_gated_preliminary_screen"
+    },
+    {
+      "id": "base-general-main-breaker",
+      "layer": "base_policy",
+      "scope": "Non-Austin Base configuration, subject to solar and battery-count conditions",
+      "subject": "confirmed_main_disconnect_rating",
+      "threshold": {"minimum": 100, "maximum": 200, "unit": "A"},
+      "action": "flag_outside_published_range_for_base_review_not_automatic_replacement",
+      "neededEvidence": ["main_disconnect_photo", "accepted_rating", "confirmed_program"],
+      "sources": ["base_spacing"],
+      "automation": "scope_gated_preliminary_screen"
+    },
+    {
+      "id": "base-solar-or-two-panel",
+      "layer": "base_policy",
+      "subject": "panel_rating",
+      "condition": "solar_present or planned_battery_count == 2",
+      "statement": "Base says the electrical panel must be rated 200A. Do not substitute the main-breaker field or automatically reject a higher bus rating.",
+      "action": "capture_panel_nameplate_and_main_disconnect_then_review_configuration",
+      "neededEvidence": ["panel_nameplate_photo", "main_disconnect_photo", "solar_answer", "battery_configuration"],
+      "sources": ["base_spacing"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "base-gas-meter",
+      "layer": "base_policy",
+      "subject": "battery_to_gas_meter_clearance",
+      "threshold": {"minimum": 3, "unit": "ft"},
+      "action": "measure_clearance_and_surface_possible_conflict",
+      "neededEvidence": ["gas_meter_context_photo", "nearest_surface_measurement", "measurement_uncertainty"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen_no_installation_approval"
+    },
+    {
+      "id": "base-windows",
+      "layer": "base_policy",
+      "subject": "battery_obstructs_window",
+      "statement": "Do not place the battery in front of windows. Closing a window is not a documented exemption.",
+      "action": "capture_window_context_and_offer_alternate_location",
+      "neededEvidence": ["window_context_photo", "placement_geometry"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-electrical-access",
+      "layer": "base_policy",
+      "subject": "battery_obstructs_electrical_equipment",
+      "statement": "Do not place the battery in front of meter, breaker, or solar equipment.",
+      "action": "request_wide_photo_and_access_measurement",
+      "neededEvidence": ["wide_equipment_photo", "working_space_geometry"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-meter-route",
+      "layer": "base_policy",
+      "subject": "battery_to_meter_route",
+      "threshold": {"maximum": 20, "unit": "ft"},
+      "statement": "Published guidance says within 20 feet; no trenching or attic conduit. Straight-line AR distance alone does not establish an acceptable wiring route.",
+      "action": "capture_route_and_obstructions",
+      "neededEvidence": ["placement_distance", "route_photos", "fence_and_corner_context"],
+      "sources": ["base_spacing", "base_photos"],
+      "automation": "preliminary_screen_with_route_review"
+    },
+    {
+      "id": "base-wall-offset",
+      "layer": "base_policy",
+      "subject": "battery_to_mounting_wall",
+      "threshold": {"maximum": 1, "unit": "ft"},
+      "statement": "Within 1 foot of wall; do not combine indiscriminately with the separate 3-foot fixed-feature guidance.",
+      "action": "measure_identified_mounting_wall_offset",
+      "neededEvidence": ["mounting_wall_id", "clearance_measurement"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-footprint",
+      "layer": "base_policy",
+      "subject": "battery_planning_footprint",
+      "threshold": {"width": 3, "depth": 3, "unit": "ft"},
+      "statement": "Planning envelope only. Exact model dimensions and exposure clearances remain separate.",
+      "action": "display_model_specific_body_and_separate_planning_envelope",
+      "neededEvidence": ["battery_model", "ground_context", "obstacle_measurements"],
+      "sources": ["base_spacing", "base_core", "base_legacy"],
+      "automation": "planning_overlay_only"
+    },
+    {
+      "id": "base-obstacle-spacing",
+      "layer": "base_policy",
+      "subject": "battery_exposure_clearance",
+      "threshold": {"minimum": 3, "unit": "ft"},
+      "statement": "Photo guide names gas meters, AC units, fences, other batteries, and obstructions. Direction, model exceptions, and relation to the wall-offset rule need confirmation.",
+      "action": "collect_each_obstacle_type_and_measurement",
+      "neededEvidence": ["obstacle_inventory", "clearance_measurements", "battery_model"],
+      "sources": ["base_photos", "base_spacing"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "base-meter-panel-wall",
+      "layer": "base_policy",
+      "subject": "meter_panel_wall_relationship",
+      "statement": "Meter and main panel must share a wall, including opposite sides of that wall.",
+      "action": "capture_paired_context_photos_and_user_confirmation",
+      "neededEvidence": ["meter_context_photo", "panel_context_photo", "wall_relationship_answer"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-main-panel-location",
+      "layer": "base_policy",
+      "subject": "main_panel_location",
+      "statement": "Main breaker box cannot be in a closet.",
+      "action": "ask_for_room_context_not_only_breaker_closeup",
+      "neededEvidence": ["panel_room_context"],
+      "sources": ["base_spacing"],
+      "automation": "preliminary_screen"
+    },
+    {
+      "id": "base-single-main",
+      "layer": "base_policy",
+      "subject": "main_panel_count",
+      "statement": "Base says there must only be one main breaker box; distinguish subpanels, multiple meters, and multi-unit service.",
+      "action": "capture_service_overview_and_route_multi_main_cases_to_review",
+      "neededEvidence": ["service_overview", "main_panel_count", "unit_association"],
+      "sources": ["base_spacing"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "base-meter-height",
+      "layer": "base_policy",
+      "subject": "meter_height",
+      "threshold": {"maximum": 6, "unit": "ft"},
+      "statement": "FAQ supplies a maximum, not the repo's universal 3-foot minimum. Confirm measurement reference and utility equipment subtype.",
+      "action": "capture_meter_and_grade_then_apply_confirmed_profile",
+      "neededEvidence": ["meter_grade_photo", "height_measurement", "equipment_subtype"],
+      "sources": ["base_spacing", "ae_design_2023"],
+      "automation": "scope_gated_preliminary_screen"
+    },
+    {
+      "id": "base-equipment-condition",
+      "layer": "base_policy",
+      "subject": "meter_and_conduit_condition",
+      "statement": "Meter and conduit must be secure and undamaged; a photo cannot verify hidden socket or conductor condition.",
+      "action": "capture_damage_context_and_escalate_without_asking_user_to_open_equipment",
+      "neededEvidence": ["meter_socket_exterior_photo", "conduit_photo"],
+      "sources": ["base_spacing"],
+      "automation": "professional_review_only"
+    },
+    {
+      "id": "base-transfer-space",
+      "layer": "base_policy",
+      "subject": "approved_transfer_equipment_space",
+      "statement": "FAQ describes approximately 13-inch switch width, 30-inch clearance, and 3 feet of wall allocation. Confirm the actual transfer hardware and connection design.",
+      "action": "collect_wall_segment_dimensions_and_obstacles",
+      "neededEvidence": ["approved_transfer_model", "wall_segment_photo", "workspace_dimensions"],
+      "sources": ["base_spacing"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "ae-working-space",
+      "layer": "utility_design",
+      "scope": "Austin Energy metering equipment; retrieved manual dated December 12, 2023, current project applicability must be confirmed",
+      "subject": "meter_working_space",
+      "threshold": {"widthMinimum": 30, "depthMinimum": 36, "heightMinimum": 78, "unit": "in"},
+      "statement": "Width is the greater of 30 inches and equipment width. Capture three dimensions, not a two-dimensional pad alone.",
+      "action": "measure_width_depth_headroom_and_keep_attestation_separate",
+      "neededEvidence": ["equipment_width", "workspace_width", "workspace_depth", "headroom"],
+      "sources": ["ae_design_2023"],
+      "automation": "candidate_utility_profile_requires_revision_confirmation"
+    },
+    {
+      "id": "ae-meter-mounting-height",
+      "layer": "utility_design",
+      "scope": "Austin Energy Table 1.9.2.C in retrieved December 2023 manual",
+      "subject": "meter_socket_center_height",
+      "thresholdBySubtype": {
+        "listed_self_contained_and_pedestal_types": {"minimum": 30, "maximum": 72, "unit": "in"},
+        "transocket_and_instrument_rated": {"minimum": 48, "maximum": 72, "unit": "in"}
+      },
+      "action": "identify_subtype_before_evaluating_height",
+      "neededEvidence": ["equipment_subtype", "socket_center_height", "finished_grade_reference"],
+      "sources": ["ae_design_2023"],
+      "automation": "candidate_utility_profile_requires_revision_confirmation"
+    },
+    {
+      "id": "model-code-window-separation",
+      "layer": "model_code_candidate",
+      "scope": "2024 IRC R330.4 text reproduced in official public review worksheet; Texas project applicability and listing exceptions unverified",
+      "subject": "ess_to_dwelling_doors_and_windows",
+      "threshold": {"minimum": 3, "unit": "ft"},
+      "exceptions": "Smaller distances may be permitted by UL 9540 listing and manufacturer installation instructions; obtain project approval.",
+      "action": "collect_window_type_egress_role_distance_and_listing_evidence",
+      "neededEvidence": ["opening_context", "window_fixed_operable_unknown", "clearance", "exact_system_listing"],
+      "sources": ["irc_2024_public_worksheet"],
+      "automation": "not_enabled_as_city_code_enforcement"
+    },
+    {
+      "id": "gas-appliance-review",
+      "layer": "unresolved_installation_constraint",
+      "subject": "water_heater_furnace_flue_regulator_air_intake",
+      "threshold": null,
+      "statement": "No verified universal Base battery-to-gas-water-heater clearance was located. Gas-meter clearance must not be reused for every gas appliance.",
+      "action": "capture_appliance_model_vent_termination_and_context_for_professional_review",
+      "neededEvidence": ["appliance_label", "vent_photo", "air_intake_photo", "site_context"],
+      "sources": ["base_spacing"],
+      "automation": "professional_review_only"
+    },
+    {
+      "id": "centerpoint-meter-change",
+      "layer": "utility_guidance",
+      "scope": "CenterPoint small-scale DER process; not a blanket guarantee for every existing service",
+      "subject": "meter_replacement",
+      "statement": "CenterPoint says most meters are bidirectional and remotely programmed; installation does not generally require replacement.",
+      "action": "do_not_require_meter_replacement_from_photo_alone",
+      "neededEvidence": ["confirmed_utility", "meter_identity", "utility_project_review"],
+      "sources": ["centerpoint_der"],
+      "automation": "review_routing"
+    },
+    {
+      "id": "centerpoint-disconnect-context",
+      "layer": "utility_guidance",
+      "subject": "ac_disconnect_to_meter",
+      "threshold": {"nominalMaximum": 10, "unit": "ft"},
+      "exceptions": "Document specifies a placard when farther than 10 feet and/or out of line of sight. This is not the battery-distance rule.",
+      "action": "capture_disconnect_location_line_of_sight_and_route",
+      "neededEvidence": ["approved_one_line", "disconnect_position", "line_of_sight", "placard_plan"],
+      "sources": ["centerpoint_der"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "legacy-hvac-soft-start",
+      "layer": "base_policy",
+      "scope": "25 kWh and 50 kWh legacy systems",
+      "subject": "individual_ac_lra",
+      "threshold": {"greaterThan": 100, "unit": "A_LRA"},
+      "action": "capture_each_condenser_label_and_route_to_base_hvac_review",
+      "neededEvidence": ["confirmed_battery_model", "each_ac_label", "existing_soft_start_answer"],
+      "sources": ["base_soft_start"],
+      "automation": "model_gated_review_routing"
+    },
+    {
+      "id": "core-hvac-review",
+      "layer": "base_policy",
+      "scope": "39.2 kWh Base Core; related LRA article omits explicit model and equality treatment",
+      "subject": "ac_startup_load",
+      "statement": "Core is excluded from the legacy provided-soft-start program; another Base article discusses total LRA above 160. Confirm model applicability and the exact 160 boundary before numeric automation.",
+      "action": "capture_all_ac_labels_without_auto_prescribing_soft_start",
+      "neededEvidence": ["battery_model", "each_ac_label", "load_context"],
+      "sources": ["base_soft_start", "base_lra"],
+      "automation": "capture_and_review"
+    },
+    {
+      "id": "solar-ia-document",
+      "layer": "base_workflow",
+      "subject": "existing_solar_interconnection_agreement",
+      "statement": "Base may require the complete existing agreement, not only an application or permission-to-operate letter.",
+      "action": "conditionally_request_homeowner_document",
+      "neededEvidence": ["solar_answer", "utility", "base_document_request"],
+      "sources": ["base_solar_ia"],
+      "automation": "conditional_capture_prompt"
+    },
+    {
+      "id": "oncor-signatures",
+      "layer": "base_workflow",
+      "scope": "Oncor Base members",
+      "subject": "tariff_and_interconnection_agreements",
+      "statement": "Base says Oncor members sign both agreements.",
+      "action": "include_document_status_in_handoff_without_signing_or_submitting",
+      "neededEvidence": ["confirmed_utility", "document_status"],
+      "sources": ["base_oncor_agreements"],
+      "automation": "workflow_reminder"
+    },
+    {
+      "id": "existing-battery-alternate-path",
+      "layer": "base_workflow",
+      "scope": "Eligible Texas retail-choice homes with an existing third-party battery",
+      "subject": "existing_battery",
+      "statement": "Base offers an energy-plan path without installing or taking over another battery.",
+      "action": "offer_alternate_review_route_instead_of_generic_ineligible_label",
+      "neededEvidence": ["utility", "existing_battery_make_model", "installed_battery_photo"],
+      "sources": ["base_existing_battery"],
+      "automation": "alternative_path_prompt"
+    },
+    {
+      "id": "standby-generator",
+      "layer": "base_policy",
+      "subject": "generator_type",
+      "statement": "Base generator guidance distinguishes portable integration from incompatible whole-home standby generators.",
+      "action": "capture_generator_and_transfer_equipment_type_then_review",
+      "neededEvidence": ["generator_type", "transfer_equipment_context", "battery_model"],
+      "sources": ["base_generator"],
+      "automation": "review_routing"
+    },
+    {
+      "id": "texas-process-scope",
+      "layer": "statute_and_local_workflow",
+      "effectiveFrom": "2025-09-01",
+      "subject": "permitting_and_inspection_path",
+      "statement": "SB 1252 limits municipal regulation of qualifying residential backup systems and preserves municipally owned utility authority. Service wiring and city processes require separate review.",
+      "action": "resolve_utility_ahj_project_date_and_scope_of_work",
+      "neededEvidence": ["utility", "ahj", "project_date", "system_power_energy", "premise_wiring_changes"],
+      "sources": ["tx_sb1252", "houston_backup", "dallas_backup"],
+      "automation": "professional_workflow_review_only"
+    }
+  ],
+  "requiredBasePhotoSlots": [
+    "meter_identity_closeup",
+    "meter_wall_wide",
+    "meter_right_context",
+    "meter_left_context",
+    "adjacent_wall_corner_to_corner",
+    "behind_fence_if_applicable",
+    "main_panel_overview",
+    "main_disconnect_rating_closeup",
+    "panel_location_context_if_not_already_visible"
+  ],
+  "additionalConditionalPhotoSlots": [
+    "panel_nameplate",
+    "meter_socket_exterior_and_conduit",
+    "each_nearby_window_and_door",
+    "gas_meter_and_regulator",
+    "gas_appliance_and_vent",
+    "each_ac_nameplate",
+    "solar_inverter_and_disconnect",
+    "existing_battery",
+    "generator_and_transfer_equipment",
+    "alternate_battery_location",
+    "access_route_and_fence_gate"
+  ],
+  "decisionStates": [
+    "capture_needed",
+    "candidate_reading",
+    "user_confirmed",
+    "possible_conflict",
+    "unknown",
+    "professional_review_required",
+    "alternate_path_available",
+    "review_packet_ready"
+  ],
+  "forbiddenAutomaticOutputs": [
+    "installation_approved",
+    "code_compliant",
+    "must_replace_utility_meter",
+    "must_replace_meter_socket",
+    "must_upgrade_service",
+    "safe_to_remove_cover",
+    "no_hazard_present_because_camera_did_not_detect_one"
+  ]
+}

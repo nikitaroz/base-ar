@@ -191,7 +191,7 @@ private struct SurveyHubView: View {
                     )
                     hubTile(
                         title: "Site measurements",
-                        subtitle: "Mark the meter, panel, and gas, then measure distances.",
+                        subtitle: "Find the meter and panel, then step back.",
                         symbol: "arkit",
                         progress: placementProgress,
                         route: .placement
@@ -253,9 +253,8 @@ private struct SurveyHubView: View {
         let placement = store.session.placement
         let liveScene = store.placementController?.scene
         return progress(for: [
-            placement.batteryPlaced || liveScene?.batteryPosition != nil,
-            placement.meterMarked || liveScene?.meterPosition != nil,
-            placement.gasMeterMarked || liveScene?.gasMeterPosition != nil || store.gasMeterNotVisible
+            placement.meterMarked || liveScene?.meterPosition != nil || liveScene?.meterWallPosition != nil,
+            placement.panelMarked || liveScene?.panelPosition != nil || liveScene?.panelWallPosition != nil
         ])
     }
 

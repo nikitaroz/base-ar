@@ -566,3 +566,193 @@ extension BatteryGeometry {
         return origin + rotation.act(clamped)
     }
 }
+
+/// Colored geometry for `scene.ply`, in the same ARKit world frame as the mesh: the battery, its footprint,
+/// marked equipment, and each distance as a bar. Bars and outlines are green when they pass, red on a conflict,
+/// amber when there is no verdict. The numbers go into header comments, since PLY has no text.
+enum MeasurementOverlay {
+    static let pass = SIMD3<UInt8>(52, 199, 89)
+    static let conflict = SIMD3<UInt8>(255, 59, 48)
+    static let unknown = SIMD3<UInt8>(255, 176, 0)
+    static let battery = SIMD3<UInt8>(225, 225, 230)
+    static let meter = SIMD3<UInt8>(175, 82, 222)
+    static let panel = SIMD3<UInt8>(0, 199, 190)
+    static let gas = SIMD3<UInt8>(255, 45, 85)
+
+    static func build(_ snapshot: PlacementSceneSnapshot, measurer: CorePlacementMeasurer) -> (chunk: MeshPointCloudChunk, comments: [String]) {
+        let measured = measurer.measure(snapshot)
+        var shape = OverlayShapes()
+        var comments = [
+            "overlay: battery light gray, meter purple, panel teal, gas meter pink",
+            "overlay: distance bars and outlines green pass, red conflict, amber unknown"
+        ]
+        func tone(_ passes: Bool?) -> SIMD3<UInt8> {
+            switch passes {
+            case true?: pass
+            case false?: conflict
+            case nil: unknown
+            }
+        }
+        func note(_ name: String, _ feet: Double?, _ passes: Bool?) {
+            guard let feet else { return }
+            let verdict = passes.map { $0 ? "pass" : "conflict" } ?? "unknown"
+            comments.append(String(format: "measurement %@ %.2f ft %@", locale: Locale(identifier: "en_US_POSIX"), name, feet, verdict))
+        }
+        func flag(_ name: String, _ value: Bool?) {
+            comments.append("check \(name) \(value.map { $0 ? "clear" : "blocked" } ?? "unknown")")
+        }
+        func confirmed(_ kind: PlacementMeasurementKind) -> ConfirmedPlacementMeasurement? {
+            snapshot.confirmedMeasurements.first { $0.kind == kind }
+        }
+        let up = SIMD3<Float>(0, 1, 0)
+        func frame(yaw: Float) -> [SIMD3<Float>] {
+            let rotation = simd_quatf(angle: yaw, axis: up)
+            return [rotation.act(SIMD3(1, 0, 0)), up, rotation.act(SIMD3(0, 0, 1))]
+        }
+
+        let batteryPoint = snapshot.batteryPosition?.simd
+        if let batteryPoint {
+            let axes = frame(yaw: snapshot.batteryYawRadians)
+            shape.box(
+                center: batteryPoint + SIMD3(0, BatteryGeometry.heightMeters / 2, 0),
+                axes: axes,
+                half: SIMD3(BatteryGeometry.widthMeters, BatteryGeometry.heightMeters, BatteryGeometry.depthMeters) / 2,
+                color: battery
+            )
+            let half = BatteryGeometry.footprintMeters / 2
+            shape.groundRectangle(center: batteryPoint, axes: axes, halfWidth: half, halfDepth: half, color: tone(measured.footprintIsClear))
+        }
+        if let center = snapshot.workingSpacePosition?.simd {
+            shape.groundRectangle(
+                center: center,
+                axes: frame(yaw: snapshot.workingSpaceYawRadians),
+                halfWidth: BatteryGeometry.workingSpaceWidthMeters / 2,
+                halfDepth: BatteryGeometry.workingSpaceDepthMeters / 2,
+                color: tone(measured.frontWorkingSpaceIsClear)
+            )
+        }
+        if let box = measurer.transferSwitchBox(in: snapshot) {
+            shape.wireBox(
+                center: box.center,
+                axes: [box.along, box.up, box.normal],
+                half: SIMD3(box.alongMeters, box.heightMeters, box.outMeters) / 2,
+                color: tone(measured.transferSwitchClearanceObserved)
+            )
+        }
+        for (point, color) in [
+            (snapshot.meterPosition, meter), (snapshot.meterWallPosition, meter),
+            (snapshot.panelPosition, panel), (snapshot.panelWallPosition, panel),
+            (snapshot.gasMeterPosition, gas)
+        ] {
+            if let point { shape.marker(point.simd, color: color) }
+        }
+
+        // Each bar uses the same endpoints the measurer read, so its length matches the number.
+        func horizontal(_ target: PlacementAnchor?, kind: PlacementMeasurementKind, color: SIMD3<UInt8>) {
+            if let saved = confirmed(kind) {
+                shape.bar(saved.start.position.simd, saved.end.position.simd, color: color)
+            } else if let batteryPoint, let target = target?.simd {
+                let lift = batteryPoint.y + 0.02
+                shape.bar(SIMD3(batteryPoint.x, lift, batteryPoint.z), SIMD3(target.x, lift, target.z), color: color)
+            }
+        }
+        let meterPasses = measured.distanceToMeterFeet.map { $0 <= BaseRuleSet.maxMeterDistanceFeet }
+        horizontal(snapshot.meterPosition, kind: .batteryToMeter, color: tone(meterPasses))
+        note("battery_to_meter", measured.distanceToMeterFeet, meterPasses)
+
+        let gasPasses = measured.distanceToGasMeterFeet.map { $0 >= BaseRuleSet.minGasMeterDistanceFeet }
+        horizontal(snapshot.gasMeterPosition, kind: .batteryToGasMeter, color: tone(gasPasses))
+        note("battery_to_gas_meter", measured.distanceToGasMeterFeet, gasPasses)
+
+        let wallPasses = measured.distanceToWallFeet.map { $0 <= BaseRuleSet.maxWallDistanceFeet }
+        if let hit = measurer.wallClearance(in: snapshot) {
+            shape.bar(hit.edge, hit.wallPoint, color: tone(wallPasses))
+        } else if let saved = confirmed(.batteryToWall), saved.captureMethod != .estimatedPlane {
+            shape.bar(saved.start.position.simd, saved.end.position.simd, color: tone(wallPasses))
+        }
+        note("battery_to_wall", measured.distanceToWallFeet, wallPasses)
+
+        let heightPasses = measured.meterHeightFeet.map {
+            $0 >= BaseRuleSet.minMeterHeightFeet && $0 <= BaseRuleSet.maxMeterHeightFeet
+        }
+        if let ground = snapshot.meterPosition, let wall = snapshot.meterWallPosition, wall.y > ground.y {
+            shape.bar(SIMD3(wall.x, ground.y, wall.z), wall.simd, color: tone(heightPasses))
+        } else if let saved = confirmed(.meterHeight) {
+            shape.bar(saved.start.position.simd, saved.end.position.simd, color: tone(heightPasses))
+        }
+        note("meter_height", measured.meterHeightFeet, heightPasses)
+
+        flag("footprint", measured.footprintIsClear)
+        flag("front_working_space", measured.frontWorkingSpaceIsClear)
+        flag("transfer_switch_space", measured.transferSwitchClearanceObserved)
+        if let same = measured.meterAndPanelSameWall {
+            comments.append("check meter_and_panel_same_wall \(same ? "yes" : "no")")
+        }
+        return (shape.chunk, comments)
+    }
+}
+
+/// Triangle boxes and bars, so the overlay renders in any PLY viewer without line support.
+private struct OverlayShapes {
+    var chunk = MeshPointCloudChunk(positions: [], colors: [], triangles: [])
+
+    mutating func box(center: SIMD3<Float>, axes: [SIMD3<Float>], half: SIMD3<Float>, color: SIMD3<UInt8>) {
+        let base = UInt32(chunk.positions.count)
+        for corner in 0..<8 {
+            let x: Float = corner & 1 == 0 ? -1 : 1
+            let y: Float = corner & 2 == 0 ? -1 : 1
+            let z: Float = corner & 4 == 0 ? -1 : 1
+            chunk.positions.append(center + axes[0] * (x * half.x) + axes[1] * (y * half.y) + axes[2] * (z * half.z))
+            chunk.colors.append(color)
+        }
+        // Corner bits: x = 1, y = 2, z = 4.
+        let quads: [[UInt32]] = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]]
+        for quad in quads {
+            chunk.triangles += [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]].map { base + $0 }
+        }
+    }
+
+    mutating func bar(_ start: SIMD3<Float>, _ end: SIMD3<Float>, thickness: Float = 0.025, color: SIMD3<UInt8>) {
+        let delta = end - start
+        let length = simd_length(delta)
+        guard length > 0.001 else { return }
+        let along = delta / length
+        let reference: SIMD3<Float> = abs(along.y) > 0.9 ? SIMD3(1, 0, 0) : SIMD3(0, 1, 0)
+        let side = simd_normalize(simd_cross(along, reference))
+        box(
+            center: (start + end) / 2,
+            axes: [along, side, simd_cross(along, side)],
+            half: SIMD3(length / 2, thickness / 2, thickness / 2),
+            color: color
+        )
+    }
+
+    mutating func marker(_ point: SIMD3<Float>, color: SIMD3<UInt8>) {
+        box(center: point, axes: [SIMD3(1, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1)], half: SIMD3(repeating: 0.05), color: color)
+    }
+
+    mutating func groundRectangle(center: SIMD3<Float>, axes: [SIMD3<Float>], halfWidth: Float, halfDepth: Float, color: SIMD3<UInt8>) {
+        let lifted = center + SIMD3(0, 0.01, 0)
+        let corners = [(-1, -1), (1, -1), (1, 1), (-1, 1)].map { x, z in
+            lifted + axes[0] * (Float(x) * halfWidth) + axes[2] * (Float(z) * halfDepth)
+        }
+        for index in corners.indices {
+            bar(corners[index], corners[(index + 1) % corners.count], thickness: 0.015, color: color)
+        }
+    }
+
+    mutating func wireBox(center: SIMD3<Float>, axes: [SIMD3<Float>], half: SIMD3<Float>, color: SIMD3<UInt8>) {
+        func corner(_ bits: Int) -> SIMD3<Float> {
+            center
+                + axes[0] * (bits & 1 == 0 ? -half.x : half.x)
+                + axes[1] * (bits & 2 == 0 ? -half.y : half.y)
+                + axes[2] * (bits & 4 == 0 ? -half.z : half.z)
+        }
+        // The 12 edges join corners that differ in exactly one bit.
+        for bits in 0..<8 {
+            for flip in [1, 2, 4] where bits & flip == 0 {
+                bar(corner(bits), corner(bits | flip), thickness: 0.015, color: color)
+            }
+        }
+    }
+}

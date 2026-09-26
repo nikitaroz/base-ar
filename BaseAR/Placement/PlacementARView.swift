@@ -74,6 +74,9 @@ struct PlacementARView: View {
     @State private var trackingMessage: String? = nil
     @State private var isVisible = false
     @State private var hasStartedAR: Bool
+    @State private var isWarmingUp: Bool
+    @State private var warmingRotation: Double = 0
+    @State private var savePulse = false
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
     @State private var measureMode: Bool = false
@@ -90,6 +93,8 @@ struct PlacementARView: View {
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
         // Skip the preflight screen. iOS shows the camera permission modal on first ARKit run if needed.
         _hasStartedAR = State(initialValue: true)
+        // Show a brief warming overlay the first time this view opens, so the ARKit/detector spin-up isn't a jarring black screen.
+        _isWarmingUp = State(initialValue: existing == nil)
     }
 
     private var isSaving: Bool { pendingSave != nil }
@@ -124,7 +129,13 @@ struct PlacementARView: View {
         Group {
             if arSupported {
                 if hasStartedAR {
-                    arScreen
+                    ZStack {
+                        arScreen
+                        if isWarmingUp {
+                            warmingOverlay
+                                .transition(.opacity)
+                        }
+                    }
                 } else {
                     preflightScreen
                 }
@@ -143,6 +154,16 @@ struct PlacementARView: View {
             scene = controller.scene
             yawRadians = controller.yawRadians
             syncPlacementGuide()
+            if isWarmingUp {
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    await MainActor.run {
+                        withAnimation(.easeOut(duration: 0.35)) {
+                            isWarmingUp = false
+                        }
+                    }
+                }
+            }
         }
         .onDisappear {
             isVisible = false
@@ -247,6 +268,39 @@ struct PlacementARView: View {
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    private var warmingOverlay: some View {
+        ZStack {
+            Color(.systemBackground).opacity(0.9).ignoresSafeArea()
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 4)
+                        .frame(width: 64, height: 64)
+                    Circle()
+                        .trim(from: 0, to: 0.35)
+                        .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .frame(width: 64, height: 64)
+                        .rotationEffect(.degrees(warmingRotation))
+                        .onAppear {
+                            withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+                                warmingRotation = 360
+                            }
+                        }
+                    Image(systemName: "viewfinder")
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                }
+                Text("Warming up the camera…")
+                    .font(.subheadline.weight(.semibold))
+                Text("Point at the meter once we're ready.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Camera warming up")
     }
 
     private var preflightScreen: some View {
@@ -455,7 +509,8 @@ struct PlacementARView: View {
     }
 
     private var finishControls: some View {
-        VStack(spacing: 8) {
+        let canSave = !isSaving && scene.batteryPosition != nil
+        return VStack(spacing: 8) {
             attestationToggles
             Button {
                 saveAndReview()
@@ -470,7 +525,13 @@ struct PlacementARView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isSaving || scene.batteryPosition == nil)
+            .disabled(!canSave)
+            .scaleEffect(canSave && savePulse ? 1.03 : 1.0)
+            .animation(.easeInOut(duration: 0.6).repeatCount(2, autoreverses: true), value: savePulse)
+            .onChange(of: canSave) { _, becameCan in
+                guard becameCan else { return }
+                savePulse.toggle()
+            }
             Button("Skip for now") {
                 commitLiveScene()
                 onContinue()

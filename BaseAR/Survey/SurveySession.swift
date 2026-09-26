@@ -4,7 +4,7 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 5
+    var schemaVersion: Int = 6
     /// Optional so version-4 packets remain decodable.
     var guidedProgress: GuidedSurveyProgress?
     var id: UUID
@@ -184,7 +184,28 @@ struct ConfirmedPlacementMeasurement: Codable, Sendable, Equatable, Identifiable
     var id: String { kind.rawValue }
 }
 
+/// A measured observation and an exported screenshot are different lifecycle states.
+struct PlacementObservationIdentity: Codable, Sendable, Equatable {
+    var scanID: UUID
+    var revision: UInt64
+    var batteryModelID: String
+    var trackingIsNormal: Bool
+    var observedAt: Date
+}
+
+/// Binds a durable image to the exact scan, scene revision and battery model measured.
+struct PlacementCaptureIdentity: Codable, Sendable, Equatable {
+    var captureID: UUID
+    var scanID: UUID
+    var revision: UInt64
+    var batteryModelID: String
+    var capturedAt: Date
+}
+
 struct PlacementEvidence: Codable, Sendable, Equatable {
+    /// Optional for decoding older drafts; absent provenance cannot pass spatial checks.
+    var observationIdentity: PlacementObservationIdentity?
+    var captureIdentity: PlacementCaptureIdentity?
     var screenshotFilename: String?
     var batteryPlaced: Bool = false
     var meterMarked: Bool = false

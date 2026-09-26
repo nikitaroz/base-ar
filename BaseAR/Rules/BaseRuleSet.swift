@@ -144,7 +144,7 @@ enum BaseRuleSet {
         isRequired: true,
         evaluate: { session in
             if session.placement.distanceToGasMeterFeet == nil, session.placement.gasMeterNotPresent {
-                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
+                return .unknown("The user reported no visible gas meter. Clearance remains unverified; this does not establish that gas equipment is absent.")
             }
             return distanceOutcome(
                 feet: session.placement.distanceToGasMeterFeet,

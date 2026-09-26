@@ -14,7 +14,14 @@ struct BaseSurveyEvaluator: SurveyEvaluating {
 
     func evaluate(_ session: SurveySession) -> SurveyAssessment {
         let results = rules.map { rule in
-            let outcome = rule.evaluate(session)
+            let outcome: RuleOutcome
+            if Self.spatialRuleIDs.contains(rule.id),
+               session.placement.observationIdentity?.trackingIsNormal != true ||
+                session.placement.observationIdentity?.batteryModelID != session.selectedBatteryModelId {
+                outcome = .unknown("This check needs a current, identified spatial observation with normal tracking for the selected battery model. Legacy or interrupted observations are not a measured pass.")
+            } else {
+                outcome = rule.evaluate(session)
+            }
             return RuleResult(
                 id: rule.id,
                 title: rule.title,
@@ -31,6 +38,11 @@ struct BaseSurveyEvaluator: SurveyEvaluating {
             missingInformation: MissingInformation.list(for: session)
         )
     }
+
+    private static let spatialRuleIDs: Set<String> = [
+        "planning-footprint", "meter-distance", "wall-distance", "gas-meter-clearance",
+        "transfer-switch-space", "meter-height", "front-working-space", "meter-panel-same-wall"
+    ]
 }
 
 enum MissingInformation {
@@ -97,6 +109,9 @@ enum MissingInformation {
         }
         if session.placement.screenshotFilename == nil {
             items.append("AR placement screenshot")
+        }
+        if session.placement.captureIdentity == nil {
+            items.append("Version-matched placement measurement and screenshot capture")
         }
         if !session.placement.batteryPlaced {
             items.append("AR placement of the battery")

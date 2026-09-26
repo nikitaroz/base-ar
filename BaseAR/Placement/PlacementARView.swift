@@ -523,6 +523,184 @@ struct PlacementARView: View {
         }
     }
 
+    private var finishControls: some View {
+        VStack(spacing: 12) {
+            // Simple status summary
+            VStack(spacing: 8) {
+                ForEach(placementStatusItems, id: \.title) { item in
+                    HStack(spacing: 8) {
+                        Image(systemName: item.icon)
+                            .foregroundStyle(item.color)
+                            .font(.body)
+                        Text(item.title)
+                            .font(.body)
+                        Spacer()
+                        if item.isGood {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if item.needsAttention {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+
+            // Primary actions
+            Button {
+                finishScan()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Save and review")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
+
+            Button("Skip for now") {
+                cancelPendingSave()
+                commitLiveScene()
+                onContinue()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+
+            Button("Back", action: goBack)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
+            Text("This is a preliminary survey, not an install measurement.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private struct StatusItem {
+        let icon: String
+        let title: String
+        let color: Color
+        let isGood: Bool
+        let needsAttention: Bool
+    }
+
+    private var placementStatusItems: [StatusItem] {
+        var items: [StatusItem] = []
+
+        // Meter distance check
+        let meterMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToMeter }
+        if let meterDist = meterMeasurement?.distanceFeet {
+            let isGood = meterDist <= 20
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: isGood ? "Good meter distance" : "Meter is a bit far",
+                color: isGood ? .green : .orange,
+                isGood: isGood,
+                needsAttention: !isGood
+            ))
+        } else if scene.meterPosition != nil || scene.meterWallPosition != nil {
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: "Meter marked",
+                color: .secondary,
+                isGood: false,
+                needsAttention: false
+            ))
+        } else {
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: "Need meter location",
+                color: .orange,
+                isGood: false,
+                needsAttention: true
+            ))
+        }
+
+        // Wall distance check
+        let wallMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToWall }
+        if let wallDist = wallMeasurement?.distanceFeet {
+            let isGood = wallDist <= 1.5
+            items.append(StatusItem(
+                icon: "square.on.square",
+                title: isGood ? "Close to wall" : "Check wall distance",
+                color: isGood ? .green : .orange,
+                isGood: isGood,
+                needsAttention: !isGood
+            ))
+        } else if scene.automaticWallClearanceFeet != nil {
+            items.append(StatusItem(
+                icon: "square.on.square",
+                title: "Checking wall distance",
+                color: .secondary,
+                isGood: false,
+                needsAttention: false
+            ))
+        }
+
+        // Gas meter check
+        if store.session.placement.gasMeterNotPresent {
+            items.append(StatusItem(
+                icon: "flame.circle",
+                title: "No gas meter nearby",
+                color: .green,
+                isGood: true,
+                needsAttention: false
+            ))
+        } else {
+            let gasMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToGasMeter }
+            if let gasDist = gasMeasurement?.distanceFeet {
+                let isGood = gasDist >= 3
+                items.append(StatusItem(
+                    icon: "flame.circle",
+                    title: isGood ? "Safe from gas meter" : "Too close to gas meter",
+                    color: isGood ? .green : .red,
+                    isGood: isGood,
+                    needsAttention: !isGood
+                ))
+            } else if scene.gasMeterPosition != nil {
+                items.append(StatusItem(
+                    icon: "flame.circle",
+                    title: "Gas meter marked",
+                    color: .secondary,
+                    isGood: false,
+                    needsAttention: false
+                ))
+            }
+        }
+
+        // Footprint clearance
+        let footprintClear = scene.footprintIsClear ?? store.session.placement.footprintClearAttested
+        if let clear = footprintClear {
+            items.append(StatusItem(
+                icon: "square.dashed",
+                title: clear ? "Footprint looks clear" : "Check footprint clearance",
+                color: clear ? .green : .orange,
+                isGood: clear,
+                needsAttention: !clear
+            ))
+        }
+
+        // Transfer switch space
+        let transferSwitchSpace = scene.transferSwitchClearanceObserved ?? store.session.placement.transferSwitchSpaceAttested
+        if let hasSpace = transferSwitchSpace {
+            items.append(StatusItem(
+                icon: "circle.grid.cross",
+                title: hasSpace ? "Transfer switch space noted" : "Check transfer switch space",
+                color: hasSpace ? .green : .orange,
+                isGood: hasSpace,
+                needsAttention: !hasSpace
+            ))
+        }
+
+        return items
+    }
+
     private var attestationToggles: some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle("I visually confirmed the 3 ft × 3 ft footprint is clear", isOn: footprintAttestBinding)

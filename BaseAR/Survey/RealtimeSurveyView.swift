@@ -132,7 +132,11 @@ struct RealtimeSurveyView: View {
     
     private var placementStatus: String {
         if store.session.placement.batteryPlaced {
-            return "Placed"
+            switch store.session.placementTone {
+            case .clear: return "Looking good"
+            case .conflict: return "Check placement"
+            case .incomplete, .attested: return "Placed"
+            }
         }
         return "Preview battery"
     }
@@ -141,7 +145,7 @@ struct RealtimeSurveyView: View {
         guard store.session.placement.batteryPlaced else { return .orange }
         switch store.session.placementTone {
         case .clear: return .green
-        case .conflict: return .red
+        case .conflict: return .orange
         case .incomplete, .attested: return .yellow
         }
     }

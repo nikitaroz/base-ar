@@ -4,7 +4,7 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 3
+    var schemaVersion: Int = 4
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -29,6 +29,8 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     var buildNumber: String
     var iosVersion: String
     var deviceModel: String
+    /// Identifier from `BatteryCatalog` for the model previewed in AR. Default `base-core`.
+    var selectedBatteryModelId: String
 
     static let locationDisclaimer = "Latitude, longitude, timestamp, and horizontal accuracy are the phone's reported property location, not the battery position."
     static let prototypeDisclaimer = "Preliminary survey only. This is not an electrical inspection, a code review, or installation approval."
@@ -54,7 +56,8 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
             appVersion: DeviceProvenance.appVersion,
             buildNumber: DeviceProvenance.buildNumber,
             iosVersion: DeviceProvenance.iosVersion(),
-            deviceModel: DeviceProvenance.deviceModel()
+            deviceModel: DeviceProvenance.deviceModel(),
+            selectedBatteryModelId: BatteryCatalog.baseCore.id
         )
     }
 }

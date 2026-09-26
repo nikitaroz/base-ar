@@ -32,6 +32,7 @@
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
 		B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */; };
+		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,6 +74,7 @@
 		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
 		B20000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionMeterNumberRecognizer.swift; sourceTree = "<group>"; };
+		B20000000000000000000016 /* BatteryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -173,6 +175,7 @@
 			isa = PBXGroup;
 			children = (
 				B20000000000000000000007 /* BatteryGeometry.swift */,
+				B20000000000000000000016 /* BatteryCatalog.swift */,
 				B20000000000000000000008 /* PlacementMeasuring.swift */,
 				B20000000000000000000009 /* PlacementARView.swift */,
 			);
@@ -311,6 +314,7 @@
 				B10000000000000000000005 /* CameraImagePicker.swift in Sources */,
 				B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */,
 				B10000000000000000000007 /* BatteryGeometry.swift in Sources */,
+				B10000000000000000000016 /* BatteryCatalog.swift in Sources */,
 				B10000000000000000000008 /* PlacementMeasuring.swift in Sources */,
 				B10000000000000000000009 /* PlacementARView.swift in Sources */,
 				B1000000000000000000000A /* EligibilityRule.swift in Sources */,
@@ -396,7 +400,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 62JVG6DVVU;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;
@@ -414,7 +418,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hanovconsulting.BaseAR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -431,7 +435,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 62JVG6DVVU;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;
@@ -449,7 +453,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hanovconsulting.BaseAR;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -468,7 +472,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseARTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hanovconsulting.BaseARTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -485,7 +489,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseARTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hanovconsulting.BaseARTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;

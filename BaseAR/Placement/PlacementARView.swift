@@ -100,6 +100,8 @@ struct PlacementARView: View {
     @State private var isVisible = false
     @State private var hasStartedAR: Bool
     @State private var coachingIsActive = false
+    /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
+    @State private var measureMode: Bool = false
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -115,7 +117,8 @@ struct PlacementARView: View {
             return .batteryToMeter
         }())
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
-        _hasStartedAR = State(initialValue: existing != nil)
+        // Skip the preflight screen. iOS shows the camera permission modal on first ARKit run if needed.
+        _hasStartedAR = State(initialValue: true)
     }
 
     private var isSaving: Bool { pendingSave != nil }
@@ -213,18 +216,96 @@ struct PlacementARView: View {
                     )
                 }
                 if !coachingIsActive {
-                    progressHeader
-                        .padding(.top, 8)
-                        .allowsHitTesting(false)
+                    VStack(spacing: 8) {
+                        modelChipPicker
+                        if measureMode {
+                            HStack {
+                                progressHeader
+                                    .allowsHitTesting(false)
+                                Spacer()
+                                Button("Back") { measureMode = false }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                    .padding(.horizontal, 12)
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
                 }
             }
             if !coachingIsActive {
-                bottomBar
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
+                if measureMode {
+                    bottomBar
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 8)
+                } else {
+                    idleBottomBar
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                        .padding(.bottom, 8)
+                }
             }
         }
+    }
+
+    private var modelChipPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(BatteryCatalog.all) { model in
+                    let selected = store.session.selectedBatteryModelId == model.id
+                    Button {
+                        store.setSelectedBatteryModel(model.id)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.displayName)
+                                .font(.caption.weight(.semibold))
+                            Text("\(formatInch(model.widthInches))×\(formatInch(model.heightInches))×\(formatInch(model.depthInches)) in")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule().fill(selected ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(selected ? Color.primary : Color.primary.opacity(0.2), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+    }
+
+    private func formatInch(_ inches: Float) -> String {
+        String(format: inches.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", inches)
+    }
+
+    private var idleBottomBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                measureMode = true
+            } label: {
+                Label("Measure", systemImage: "ruler")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            Button {
+                commitLiveScene()
+                onContinue()
+            } label: {
+                Text("Done")
+                    .frame(maxWidth: 100)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+        }
+        .padding(16)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var preflightScreen: some View {
@@ -991,7 +1072,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var workingSpaceOverlay: ModelEntity?
         var batteryRig: Entity?
         var batteryBody: ModelEntity?
+        var batteryFaceMark: ModelEntity?
         var footprintPad: ModelEntity?
+        var activeModel: BatteryModel = BatteryCatalog.baseCore
+        /// Turned true after the first auto-place attempt succeeds or is decisively skipped so we do not spam.
+        var didAttemptAutoPlace = false
         var meterMarker: ModelEntity?
         var meterWallMarker: ModelEntity?
         var meterWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
@@ -1351,11 +1436,23 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
             upsertMesh(from: anchors)
+            maybeAutoPlace(from: anchors)
         }
 
         nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
             upsertMesh(from: anchors)
+            maybeAutoPlace(from: anchors)
+        }
+
+        private nonisolated func maybeAutoPlace(from anchors: [ARAnchor]) {
+            let hasHorizontal = anchors.contains { anchor in
+                (anchor as? ARPlaneAnchor)?.alignment == .horizontal
+            }
+            guard hasHorizontal else { return }
+            Task { @MainActor in
+                self.autoPlaceIfPossible()
+            }
         }
 
         /// LiDAR mesh anchors update many times a second; skip the hop to the main actor when no wall changed.
@@ -1437,42 +1534,94 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         private func placeBattery(at position: SIMD3<Float>) {
             if batteryRig == nil {
-                let rig = Entity()
-                let padMesh = MeshResource.generateBox(
-                    width: BatteryGeometry.footprintMeters,
-                    height: 0.012,
-                    depth: BatteryGeometry.footprintMeters
-                )
-                let pad = ModelEntity(mesh: padMesh, materials: [UnlitMaterial(color: UIColor.systemOrange.withAlphaComponent(0.35))])
-                pad.position.y = 0.006
-
-                let bodyMesh = MeshResource.generateBox(
-                    width: BatteryGeometry.widthMeters,
-                    height: BatteryGeometry.heightMeters,
-                    depth: BatteryGeometry.depthMeters
-                )
-                let body = ModelEntity(mesh: bodyMesh, materials: [SimpleMaterial(color: .systemOrange, isMetallic: false)])
-                body.position.y = 0.012 + BatteryGeometry.heightMeters / 2
-
-                let markMesh = MeshResource.generateBox(width: 0.08, height: 0.08, depth: 0.02)
-                let mark = ModelEntity(mesh: markMesh, materials: [UnlitMaterial(color: .darkGray)])
-                mark.position = SIMD3(
-                    0,
-                    BatteryGeometry.heightMeters * 0.72,
-                    BatteryGeometry.depthMeters / 2 + 0.01
-                )
-
-                rig.addChild(pad)
-                rig.addChild(body)
-                rig.addChild(mark)
-                root?.addChild(rig)
-                batteryRig = rig
-                footprintPad = pad
-                batteryBody = body
-                applyTone()
+                buildBatteryRig()
             }
             batteryRig?.position = position
             applyYaw()
+        }
+
+        /// Rebuilds the battery entity from `activeModel`. Called on first placement and again when the user swaps models.
+        private func buildBatteryRig() {
+            let rig = batteryRig ?? Entity()
+            if batteryRig == nil {
+                root?.addChild(rig)
+                batteryRig = rig
+            } else {
+                // Drop the old sub-entities so the mesh comes out at the new size.
+                footprintPad?.removeFromParent()
+                batteryBody?.removeFromParent()
+                batteryFaceMark?.removeFromParent()
+            }
+
+            let padMesh = MeshResource.generateBox(
+                width: BatteryGeometry.footprintMeters,
+                height: 0.012,
+                depth: BatteryGeometry.footprintMeters
+            )
+            let pad = ModelEntity(mesh: padMesh, materials: [UnlitMaterial(color: UIColor.systemOrange.withAlphaComponent(0.35))])
+            pad.position.y = 0.006
+
+            let bodyMesh = MeshResource.generateBox(
+                width: activeModel.widthMeters,
+                height: activeModel.heightMeters,
+                depth: activeModel.depthMeters
+            )
+            let body = ModelEntity(mesh: bodyMesh, materials: [SimpleMaterial(color: .systemOrange, isMetallic: false)])
+            body.position.y = 0.012 + activeModel.heightMeters / 2
+
+            let markMesh = MeshResource.generateBox(width: 0.08, height: 0.08, depth: 0.02)
+            let mark = ModelEntity(mesh: markMesh, materials: [UnlitMaterial(color: .darkGray)])
+            mark.position = SIMD3(
+                0,
+                activeModel.heightMeters * 0.72,
+                activeModel.depthMeters / 2 + 0.01
+            )
+
+            rig.addChild(pad)
+            rig.addChild(body)
+            rig.addChild(mark)
+            footprintPad = pad
+            batteryBody = body
+            batteryFaceMark = mark
+            applyTone()
+        }
+
+        func setActiveModel(_ model: BatteryModel) {
+            guard model != activeModel else { return }
+            activeModel = model
+            if batteryRig != nil {
+                buildBatteryRig()
+                applyYaw()
+                emit()
+            }
+        }
+
+        /// Tries a forward raycast against a detected horizontal plane and places the battery ~1.5 m ahead.
+        /// No-op if the battery is already placed, if we've already tried, or if there's no camera transform yet.
+        func autoPlaceIfPossible() {
+            guard !didAttemptAutoPlace, batteryRig == nil else { return }
+            guard let frame = arView.session.currentFrame else { return }
+            let viewCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+            let hit = arView.raycast(from: viewCenter, allowing: .existingPlaneGeometry, alignment: .horizontal).first
+                ?? arView.raycast(from: viewCenter, allowing: .estimatedPlane, alignment: .horizontal).first
+            let placement: SIMD3<Float>?
+            if let hit {
+                let column = hit.worldTransform.columns.3
+                placement = SIMD3(column.x, column.y, column.z)
+            } else {
+                // Fallback: 1.5 m ahead of the camera at the camera's Y-1 (approximate ground).
+                let cameraTransform = frame.camera.transform
+                let cameraForward = -SIMD3<Float>(cameraTransform.columns.2.x, 0, cameraTransform.columns.2.z)
+                let forwardLen = simd_length(cameraForward)
+                guard forwardLen > 0.001 else { return }
+                let normalized = cameraForward / forwardLen
+                let cameraPos = SIMD3(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+                placement = SIMD3(cameraPos.x + normalized.x * 1.5, cameraPos.y - 1.0, cameraPos.z + normalized.z * 1.5)
+            }
+            guard let placement else { return }
+            didAttemptAutoPlace = true
+            placeBattery(at: placement)
+            emit()
         }
 
         private func placeMarker(kind: PlacementTarget, at position: SIMD3<Float>) {

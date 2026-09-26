@@ -15,7 +15,7 @@ struct MeshPointCloudChunk: Sendable {
 
 /// ASCII PLY of the reconstructed mesh. Vertices are the point cloud; triangles keep the surface.
 enum PointCloudPLY {
-    static func data(from chunks: [MeshPointCloudChunk]) -> Data? {
+    static func data(from chunks: [MeshPointCloudChunk], comments: [String] = []) -> Data? {
         var vertexCount = 0
         var faceCount = 0
         for chunk in chunks {
@@ -26,6 +26,7 @@ enum PointCloudPLY {
         guard vertexCount > 0 else { return nil }
 
         let locale = Locale(identifier: "en_US_POSIX")
+        let extraComments = comments.map { "comment \($0)\n" }.joined()
         var text = """
         ply
         format ascii 1.0
@@ -33,7 +34,7 @@ enum PointCloudPLY {
         comment units meters
         comment frame ARKit world
         comment colors: camera RGB, light gray where the camera never saw the surface
-        element vertex \(vertexCount)
+        \(extraComments)element vertex \(vertexCount)
         property float x
         property float y
         property float z

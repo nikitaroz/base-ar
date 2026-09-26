@@ -1716,37 +1716,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 batteryFaceMark?.removeFromParent()
             }
 
-            let padMesh = MeshResource.generateBox(
-                width: BatteryGeometry.footprintMeters,
-                height: 0.012,
-                depth: BatteryGeometry.footprintMeters
-            )
-            let pad = ModelEntity(mesh: padMesh, materials: [UnlitMaterial(color: UIColor.systemOrange.withAlphaComponent(0.35))])
-            pad.position.y = 0.006
-
-            let bodyMesh = MeshResource.generateBox(
-                width: activeModel.widthMeters,
-                height: activeModel.heightMeters,
-                depth: activeModel.depthMeters
-            )
-            let body = ModelEntity(mesh: bodyMesh, materials: [SimpleMaterial(color: .systemOrange, isMetallic: false)])
-            body.position.y = 0.012 + activeModel.heightMeters / 2
-
-            let markMesh = MeshResource.generateBox(width: 0.08, height: 0.08, depth: 0.02)
-            let mark = ModelEntity(mesh: markMesh, materials: [UnlitMaterial(color: .darkGray)])
-            mark.position = SIMD3(
-                0,
-                activeModel.heightMeters * 0.72,
-                activeModel.depthMeters / 2 + 0.01
-            )
-
-            rig.addChild(pad)
-            rig.addChild(body)
-            rig.addChild(mark)
-            footprintPad = pad
-            batteryBody = body
-            batteryFaceMark = mark
-            applyTone()
+            // Battery placement preview completely removed from live scan UI
+            // Position tracking remains for measurement calculations
+            footprintPad = nil
+            batteryBody = nil
+            batteryFaceMark = nil
         }
 
         func setActiveModel(_ model: BatteryModel) {
@@ -1762,13 +1736,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         /// Automatic placement requires a detected horizontal plane, never a camera-relative guess.
         func autoPlaceIfPossible() {
-            guard !didAttemptAutoPlace, batteryRig == nil else { return }
-            guard trackingAllowsConfirmation(report: false) else { return }
-            let viewCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
-            guard let placement = groundPosition(in: arView, at: viewCenter) else { return }
-            didAttemptAutoPlace = true
-            placeBattery(at: placement)
-            emit()
+            // Battery placement preview completely removed from live scan UI
+            // Auto-placement disabled
+            return
         }
 
         private func placeMarker(kind: PlacementTarget, at position: SIMD3<Float>) {

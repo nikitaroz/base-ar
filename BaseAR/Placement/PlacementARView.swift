@@ -770,7 +770,8 @@ private struct EquipmentLock {
     var samples: [Sample] = []
     var locked = false
 
-    /// Three hits whose positions all sit within about 15 cm become one lock at their center.
+    /// Five hits whose positions all sit within about 15 cm become one lock at their center.
+    /// At four detections a second that is a bit over a second of agreement.
     mutating func absorb(_ sample: Sample) -> Sample? {
         guard !locked else { return nil }
         if samples.contains(where: { simd_distance($0.point, sample.point) > 0.15 }) {
@@ -778,7 +779,7 @@ private struct EquipmentLock {
             return nil
         }
         samples.append(sample)
-        guard samples.count >= 3 else { return nil }
+        guard samples.count >= 5 else { return nil }
         locked = true
         let count = Float(samples.count)
         let point = samples.reduce(SIMD3<Float>.zero) { $0 + $1.point } / count
@@ -2026,6 +2027,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
+            // Far away, the meter and panel look alike. One box scored as both is one object; keep the stronger label.
+            if let meter = best[.electricMeter], let panel = best[.breakerPanel],
+               Self.overlap(meter.boundingBox, panel.boundingBox) > 0.3 {
+                best[meter.confidence >= panel.confidence ? .breakerPanel : .electricMeter] = nil
+            }
             var items: [EquipmentBoxOverlay.Item] = []
             var lockedSomething = false
             for detection in best.values {
@@ -2047,7 +2053,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if rect.width > 2, rect.height > 2, rect.origin.x.isFinite, rect.origin.y.isFinite {
                     items.append(EquipmentBoxOverlay.Item(rect: rect, color: color, title: title))
                 }
-                guard let landing, !alreadyLocked else { continue }
+                // Weak boxes still draw, but only confident ones count toward a lock.
+                guard let landing, !alreadyLocked, detection.confidence >= 0.5 else { continue }
+                // The meter and panel are separate boxes, so a lock on top of the other one is a mislabel.
+                let other = detection.kind == .electricMeter ? panelWallHit : meterWallHit
+                if let other, simd_distance(other.position, landing.position) < 0.3 { continue }
                 let sample = EquipmentLock.Sample(point: landing.position, normal: landing.normal)
                 let settled: EquipmentLock.Sample?
                 switch detection.kind {
@@ -2064,6 +2074,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 emit()
             }
+        }
+
+        /// Intersection over the smaller box, so a box nested inside another counts as the same object.
+        private static func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+            let shared = a.intersection(b)
+            guard !shared.isNull else { return 0 }
+            let smaller = min(a.width * a.height, b.width * b.height)
+            return smaller > 0 ? shared.width * shared.height / smaller : 0
         }
 
         private func project(_ detection: EquipmentDetection, in packet: EquipmentScanFrame) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {

@@ -36,7 +36,11 @@
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
 		B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */; };
-		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
+		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */
+		B20000000000000000000017 /* TypeSafeJevClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevClient.swift; sourceTree = "<group>"; };
+		B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevAdvisoryView.swift; sourceTree = "<group>"; };; };
+		B10000000000000000000017 /* TypeSafeJevClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000017 /* TypeSafeJevClient.swift */; };
+		B10000000000000000000018 /* TypeSafeJevAdvisoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -347,6 +351,8 @@
 				C10000000000000000000001 /* EquipmentDetecting.swift in Sources */,
 				B1000000000000000000000A /* EligibilityRule.swift in Sources */,
 				B1000000000000000000000B /* BaseRuleSet.swift in Sources */,
+				B10000000000000000000017 /* TypeSafeJevClient.swift in Sources */,
+				B10000000000000000000018 /* TypeSafeJevAdvisoryView.swift in Sources */,
 				B1000000000000000000000C /* SurveyEvaluating.swift in Sources */,
 				B1000000000000000000000D /* SurveyExporting.swift in Sources */,
 				B1000000000000000000000E /* ReviewView.swift in Sources */,

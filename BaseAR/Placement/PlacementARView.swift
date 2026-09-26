@@ -167,10 +167,13 @@ struct PlacementARView: View {
             HStack {
                 // Positive yaw about +Y turns counterclockwise seen from above, which reads as "left".
                 Button("Rotate left") { yawRadians += .pi / 12 }
+                    .accessibilityLabel("Rotate battery left 15 degrees")
                 Button("Rotate right") { yawRadians -= .pi / 12 }
+                    .accessibilityLabel("Rotate battery right 15 degrees")
             }
             .buttonStyle(.bordered)
             .disabled(scene.batteryPosition == nil)
+            attestationToggles
             Button {
                 saveAndReview()
             } label: {
@@ -184,13 +187,40 @@ struct PlacementARView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(isSaving)
-            Text("Green only when every required check has measured evidence and passes. This is not installation approval.")
+            Text("Green only when every required check has measured evidence and passes. Teal means a pass relied on an attestation, not a measurement. This is not installation approval.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var attestationToggles: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("I visually confirmed the 3 ft × 3 ft footprint is clear", isOn: footprintAttestBinding)
+                .font(.footnote)
+            Toggle("I visually confirmed transfer-switch space beside the meter", isOn: transferSwitchAttestBinding)
+                .font(.footnote)
+            Text("Attestations are your statements, not app measurements.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .disabled(scene.batteryPosition == nil && store.session.placement.batteryPosition == nil)
+    }
+
+    private var footprintAttestBinding: Binding<Bool> {
+        Binding(
+            get: { store.session.placement.footprintClearAttested == true },
+            set: { store.setFootprintClearAttested($0) }
+        )
+    }
+
+    private var transferSwitchAttestBinding: Binding<Bool> {
+        Binding(
+            get: { store.session.placement.transferSwitchSpaceAttested == true },
+            set: { store.setTransferSwitchSpaceAttested($0) }
+        )
     }
 
     private var unsupportedScreen: some View {
@@ -238,23 +268,33 @@ struct PlacementARView: View {
         let token = UUID()
         pendingSave = token
         screenshotToken = token
+        statusMessage = nil
         Task {
-            try? await Task.sleep(for: .seconds(3))
-            advance(token)
+            try? await Task.sleep(for: .seconds(5))
+            failScreenshot(token)
         }
     }
 
     private func handleScreenshot(_ image: UIImage?) {
         if let image {
             store.attachPlacementScreenshot(image)
+            advance(pendingSave)
+        } else {
+            failScreenshot(pendingSave)
         }
-        advance(pendingSave)
     }
 
     private func advance(_ token: UUID?) {
         guard let token, token == pendingSave else { return }
         pendingSave = nil
         onContinue()
+    }
+
+    private func failScreenshot(_ token: UUID?) {
+        guard let token, token == pendingSave else { return }
+        pendingSave = nil
+        screenshotToken = nil
+        statusMessage = "Placement screenshot did not capture. Tap Save again."
     }
 }
 
@@ -403,6 +443,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
                 return
             }
             pauseRequested = false
+            // Any in-flight rotation gesture is invalidated by pausing the session.
+            rotationStartYaw = appliedYaw
             arView.session.pause()
         }
 
@@ -454,7 +496,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             switch gesture.state {
             case .began:
                 rotationStartYaw = appliedYaw
-            case .changed, .ended, .cancelled:
+            case .changed, .ended:
                 // Gesture rotation is clockwise-positive on screen; yaw about +Y is counterclockwise-positive from above.
                 let yaw = rotationStartYaw - Float(gesture.rotation)
                 yawRadians = yaw
@@ -466,6 +508,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
                 } else {
                     emitGestureEnded()
                 }
+            case .cancelled:
+                // System cancels happen on scenePhase changes or interruptions; roll back the partial rotation.
+                yawRadians = rotationStartYaw
+                appliedYaw = rotationStartYaw
+                applyYaw()
+                onYawChange?(rotationStartYaw)
+                emitGestureEnded()
             default:
                 break
             }

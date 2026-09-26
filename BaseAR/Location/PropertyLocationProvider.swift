@@ -75,7 +75,8 @@ final class PropertyLocationProvider: NSObject, CLLocationManagerDelegate {
 
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        guard location.horizontalAccuracy >= 0 else {
+        // Core Location uses 0 or negative for "no accuracy available"; > 500 m is too coarse for a property fix.
+        guard location.horizontalAccuracy > 0, location.horizontalAccuracy <= 500 else {
             Task { @MainActor in
                 self.noteFailure(Self.failedMessage)
             }

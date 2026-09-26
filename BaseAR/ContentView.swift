@@ -324,6 +324,9 @@ private struct SurveyHubView: View {
             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title). \(progress.title). \(subtitle).")
+        .accessibilityHint("Opens \(title).")
     }
 }
 

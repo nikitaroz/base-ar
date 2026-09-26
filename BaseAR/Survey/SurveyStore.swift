@@ -28,7 +28,7 @@ final class SurveyStore {
         measurer: any PlacementMeasuring = CorePlacementMeasurer(),
         evaluator: any SurveyEvaluating = BaseSurveyEvaluator(),
         exporter: any SurveyExporting = JSONSurveyExporter(),
-        recognizer: any MeterNumberRecognizing = UnimplementedMeterNumberRecognizer()
+        recognizer: any MeterNumberRecognizing = VisionMeterNumberRecognizer()
     ) throws {
         let session = SurveySession.new(propertyIdentifier: propertyIdentifier)
         self.session = session
@@ -93,8 +93,10 @@ final class SurveyStore {
         refreshAssessment()
     }
 
-    func setMeterNumber(_ value: String) {
+    func setMeterNumber(_ value: String, source: MeterNumberSource = .manual) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         session.electrical.meterNumber = value
+        session.electrical.meterNumberSource = trimmed.isEmpty ? nil : source
         refreshAssessment()
     }
 
@@ -138,7 +140,7 @@ final class SurveyStore {
             guard let number = await recognizer.recognizeMeterNumber(in: jpeg) else { return }
             let current = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if current.isEmpty {
-                setMeterNumber(number)
+                setMeterNumber(number, source: .ocr)
             }
         }
     }
@@ -161,6 +163,17 @@ final class SurveyStore {
 
     func commitPlacement(_ snapshot: PlacementSceneSnapshot) {
         session.placement = measurer.applying(snapshot, to: session.placement)
+        session.placement.snapshotTimestamp = Date()
+        refreshAssessment()
+    }
+
+    func setFootprintClearAttested(_ value: Bool) {
+        session.placement.footprintClearAttested = value ? true : nil
+        refreshAssessment()
+    }
+
+    func setTransferSwitchSpaceAttested(_ value: Bool) {
+        session.placement.transferSwitchSpaceAttested = value ? true : nil
         refreshAssessment()
     }
 

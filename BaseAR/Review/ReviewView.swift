@@ -16,6 +16,7 @@ struct ReviewView: View {
                 placementSection
                 checksSection
                 missingSection
+                jsonPreviewSection
                 shareSection
             }
             .padding()
@@ -35,20 +36,24 @@ struct ReviewView: View {
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.orange.opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.orange.opacity(0.55), lineWidth: 1)
+            )
     }
 
     private var toneCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(ToneStyle.title(store.session.placementTone))
                 .font(.headline)
-            Text("Green means every required check passed on measured evidence. Amber means a required check is still unknown. Red means a measured conflict. Footprint clearance and transfer-switch space are not measured in this build, so a placement with no conflict stays amber.")
+            Text("Green means every required check passed on measured evidence. Teal means a required check passed on a user attestation instead of a measurement. Amber means a required check is still unknown. Red means a measured conflict.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(ToneStyle.color(store.session.placementTone).opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
+        .background(ToneStyle.color(store.session.placementTone).opacity(0.22), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var propertySection: some View {
@@ -96,6 +101,9 @@ struct ReviewView: View {
                 evidenceImage(store.meterImage, label: "Round electric meter")
                 evidenceImage(store.breakerImage, label: "Main disconnect or breaker")
                 LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
+                if let source = store.session.electrical.meterNumberSource {
+                    LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
+                }
                 LabeledContent("Main breaker", value: breakerText)
                 LabeledContent("Solar", value: yesNo(store.session.electrical.hasSolar))
                 LabeledContent("Portable generator", value: yesNo(store.session.electrical.hasPortableGenerator))
@@ -116,6 +124,8 @@ struct ReviewView: View {
                 LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
                 LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
                 LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
+                LabeledContent("Footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
+                LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
                 Text("GPS above is the phone's property fix, not where the battery was placed.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -166,6 +176,32 @@ struct ReviewView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var jsonPreviewSection: some View {
+        GroupBox("survey.json") {
+            if let preview = jsonPreview {
+                ScrollView {
+                    Text(preview)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .frame(maxHeight: 240)
+            } else {
+                Text("Preview will appear here after the survey is saved.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var jsonPreview: String? {
+        guard let url = store.exportURLs.first(where: { $0.pathExtension == "json" }),
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return text
     }
 
     private var shareSection: some View {
@@ -230,6 +266,12 @@ struct ReviewView: View {
     private func feet(_ value: Double?) -> String {
         guard let value else { return "Not measured" }
         return String(format: "%.1f ft", value)
+    }
+
+    private func attestationText(measured: Bool?, attested: Bool?) -> String {
+        if let measured { return measured ? "Measured clear" : "Measured blocked" }
+        if attested == true { return "Attested clear (not measured)" }
+        return "Not measured or attested"
     }
 
     private func statusColor(_ status: CheckStatus) -> Color {

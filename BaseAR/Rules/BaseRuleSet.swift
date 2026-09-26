@@ -73,12 +73,15 @@ enum BaseRuleSet {
             guard session.placement.batteryPlaced else {
                 return .unknown("The battery has not been placed, so the \(side) ft pad was not checked on site.")
             }
-            guard let clear = session.placement.footprintIsClear else {
-                return .unknown("The preview draws a \(side) ft × \(side) ft pad. Clearance inside that pad was not measured.")
+            if let clear = session.placement.footprintIsClear {
+                return clear
+                    ? .pass("The \(side) ft × \(side) ft pad was measured clear.")
+                    : .conflict("The \(side) ft × \(side) ft pad was measured as blocked.")
             }
-            return clear
-                ? .pass("The \(side) ft × \(side) ft pad was measured clear.")
-                : .conflict("The \(side) ft × \(side) ft pad was measured as blocked.")
+            if session.placement.footprintClearAttested == true {
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested the \(side) ft × \(side) ft pad is clear. Not a measurement.")
+            }
+            return .unknown("The preview draws a \(side) ft × \(side) ft pad. Clearance inside that pad was not measured or attested.")
         }
     )
 
@@ -136,12 +139,15 @@ enum BaseRuleSet {
         requirement: "Leave space for a transfer switch on the wall beside the meter.",
         isRequired: true,
         evaluate: { session in
-            guard let observed = session.placement.transferSwitchClearanceObserved else {
-                return .unknown("Space for a transfer switch beside the meter was not measured.")
+            if let observed = session.placement.transferSwitchClearanceObserved {
+                return observed
+                    ? .pass("Transfer-switch space beside the meter was measured as available.")
+                    : .conflict("Transfer-switch space beside the meter was measured as blocked.")
             }
-            return observed
-                ? .pass("Transfer-switch space beside the meter was measured as available.")
-                : .conflict("Transfer-switch space beside the meter was measured as blocked.")
+            if session.placement.transferSwitchSpaceAttested == true {
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested transfer-switch space beside the meter is available. Not a measurement.")
+            }
+            return .unknown("Space for a transfer switch beside the meter was not measured or attested.")
         }
     )
 }

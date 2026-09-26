@@ -1,4 +1,6 @@
+import AVFoundation
 import SwiftUI
+import UIKit
 
 enum PhotoSlot: String, Identifiable {
     case meter
@@ -14,6 +16,7 @@ struct ElectricalCaptureView: View {
 
     @State private var activeSlot: PhotoSlot?
     @State private var amperageText = ""
+    @State private var showCameraDeniedAlert = false
     @FocusState private var fieldIsFocused: Bool
 
     var body: some View {
@@ -58,6 +61,32 @@ struct ElectricalCaptureView: View {
                 }
             }
             .ignoresSafeArea()
+        }
+        .alert("Camera access is off", isPresented: $showCameraDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Allow Camera access for Base Site Survey in Settings, then try again.")
+        }
+    }
+
+    private func requestPhoto(for slot: PhotoSlot) {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized, .notDetermined:
+            activeSlot = slot
+        case .denied, .restricted:
+            // Simulator has no camera; the picker falls back to the library, so let it through.
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                showCameraDeniedAlert = true
+            } else {
+                activeSlot = slot
+            }
+        @unknown default:
+            activeSlot = slot
         }
     }
 
@@ -129,7 +158,7 @@ struct ElectricalCaptureView: View {
                 .accessibilityLabel(retakeTitle)
         }
         Button(image == nil ? emptyTitle : retakeTitle) {
-            activeSlot = slot
+            requestPhoto(for: slot)
         }
     }
 }

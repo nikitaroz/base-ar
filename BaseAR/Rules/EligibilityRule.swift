@@ -41,9 +41,11 @@ enum PlacementTonePolicy {
         if required.contains(where: { $0.status == .conflict }) {
             return .conflict
         }
-        let everyRequiredCheckPassed = !required.isEmpty && required.allSatisfy { result in
-            result.status == .pass && result.usedMeasuredEvidence
+        guard !required.isEmpty, required.allSatisfy({ $0.status == .pass }) else {
+            return .incomplete
         }
-        return everyRequiredCheckPassed ? .clear : .incomplete
+        // At least one required pass used a user attestation instead of a measurement: distinct tone so the JSON and UI are honest.
+        let anyAttested = required.contains { !$0.usedMeasuredEvidence }
+        return anyAttested ? .attested : .clear
     }
 }

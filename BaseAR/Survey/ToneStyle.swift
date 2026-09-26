@@ -10,6 +10,8 @@ enum ToneStyle {
         switch tone {
         case .clear:
             UIColor.systemGreen
+        case .attested:
+            UIColor.systemTeal
         case .incomplete:
             UIColor(red: 0.93, green: 0.58, blue: 0.05, alpha: 1)
         case .conflict:
@@ -21,6 +23,8 @@ enum ToneStyle {
         switch tone {
         case .clear:
             "All required checks passed"
+        case .attested:
+            "Passed with attestations"
         case .incomplete:
             "Needs measurements"
         case .conflict:

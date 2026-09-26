@@ -1,9 +1,10 @@
 import Foundation
+import UIKit
 
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 1
+    var schemaVersion: Int = 2
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -21,10 +22,18 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     var ruleResults: [RuleResult]
     var missingInformation: [String]
     var placementTone: PlacementTone
+    /// Fixed labels so a Base engineer reading the JSON knows units without inferring.
+    var units: SurveyUnits
+    /// App/device provenance for support and reproducibility.
+    var appVersion: String
+    var buildNumber: String
+    var iosVersion: String
+    var deviceModel: String
 
     static let locationDisclaimer = "Latitude, longitude, timestamp, and horizontal accuracy are the phone's reported property location, not the battery position."
     static let prototypeDisclaimer = "Preliminary survey only. This is not an electrical inspection, a code review, or installation approval."
 
+    @MainActor
     static func new(propertyIdentifier: String) -> SurveySession {
         SurveySession(
             id: UUID(),
@@ -40,14 +49,46 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
             placement: PlacementEvidence(),
             ruleResults: [],
             missingInformation: [],
-            placementTone: .incomplete
+            placementTone: .incomplete,
+            units: SurveyUnits(),
+            appVersion: DeviceProvenance.appVersion,
+            buildNumber: DeviceProvenance.buildNumber,
+            iosVersion: DeviceProvenance.iosVersion(),
+            deviceModel: DeviceProvenance.deviceModel()
         )
     }
+}
+
+struct SurveyUnits: Codable, Sendable, Equatable {
+    var distances: String = "feet"
+    var angles: String = "radians"
+    var positions: String = "meters_ARWorld"
+}
+
+enum DeviceProvenance {
+    static let appVersion: String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    }()
+
+    static let buildNumber: String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+    }()
+
+    @MainActor
+    static func iosVersion() -> String { UIDevice.current.systemVersion }
+
+    @MainActor
+    static func deviceModel() -> String { UIDevice.current.model }
 }
 
 enum Homeownership: String, Codable, Sendable {
     case own
     case rent
+}
+
+enum MeterNumberSource: String, Codable, Sendable {
+    case manual
+    case ocr
 }
 
 struct GeoFix: Codable, Sendable, Equatable {
@@ -63,6 +104,8 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     var breakerPhotoFilename: String?
     /// Distinct from mainBreakerAmperage. Manual until OCR is connected.
     var meterNumber: String?
+    /// How the meter number was captured. Nil until a value is set.
+    var meterNumberSource: MeterNumberSource?
     /// Confirmed by the user. Distinct from meterNumber.
     var mainBreakerAmperage: Int?
     /// Nil means the question has not been answered.
@@ -104,10 +147,21 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var footprintIsClear: Bool?
     /// Set after transfer-switch space beside the meter is actually measured. Nil stays unknown.
     var transferSwitchClearanceObserved: Bool?
+    /// User attestation (not measurement) that the 3 ft × 3 ft pad is clear. Rule engine falls back to this only if the measured field is nil.
+    var footprintClearAttested: Bool?
+    /// User attestation (not measurement) that space for a transfer switch beside the meter is available.
+    var transferSwitchSpaceAttested: Bool?
+    /// AR-owned measurements listed in AGENTS.md, not yet wired. Slots reserved so schema stays stable.
+    var meterHeightFeet: Double?
+    var frontWorkspaceWidthInches: Double?
+    var frontWorkspaceDepthInches: Double?
+    var meterAndPanelSameWall: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
     var batteryYawRadians: Float?
+    /// When the placement snapshot was committed. Nil until a save happens.
+    var snapshotTimestamp: Date?
 }
 
 enum CheckStatus: String, Codable, Sendable {
@@ -119,6 +173,8 @@ enum CheckStatus: String, Codable, Sendable {
 enum PlacementTone: String, Codable, Sendable {
     /// Every required check passed on measured evidence.
     case clear
+    /// Every required check passed, but one or more passes rely on a user attestation instead of a measurement.
+    case attested
     /// A required check has no measurement yet, and none conflict.
     case incomplete
     /// At least one check observed a conflict.

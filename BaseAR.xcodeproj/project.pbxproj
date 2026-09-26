@@ -36,9 +36,7 @@
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
 		B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */; };
-		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */
-		B20000000000000000000017 /* TypeSafeJevClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevClient.swift; sourceTree = "<group>"; };
-		B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevAdvisoryView.swift; sourceTree = "<group>"; };; };
+		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
 		B10000000000000000000017 /* TypeSafeJevClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000017 /* TypeSafeJevClient.swift */; };
 		B10000000000000000000018 /* TypeSafeJevAdvisoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */; };
 /* End PBXBuildFile section */
@@ -87,6 +85,8 @@
 		B20000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionMeterNumberRecognizer.swift; sourceTree = "<group>"; };
 		B20000000000000000000016 /* BatteryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCatalog.swift; sourceTree = "<group>"; };
+		B20000000000000000000017 /* TypeSafeJevClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevClient.swift; sourceTree = "<group>"; };
+		B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevAdvisoryView.swift; sourceTree = "<group>"; };
 		D20000000000000000000001 /* BaseAR.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BaseAR.xcconfig; sourceTree = "<group>"; };
 		D20000000000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -216,6 +216,8 @@
 			children = (
 				B2000000000000000000000D /* SurveyExporting.swift */,
 				B2000000000000000000000E /* ReviewView.swift */,
+				B20000000000000000000017 /* TypeSafeJevClient.swift */,
+				B20000000000000000000018 /* TypeSafeJevAdvisoryView.swift */,
 			);
 			path = Review;
 			sourceTree = "<group>";

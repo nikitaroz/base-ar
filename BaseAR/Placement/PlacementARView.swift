@@ -496,12 +496,24 @@ struct PlacementARView: View {
             if meterIsMarked || panelIsMarked {
                 HStack(spacing: 8) {
                     if meterIsMarked {
-                        Button("Clear meter") { store.placementController?.clearEquipmentLock(.meter) }
-                            .buttonStyle(.bordered)
+                        Button(role: .destructive) {
+                            store.placementController?.clearEquipmentLock(.meter)
+                        } label: {
+                            Label("Clear meter", systemImage: "arrow.uturn.backward")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
                     }
                     if panelIsMarked {
-                        Button("Clear panel") { store.placementController?.clearEquipmentLock(.panel) }
-                            .buttonStyle(.bordered)
+                        Button(role: .destructive) {
+                            store.placementController?.clearEquipmentLock(.panel)
+                        } label: {
+                            Label("Clear panel", systemImage: "arrow.uturn.backward")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
                     }
                 }
             }

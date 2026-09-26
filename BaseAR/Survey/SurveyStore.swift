@@ -84,16 +84,9 @@ final class SurveyStore {
     func requirePlacementController() -> PlacementSceneController {
         if let placementController { return placementController }
         let created = PlacementSceneController()
-        created.setActiveModel(BatteryCatalog.model(for: session.selectedBatteryModelId))
+        created.setActiveModel(BatteryCatalog.baseCore)
         placementController = created
         return created
-    }
-
-    func setSelectedBatteryModel(_ modelId: String) {
-        guard modelId != session.selectedBatteryModelId else { return }
-        session.selectedBatteryModelId = modelId
-        placementController?.setActiveModel(BatteryCatalog.model(for: modelId))
-        refreshAssessment()
     }
 
     /// Drops the in-memory AR session and the on-disk survey packet.

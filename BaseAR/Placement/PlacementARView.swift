@@ -184,20 +184,15 @@ struct PlacementARView: View {
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
-                if !coachingIsActive {
-                    VStack(spacing: 8) {
-                        modelChipPicker
-                        if measureMode {
-                            HStack {
-                                progressHeader
-                                    .allowsHitTesting(false)
-                                Spacer()
-                                Button("Back") { measureMode = false }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .padding(.horizontal, 12)
-                            }
-                        }
+                if !coachingIsActive, measureMode {
+                    HStack {
+                        progressHeader
+                            .allowsHitTesting(false)
+                        Spacer()
+                        Button("Back") { measureMode = false }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .padding(.horizontal, 12)
                     }
                     .padding(.top, 8)
                 }
@@ -216,41 +211,6 @@ struct PlacementARView: View {
                 }
             }
         }
-    }
-
-    private var modelChipPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(BatteryCatalog.all) { model in
-                    let selected = store.session.selectedBatteryModelId == model.id
-                    Button {
-                        store.setSelectedBatteryModel(model.id)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.displayName)
-                                .font(.caption.weight(.semibold))
-                            Text("\(formatInch(model.widthInches))×\(formatInch(model.heightInches))×\(formatInch(model.depthInches)) in")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            Capsule().fill(selected ? Color.primary.opacity(0.15) : Color.primary.opacity(0.05))
-                        )
-                        .overlay(
-                            Capsule().strokeBorder(selected ? Color.primary : Color.primary.opacity(0.2), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func formatInch(_ inches: Float) -> String {
-        String(format: inches.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", inches)
     }
 
     private var idleBottomBar: some View {

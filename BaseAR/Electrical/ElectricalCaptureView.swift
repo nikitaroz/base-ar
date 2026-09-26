@@ -22,13 +22,32 @@ struct ElectricalCaptureView: View {
 
     var body: some View {
         Form {
+            Section("Safe capture") {
+                Text(focus == .meter ? SurveyStep.meter.instruction : SurveyStep.breaker.instruction)
+                Text("Do not open covers, touch equipment, or operate a breaker. Return to the guide and choose 'Can't safely finish' if the label is not accessible.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             switch focus {
             case .meter:
                 meterSection
             case .breaker:
                 breakerSection
             }
-
+            Section("Check before continuing") {
+                Toggle("The image is clear and this value matches the printed label", isOn: Binding(
+                    get: {
+                        focus == .meter
+                            ? store.session.guidedProgress?.meterConfirmed == true
+                            : store.session.guidedProgress?.breakerConfirmed == true
+                    },
+                    set: { store.confirmElectrical(focus, confirmed: $0) }
+                ))
+                .disabled(focus == .meter
+                    ? store.session.electrical.meterPhotoFilename == nil || (store.session.electrical.meterNumber ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    : store.session.electrical.breakerPhotoFilename == nil || (store.session.electrical.mainBreakerAmperage ?? 0) <= 0)
+                Text("Scanning only proposes a value. Retaking the photo or editing the value clears this confirmation. If it is unreadable, retake, enter a visible value manually, or defer for human review.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
         }
         .navigationTitle(focus == .meter ? "Electrical Meter" : "Breaker box")
         .navigationBarTitleDisplayMode(.inline)
@@ -51,7 +70,9 @@ struct ElectricalCaptureView: View {
             }
         }
         .fullScreenCover(item: $activeSlot) { slot in
-            CameraImagePicker { image in
+            CameraImagePicker(instruction: slot == .meter
+                ? "Stand still. Frame the printed meter ID, avoid glare, and keep the label sharp. Do not touch the meter."
+                : "Frame the main disconnect rating, not a branch breaker. Capture only what is already safely visible.") { image in
                 switch slot {
                 case .meter:
                     store.attachMeterPhoto(image)
@@ -177,14 +198,8 @@ struct ElectricalCaptureView: View {
                     .foregroundStyle(.secondary)
             }
             if let amps = store.session.electrical.mainBreakerAmperage {
-                if (150...200).contains(amps) {
-                    Label("Confirmed: \(amps) A", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    Label("\(amps) A is outside the 150–200A Austin guidance and will be flagged for review.", systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                }
+                Text("Recorded: \(amps) A. Confirm against the main disconnect label below. This is not the panel bus rating or an eligibility decision.")
+                    .font(.footnote).foregroundStyle(.secondary)
             } else if store.breakerAmperageNote == nil {
                 Text("Enter the number printed on the main breaker.")
                     .foregroundStyle(.secondary)
@@ -208,7 +223,7 @@ struct ElectricalCaptureView: View {
         switch target {
         case .meterNumber:
             if let number = read.meterNumber {
-                store.setMeterNumber(number, note: "Scanned from the camera. Confirm it matches the meter.")
+                store.setMeterNumber(number, source: .ocr, note: "Scanned from the camera. Confirm it matches the meter.")
             }
             if let image {
                 store.attachMeterPhoto(image)

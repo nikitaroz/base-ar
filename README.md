@@ -4,7 +4,13 @@ A small iPhone app for a preliminary Base Power site survey. It collects meter a
 
 The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
 
-## First-time setup (once per Mac)
+## Guided survey branch
+
+This branch implements a nine-step guided capture flow, wider context photos, explicit OCR/value confirmation, safe deferrals, local draft resume, and targeted review loops. See [the end-to-end workflow and Mermaid diagram](docs/guided-survey-workflow.md) and [validation / iPhone acceptance checklist](docs/guided-survey-validation.md).
+
+The workflow document is the current behavior reference for this branch; the older feature notes below describe the original hub implementation. Native Xcode compilation and physical-device validation are still required.
+
+## Xcode and device setup
 
 Each teammate does this once. `git pull` won't disturb any of it — signing config lives in files git ignores.
 
@@ -66,7 +72,7 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 
 ## What works
 
-- One-screen welcome → four-tile hub (home and personal info, electrical meter, breaker box, site measurements). Every tile is open, shows completion progress, and saves as you go.
+- Welcome → nine-step guide: safety, home, utility, meter, meter context, main disconnect, panel context, AR placement, and review. Step navigation, explicit deferrals and local draft resume are available.
 - Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
 - Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the number in a card-style frame and saves that photo. A normal photo can also fill an empty field. The typed value is the one that is kept.
 - Outdoor `ARView` with horizontal and vertical plane detection. One scan: point at the electric meter, step back about 10 steps, and look left, right, and along the wall. Then point at the breaker panel and do the same around that box. Done stays off until both looks finish. Clear meter or Clear panel undoes a bad lock. Live detection boxes stay on the camera. The scan hides any battery or equipment cubes already in the scene and does not drop new ones. Meter height and whether the meter and panel share a wall still come from the locks.

@@ -101,6 +101,8 @@ struct PlacementARView: View {
     @State private var trackingMessage: String? = nil
     @State private var isVisible = false
     @State private var coachingIsActive = false
+    /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
+    @State private var measureMode: Bool = true
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store

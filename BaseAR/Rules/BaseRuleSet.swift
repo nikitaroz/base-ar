@@ -11,12 +11,12 @@ enum BaseRuleSet {
     static let maxWallDistanceFeet = 1.0
     static let minGasMeterDistanceFeet = 3.0
     static let footprintSideFeet = 3.0
-    static let minMeterHeightFeet = 3.0
     static let maxMeterHeightFeet = 6.0
     static let workingSpaceWidthInches = 30.0
     static let workingSpaceDepthInches = 36.0
 
     static let rules: [EligibilityRule] = [
+        programReview,
         austinBreaker,
         solarOrTwoBatteries,
         planningFootprint,
@@ -29,19 +29,38 @@ enum BaseRuleSet {
         meterAndPanelSameWall
     ]
 
+    /// Self-report and GPS do not verify service territory, model approval or the AHJ.
+    /// Remain unknown until a future, separately reviewed integration provides evidence.
+    private static let programReview = EligibilityRule(
+        id: "program-review",
+        title: "Program, model and local requirements",
+        requirement: "A qualified reviewer must verify utility/program, battery model, connection topology and local site requirements.",
+        isRequired: true,
+        evaluate: { _ in
+            .unknown("This prototype has no verified utility, meter compatibility or local-code integration. Photo completion is not installation approval. Windows, vents, heaters and other hazards require review.")
+        }
+    )
+
     private static let austinBreaker = EligibilityRule(
         id: "austin-main-breaker",
-        title: "Austin main breaker",
-        requirement: "In Austin the main breaker must be 150–200A.",
+        title: "Austin Energy main-breaker guidance",
+        requirement: "For the Austin Energy program, compare a confirmed main-breaker rating with Base's published 150–200A guidance.",
         isRequired: true,
         evaluate: { session in
+            guard session.guidedProgress?.program == .austinEnergy,
+                  session.guidedProgress?.programAnswered == true else {
+                return .unknown("Austin guidance is not applied from city or GPS alone. The program has not been identified as Austin Energy.")
+            }
+            guard session.guidedProgress?.breakerConfirmed == true else {
+                return .unknown("The user has not confirmed the main-breaker reading against the photo.")
+            }
             guard let amps = session.electrical.mainBreakerAmperage else {
                 return .unknown("Main breaker amperage has not been confirmed.")
             }
             if austinMainBreakerRange.contains(amps) {
-                return .pass("Confirmed main breaker is \(amps)A, inside 150–200A.")
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "User-confirmed main breaker is \(amps)A, inside published guidance; program eligibility remains unverified.")
             }
-            return .conflict("Confirmed main breaker is \(amps)A, outside the 150–200A Austin range.")
+            return RuleOutcome(status: .conflict, usedMeasuredEvidence: false, explanation: "User-confirmed main breaker is \(amps)A, outside published Austin Energy guidance. Verify with a qualified reviewer.")
         }
     )
 
@@ -51,22 +70,16 @@ enum BaseRuleSet {
         requirement: "Solar, or two batteries, requires a 200A panel.",
         isRequired: true,
         evaluate: { session in
-            guard let amps = session.electrical.mainBreakerAmperage else {
-                return .unknown("Main breaker amperage has not been confirmed.")
-            }
-            if amps >= panelAmpsForSolarOrTwoBatteries {
-                return .pass("Confirmed main breaker is \(amps)A, which covers solar and a two-battery system.")
-            }
             let hasSolar = session.electrical.hasSolar
             let count = session.electrical.plannedBatteryCount
             if hasSolar == true || (count ?? 0) >= 2 {
                 let reason = hasSolar == true ? "Solar was reported" : "Two batteries are planned"
-                return .conflict("\(reason) and the confirmed main breaker is \(amps)A. This case needs 200A.")
+                return .unknown("\(reason). A reviewer must read the panel nameplate and verify the 200A panel requirement. Main-breaker amperage is not the panel bus rating.")
             }
             if hasSolar == false, let count, count < 2 {
-                return .pass("Solar was reported as not present and fewer than two batteries are planned, so the 200A requirement does not apply.")
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "User reported no solar and fewer than two batteries. This conditional guidance is not triggered; equipment approval still needs review.")
             }
-            return .unknown("Confirmed main breaker is \(amps)A. Solar or planned battery count is still missing, so the 200A requirement cannot be decided.")
+            return .unknown("Solar or planned battery count is missing. Do not infer panel bus rating from the main breaker.")
         }
     )
 
@@ -131,7 +144,7 @@ enum BaseRuleSet {
         isRequired: true,
         evaluate: { session in
             if session.placement.distanceToGasMeterFeet == nil, session.placement.gasMeterNotPresent {
-                return .pass("No gas meter was observed near the placement.")
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
             }
             return distanceOutcome(
                 feet: session.placement.distanceToGasMeterFeet,
@@ -146,17 +159,18 @@ enum BaseRuleSet {
     private static let meterHeight = EligibilityRule(
         id: "meter-height",
         title: "Meter height",
-        requirement: "The electric meter must be between \(Int(minMeterHeightFeet)) and \(Int(maxMeterHeightFeet)) ft off the ground.",
+        requirement: "Compare with Base's published maximum meter height of \(Int(maxMeterHeightFeet)) ft; confirm the reference point on review.",
         isRequired: true,
         evaluate: { session in
             guard let height = session.placement.meterHeightFeet else {
                 return .unknown("Meter height was not measured. Tap the ground below the meter and then the meter on the wall to measure it.")
             }
             let formatted = String(format: "%.1f ft", height)
-            if height >= minMeterHeightFeet && height <= maxMeterHeightFeet {
-                return .pass("Measured meter height is \(formatted), inside the \(Int(minMeterHeightFeet))–\(Int(maxMeterHeightFeet)) ft range.")
+            guard height.isFinite, height > 0 else { return .unknown("Meter height must be a valid positive measurement.") }
+            if height <= maxMeterHeightFeet {
+                return .pass("Measured meter height is \(formatted), within the published maximum. No unsupported minimum height is applied.")
             }
-            return .conflict("Measured meter height is \(formatted), outside the \(Int(minMeterHeightFeet))–\(Int(maxMeterHeightFeet)) ft range.")
+            return .conflict("Measured meter height is \(formatted), above the published \(Int(maxMeterHeightFeet)) ft maximum. Request human review, not an automatic replacement.")
         }
     )
 
@@ -218,7 +232,7 @@ private func distanceOutcome(
     passText: (String) -> String,
     conflictText: (String) -> String
 ) -> RuleOutcome {
-    guard let feet else { return .unknown(missing) }
+    guard let feet, feet.isFinite, feet >= 0 else { return .unknown(missing) }
     let formatted = String(format: "%.1f ft", feet)
     return passes(feet) ? .pass(passText(formatted)) : .conflict(conflictText(formatted))
 }

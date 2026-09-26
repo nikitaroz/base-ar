@@ -140,7 +140,7 @@ struct RealtimeSurveyView: View {
     private var placementColor: Color {
         guard store.session.placement.batteryPlaced else { return .orange }
         switch store.session.placementTone {
-        case .pass: return .green
+        case .clear: return .green
         case .conflict: return .red
         case .incomplete, .attested: return .yellow
         }

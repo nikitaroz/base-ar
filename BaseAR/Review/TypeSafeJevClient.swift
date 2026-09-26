@@ -18,57 +18,55 @@ actor TypeSafeJevClient {
         }
     }
     
+    init(apiKey: String) {
+        self.apiKey = apiKey
+    }
+    
     var isAvailable: Bool {
         apiKey != nil
     }
     
     /// Fetch advisory. Gracefully degrades: offline/auth/timeout → advisoryUnavailable.
     func advisory(for session: SurveySession) async -> JevAdvisory {
+        await fetchAdvisory(session: session)
+    }
+    
+    func fetchAdvisory(session: SurveySession) async throws -> TypeSafeJevResponse {
         guard let apiKey else {
-            return JevAdvisory(status: .unavailable, reason: "TYPESAFE_API_KEY not configured")
+            throw URLError(.userAuthenticationRequired)
         }
         
         let state = CompactSurveyState(session: session)
         let request = JevRequest(model: model, state: state, questions: JevRequest.standardQuestions)
         
-        do {
-            let encoded = try JSONEncoder().encode(request)
-            var urlRequest = URLRequest(url: endpoint, timeoutInterval: 15)
-            urlRequest.httpMethod = "POST"
-            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            urlRequest.httpBody = encoded
-            
-            let (data, response) = try await URLSession.shared.data(for: urlRequest)
-            
-            guard let http = response as? HTTPURLResponse else {
-                return JevAdvisory(status: .unavailable, reason: "Invalid response")
-            }
-            
-            guard (200...299).contains(http.statusCode) else {
-                let reason = "HTTP \(http.statusCode)"
-                return JevAdvisory(status: .unavailable, reason: reason)
-            }
-            
-            let decoded = try JSONDecoder().decode(JevResponse.self, from: data)
-            return JevAdvisory(status: .available, answers: decoded.answers)
-            
-        } catch is CancellationError {
-            return JevAdvisory(status: .unavailable, reason: "Request cancelled")
-        } catch {
-            return JevAdvisory(status: .unavailable, reason: error.localizedDescription)
+        let encoded = try JSONEncoder().encode(request)
+        var urlRequest = URLRequest(url: endpoint, timeoutInterval: 15)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = encoded
+        
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
         }
+        
+        let decoded = try JSONDecoder().decode(JevResponse.self, from: data)
+        return JevAdvisory(status: .available, answers: decoded.answers)
     }
 }
 
 // MARK: - Request
+
+typealias TypeSafeJevResponse = JevAdvisory
 
 struct JevRequest: Codable {
     let model: String
     let state: CompactSurveyState
     let questions: [String: JevQuestion]
     
-    static let standardQuestions: [String: JevQuestion] = [
+    nonisolated(unsafe) static let standardQuestions: [String: JevQuestion] = [
         "visit_ready": JevQuestion(
             type: "noul",
             instructions: "Is the survey ready for a Base engineer visit given measured evidence and policy?"
@@ -111,12 +109,32 @@ struct JevRequest: Codable {
 struct JevQuestion: Codable {
     let type: String
     let instructions: String
-    let criteria: AnyCodable?
+    let criteria: Any?
     
     init(type: String, instructions: String, criteria: [String: String]? = nil) {
         self.type = type
         self.instructions = instructions
-        self.criteria = criteria.map(AnyCodable.init)
+        self.criteria = criteria
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case type, instructions, criteria
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(instructions, forKey: .instructions)
+        if let criteria = criteria as? [String: String] {
+            try container.encode(criteria, forKey: .criteria)
+        }
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decode(String.self, forKey: .type)
+        instructions = try container.decode(String.self, forKey: .instructions)
+        criteria = try? container.decode([String: String].self, forKey: .criteria)
     }
 }
 

@@ -26,6 +26,8 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var gasMeterPosition: PlacementAnchor?
     var verticalPlanes: [PlaneSample] = []
     var lidarMeshAvailable: Bool = false
+    /// World-space mesh vertices near the battery, sub-sampled from ARMeshAnchor. Used for footprint clearance.
+    var meshPointsNearBattery: [PlacementAnchor] = []
 
     var hasPlacedContent: Bool {
         batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil || panelPosition != nil
@@ -43,6 +45,7 @@ struct PlacementMeasurements: Sendable, Equatable {
     var distanceToGasMeterFeet: Double?
     var meterHeightFeet: Double?
     var meterAndPanelSameWall: Bool?
+    var footprintIsClear: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
     var panelPosition: PlacementAnchor?
@@ -69,6 +72,10 @@ extension PlacementMeasuring {
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
         updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
+        // Preserve any existing measured clearance if this snapshot has no mesh data (e.g. non-LiDAR device).
+        if let footprint = measured.footprintIsClear {
+            updated.footprintIsClear = footprint
+        }
         updated.batteryPosition = measured.batteryPosition
         updated.meterPosition = measured.meterPosition
         updated.panelPosition = measured.panelPosition
@@ -90,6 +97,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let wallFeet = wallClearanceFeet(snapshot)
         let heightFeet = meterHeightFeet(snapshot)
         let sameWall = meterAndPanelSameWall(snapshot)
+        let footprint = footprintClearance(snapshot)
         return PlacementMeasurements(
             batteryPlaced: snapshot.batteryPosition != nil,
             meterMarked: snapshot.meterPosition != nil,
@@ -101,12 +109,40 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             distanceToGasMeterFeet: gasFeet,
             meterHeightFeet: heightFeet,
             meterAndPanelSameWall: sameWall,
+            footprintIsClear: footprint,
             batteryPosition: snapshot.batteryPosition,
             meterPosition: snapshot.meterPosition,
             panelPosition: snapshot.panelPosition,
             gasMeterPosition: snapshot.gasMeterPosition,
             batteryYawRadians: snapshot.batteryPosition == nil ? nil : snapshot.batteryYawRadians
         )
+    }
+
+    /// Any mesh vertex inside the 3 ft × 3 ft pad's XZ footprint whose Y is between the ground and the battery height counts as an obstruction.
+    /// Returns nil if the device didn't provide a mesh (no LiDAR) — the attested fallback in the rule engine picks up from there.
+    private func footprintClearance(_ snapshot: PlacementSceneSnapshot) -> Bool? {
+        guard snapshot.lidarMeshAvailable, !snapshot.meshPointsNearBattery.isEmpty else { return nil }
+        guard let battery = snapshot.batteryPosition else { return nil }
+        let padHalfSide = BatteryGeometry.footprintMeters / 2
+        // Ignore points right at ground level to avoid reading the ground itself as an obstruction.
+        let minObstructionHeight: Float = 0.05
+        let maxObstructionHeight: Float = BatteryGeometry.heightMeters
+        let yaw = snapshot.batteryYawRadians
+        let cosYaw = cos(yaw)
+        let sinYaw = sin(yaw)
+        for point in snapshot.meshPointsNearBattery {
+            let heightAboveGround = point.y - battery.y
+            guard heightAboveGround >= minObstructionHeight, heightAboveGround <= maxObstructionHeight else { continue }
+            // Rotate the point into the pad's local frame so we can check axis-aligned bounds.
+            let dx = point.x - battery.x
+            let dz = point.z - battery.z
+            let localX = cosYaw * dx + sinYaw * dz
+            let localZ = -sinYaw * dx + cosYaw * dz
+            if abs(localX) <= padHalfSide, abs(localZ) <= padHalfSide {
+                return false
+            }
+        }
+        return true
     }
 
     private func horizontalFeet(_ origin: PlacementAnchor?, _ target: PlacementAnchor?) -> Double? {

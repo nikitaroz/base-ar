@@ -361,6 +361,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
         var panelWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
         var gasMarker: ModelEntity?
         var planes: [UUID: PlaneSample] = [:]
+        /// Sub-sampled world-space mesh vertices, keyed by ARMeshAnchor identifier so removals stay cheap.
+        var meshSamples: [UUID: [SIMD3<Float>]] = [:]
         var lidarMeshAvailable = false
         var appliedYaw: Float = 0
         var rotationStartYaw: Float = 0
@@ -582,10 +584,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
 
         nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
+            upsertMesh(from: anchors)
         }
 
         nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
+            upsertMesh(from: anchors)
         }
 
         /// LiDAR mesh anchors update many times a second; skip the hop to the main actor when no wall changed.
@@ -597,11 +601,20 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             }
         }
 
+        private nonisolated func upsertMesh(from anchors: [ARAnchor]) {
+            let samples = Self.meshSamples(from: anchors)
+            guard !samples.isEmpty else { return }
+            Task { @MainActor in
+                self.upsertMesh(samples)
+            }
+        }
+
         nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
             let ids = anchors.map(\.identifier)
             Task { @MainActor in
                 for id in ids {
                     self.planes.removeValue(forKey: id)
+                    self.meshSamples.removeValue(forKey: id)
                 }
                 self.emitPlanesIfNeeded()
             }
@@ -617,6 +630,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
         private func upsert(_ samples: [PlaneSample]) {
             for sample in samples {
                 planes[sample.id] = sample
+            }
+            emitPlanesIfNeeded()
+        }
+
+        private func upsertMesh(_ samples: [(id: UUID, points: [SIMD3<Float>])]) {
+            for sample in samples {
+                meshSamples[sample.id] = sample.points
             }
             emitPlanesIfNeeded()
         }
@@ -805,11 +825,63 @@ final class PlacementSceneController: NSObject, ARSessionDelegate {
             if let gasMarker {
                 snapshot.gasMeterPosition = PlacementAnchor(grounded(gasMarker.position(relativeTo: nil)))
             }
+            if snapshot.batteryPosition != nil {
+                snapshot.meshPointsNearBattery = meshPointsNearBattery(radiusMeters: 3)
+            }
             return snapshot
+        }
+
+        /// Filter the whole mesh point cloud to those within a small bounding cylinder around the battery.
+        /// Keeps the snapshot small (bounded by device room size) and skips the far walls entirely.
+        private func meshPointsNearBattery(radiusMeters: Float) -> [PlacementAnchor] {
+            guard let batteryRig else { return [] }
+            let battery = batteryRig.position(relativeTo: nil)
+            let radiusSquared = radiusMeters * radiusMeters
+            var result: [PlacementAnchor] = []
+            for (_, points) in meshSamples {
+                for point in points {
+                    let dx = point.x - battery.x
+                    let dz = point.z - battery.z
+                    if dx * dx + dz * dz <= radiusSquared {
+                        result.append(PlacementAnchor(point))
+                    }
+                }
+            }
+            return result
         }
 
         private func grounded(_ position: SIMD3<Float>) -> SIMD3<Float> {
             SIMD3(position.x, position.y - 0.14, position.z)
+        }
+
+        /// Sub-sample vertices from every ARMeshAnchor to world space. Skips non-mesh anchors and empty geometries.
+        /// Sampling `sampleStride` vertices keeps the point cloud small enough for per-frame checks; grass and curbs still register.
+        private nonisolated static func meshSamples(from anchors: [ARAnchor], sampleStride: Int = 24) -> [(id: UUID, points: [SIMD3<Float>])] {
+            anchors.compactMap { anchor in
+                guard let mesh = anchor as? ARMeshAnchor else { return nil }
+                let geometry = mesh.geometry
+                let vertices = geometry.vertices
+                let vertexCount = vertices.count
+                guard vertexCount > 0 else { return nil }
+                let stride = vertices.stride
+                let offset = vertices.offset
+                let basePointer = vertices.buffer.contents().advanced(by: offset)
+                let transform = mesh.transform
+                let floatSize = MemoryLayout<Float>.size
+                var points: [SIMD3<Float>] = []
+                points.reserveCapacity(vertexCount / sampleStride + 1)
+                var index = 0
+                while index < vertexCount {
+                    let vertexPointer = basePointer.advanced(by: index * stride)
+                    let x = vertexPointer.load(as: Float.self)
+                    let y = vertexPointer.advanced(by: floatSize).load(as: Float.self)
+                    let z = vertexPointer.advanced(by: floatSize * 2).load(as: Float.self)
+                    let world = transform * SIMD4<Float>(x, y, z, 1)
+                    points.append(SIMD3(world.x, world.y, world.z))
+                    index += sampleStride
+                }
+                return (mesh.identifier, points)
+            }
         }
 
         private nonisolated static func planeSamples(from anchors: [ARAnchor]) -> [PlaneSample] {

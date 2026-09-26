@@ -61,15 +61,15 @@ struct RealtimeSurveyView: View {
                 Spacer()
             }
         }
-        .navigationTitle("Site Survey")
+        .navigationTitle("Live Scan")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Review & Export") {
+                    Button("View Results") {
                         // Navigate to minimal review screen
                     }
-                    Button("Refresh Coaching") {
+                    Button("Get Tips") {
                         fetchJevCoaching()
                     }
                 } label: {

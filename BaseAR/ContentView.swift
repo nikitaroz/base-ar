@@ -129,19 +129,19 @@ private struct WelcomeView: View {
                         .font(.largeTitle.bold())
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("We'll guide you through home details, electrical labels, surrounding photos, and an outdoor battery preview. Stop and resume your local draft at any time.")
+                    Text("Fill out your info, then scan your meter and equipment with your camera.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text(SurveySession.prototypeDisclaimer)
+                    Text("Prototype only. Results need engineer review.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 48)
                     Button(action: onContinue) {
-                        Text(SurveyStore.hasSavedDraft ? "Resume survey" : "Start survey")
+                        Text(SurveyStore.hasSavedDraft ? "Continue" : "Get Started")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -485,7 +485,7 @@ struct HomeInformationView: View {
             }
 
             Section("Address") {
-                Text("Editing the address clears the location fix, utility confirmation and placement, and asks you to recheck saved photos. For a different home, start a new survey from Review.")
+                Text("Changing your address will clear your location and previous scans.")
                     .font(.footnote).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Property address or identifier")
@@ -523,7 +523,7 @@ struct HomeInformationView: View {
 
             Section("Home") {
                 RadioChoice(title: "Own or rent", selection: ownershipBinding) { $0.title }
-                Text("Base currently serves homeowners. Renters are waitlisted.")
+                Text("Base serves homeowners. Renters join the waitlist.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -531,10 +531,10 @@ struct HomeInformationView: View {
             Section("Energy setup") {
                 RadioChoice(title: "Solar", selection: solarBinding) { $0.title }
                 RadioChoice(title: "Portable generator", selection: portableGeneratorBinding) { $0.title }
-                RadioChoice(title: "Whole-home standby generator", selection: standbyGeneratorBinding) { $0.title }
-                RadioChoice(title: "Existing whole-home battery", selection: existingBatteryBinding) { $0.title }
-                RadioChoice(title: "Planned Base batteries", selection: batteryCountBinding) { $0.title }
-                Text("An existing standby generator or another whole-home battery is a filter Base uses before installation. This survey records the answer.")
+                RadioChoice(title: "Standby generator", selection: standbyGeneratorBinding) { $0.title }
+                RadioChoice(title: "Existing battery", selection: existingBatteryBinding) { $0.title }
+                RadioChoice(title: "Base batteries wanted", selection: batteryCountBinding) { $0.title }
+                Text("Some equipment may affect installation. We'll record what you have.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

@@ -10,10 +10,10 @@ struct SimplifiedSurveyFlow: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Site Survey")
+                Text("Survey")
                     .font(.largeTitle.bold())
                 
-                Text("Complete step 1, then use the live feedback screen to scan equipment and preview placement in AR.")
+                Text("Fill out your info, then scan your equipment live.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                 
@@ -30,14 +30,14 @@ struct SimplifiedSurveyFlow: View {
                             }
                         }
                         
-                        Text("Name, address, ownership, and energy setup")
+                        Text("Your contact info and home details")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         
                         Button {
                             onOpen(.home)
                         } label: {
-                            Text(step1Complete ? "Review Information" : "Complete Step 1")
+                            Text(step1Complete ? "Edit Info" : "Fill Out")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
@@ -60,7 +60,7 @@ struct SimplifiedSurveyFlow: View {
                             }
                         }
                         
-                        Text("Scan equipment, preview AR placement, see live rule checks and coaching")
+                        Text("Point your camera at equipment and see results live")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         
@@ -70,7 +70,7 @@ struct SimplifiedSurveyFlow: View {
                             } label: {
                                 HStack {
                                     Image(systemName: "arkit")
-                                    Text("Open Live Survey")
+                                    Text("Start Live Scan")
                                 }
                                 .frame(maxWidth: .infinity)
                             }
@@ -78,7 +78,7 @@ struct SimplifiedSurveyFlow: View {
                             .controlSize(.large)
                         } else {
                             Button {} label: {
-                                Text("Complete Step 1 First")
+                                Text("Fill out Step 1 first")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.bordered)
@@ -95,14 +95,14 @@ struct SimplifiedSurveyFlow: View {
                         Label("Review & Export", systemImage: "square.and.arrow.up")
                             .font(.headline)
                         
-                        Text("Check captured evidence and share survey.json")
+                        Text("See what you captured and share results")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         
                         Button {
                             onOpen(.review)
                         } label: {
-                            Text("Review Survey")
+                            Text("View Results")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
@@ -111,7 +111,7 @@ struct SimplifiedSurveyFlow: View {
                     .padding(4)
                 }
                 
-                Text(SurveySession.prototypeDisclaimer)
+                Text("This is a prototype. An engineer must confirm your site.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

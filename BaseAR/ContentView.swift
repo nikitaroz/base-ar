@@ -322,7 +322,7 @@ private struct SurveyHubView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableCardStyle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title). \(progress.title). \(subtitle).")
         .accessibilityHint("Opens \(title).")
@@ -330,6 +330,16 @@ private struct SurveyHubView: View {
 }
 
 // MARK: - Home and personal info
+
+/// Cards that need obvious press feedback since .plain otherwise strips all affordance.
+struct PressableCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
 
 private struct StepProgress: Equatable {
     var answered: Int

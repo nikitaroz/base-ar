@@ -116,7 +116,7 @@ struct ReviewView: View {
                     .padding(.vertical, 10)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableCardStyle())
                 if action.id != nextActions.last?.id {
                     Divider()
                 }

@@ -313,8 +313,8 @@ private struct SurveyHubView: View {
                         .accessibilityLabel("Complete")
                 } else {
                     Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
             }
@@ -688,7 +688,7 @@ private struct RadioChoice<Choice: Hashable & Identifiable>: View where Choice: 
                         Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                             .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                     }
-                    .frame(minHeight: 32)
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

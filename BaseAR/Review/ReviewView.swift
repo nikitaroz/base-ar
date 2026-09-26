@@ -37,6 +37,9 @@ struct ReviewView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Survey options")
             }
@@ -107,8 +110,8 @@ struct ReviewView: View {
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 10)
                     .contentShape(Rectangle())

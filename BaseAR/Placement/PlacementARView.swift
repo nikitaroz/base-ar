@@ -203,7 +203,7 @@ struct PlacementARView: View {
                         Spacer()
                         Button("Back") { measureMode = false }
                             .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .controlSize(.regular)
                             .padding(.horizontal, 12)
                     }
                     .padding(.top, 8)
@@ -285,20 +285,20 @@ struct PlacementARView: View {
 
     private var progressHeader: some View {
         VStack(spacing: 6) {
-            Text("\(progressIndex + 1) of \(progressSteps.count)")
+            Text("Step \(progressIndex + 1) of \(progressSteps.count)")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
             HStack(spacing: 4) {
                 ForEach(progressSteps.indices, id: \.self) { index in
-                    Capsule()
-                        .fill(index <= progressIndex ? Color.primary : Color.primary.opacity(0.25))
-                        .frame(width: index == progressIndex ? 16 : 7, height: 4)
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(index <= progressIndex ? Color.accentColor : Color.primary.opacity(0.25))
+                        .frame(width: index == progressIndex ? 20 : 10, height: 4)
                 }
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: Capsule())
+        .background(.regularMaterial, in: Capsule())
     }
 
     private var bottomBar: some View {
@@ -328,22 +328,28 @@ struct PlacementARView: View {
                     .multilineTextAlignment(.center)
             }
             if let trackingMessage {
-                Text(trackingMessage)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                Label(trackingMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.orange, in: Capsule())
             }
             if let statusMessage {
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Label(statusMessage, systemImage: "xmark.octagon.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.red, in: Capsule())
             }
             stepControls
         }
         .padding(16)
         .frame(maxWidth: .infinity)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     @ViewBuilder

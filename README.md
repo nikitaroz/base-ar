@@ -63,6 +63,7 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 
 ## What works
 
+- Simplified realtime flow: Step1 single-screen survey with kid-simple chrome and instant equipment detection feedback. TypeSafe Jev advisory mode provides optional guidance. Battery placement preview removed from live UI - camera stays clear for equipment scanning.
 - Welcome → nine-step guide: safety, home, utility, meter, meter context, main disconnect, panel context, AR placement, and review. Step navigation, explicit deferrals and local draft resume are available.
 - Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
 - Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the number in a card-style frame and saves that photo. A normal photo can also fill an empty field. The typed value is the one that is kept.

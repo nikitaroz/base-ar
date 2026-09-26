@@ -45,6 +45,7 @@ Or select Xcode once with `sudo xcode-select -s /Applications/Xcode.app/Contents
 - Outdoor `ARView` with horizontal and vertical plane detection. Tap to place, drag to move, and rotate a Base Core placeholder at 30.68 in W × 35.9 in H × 22 in D, with a separate 3 ft × 3 ft pad. Mark the electric meter, and optionally the gas meter.
 - LiDAR scene mesh and occlusion when the phone supports it. Placement still uses plane raycasts without LiDAR.
 - Review is reachable from the hub (and after placement). It shows both photos, the confirmed breaker value, the home-form answers, the AR screenshot, rule results, and what is still missing.
+- **OpenJEV advisory panel** appears on Review when the API key is configured. It sends survey state and current rule results to `api.openjev.sh/v1/systemone` and displays optional advisory guidance (visit readiness, next action, priority gap). The advisory does NOT override measured placement color. The panel gracefully hides or shows "advisory unavailable" when the key is missing, offline, or unauthorized.
 - A local `survey.json` is saved next to the photos and can be shared from the review screen.
 - The battery preview is green only when every required check passed on measured evidence. Unknown stays amber. A measured conflict turns it red.
 
@@ -67,6 +68,30 @@ This app already asks the typed home-form questions and stores one meter photo, 
 - Meter height, front working space, and same-wall meter/panel are not measured yet. They are AR work, not form fields.
 - The wide photo kit (left, right, surrounding, adjacent wall, behind the fence, breaker-area context) is not captured.
 - No ERCOT data, satellite imagery, automatic equipment detection, Base backend, or permitting logic.
+
+## OpenJEV advisory
+
+The Review screen shows an optional OpenJEV advisory panel when the API key is configured. Configure it via:
+
+1. **Environment variable** (preferred for development):
+   ```bash
+   export OPENJEV_API_KEY="your-api-key-here"
+   ```
+
+2. **Info.plist** (for production builds):
+   Add a key `OPENJEV_API_KEY` with your API key string value.
+
+3. **Build configuration** (recommended for team setups):
+   Create a `.xcconfig` file and reference it in Xcode project settings.
+
+The advisory panel sends the current survey state and rule results to `https://api.openjev.sh/v1/systemone` with model `openjev`. It asks three typed questions:
+- `visit_ready` (type: noul) — Is the survey ready for a Base engineer visit?
+- `next_action` (type: choice) — proceed | need_more_photos | conflict
+- `blocking_gap` (type: choice) — footprint | transfer_switch | ocr | photos | form | none
+
+The advisory is strictly guidance and does NOT override the measured green/amber/red placement color from EligibilityRule. The panel gracefully hides when the key is not configured and shows "advisory unavailable" on network errors, 401 unauthorized, or timeouts.
+
+To test without a real key, the app compiles and runs normally. The advisory panel simply won't appear on Review.
 
 ## Next three tasks
 

@@ -11,6 +11,9 @@ struct ReviewView: View {
             VStack(alignment: .leading, spacing: 16) {
                 disclaimer
                 toneCard
+                if store.openJEVClient.apiKey != nil {
+                    OpenJEVAdvisoryView(session: store.session, client: store.openJEVClient)
+                }
                 propertySection
                 electricalSection
                 placementSection

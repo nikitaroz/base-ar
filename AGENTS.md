@@ -16,6 +16,7 @@ The Xcode target is `BaseAR`. The home-screen name is Base Site Survey.
 - Apple frameworks only: SwiftUI, ARKit, RealityKit, Vision/VisionKit where needed, Core Location, and standard camera APIs.
 - Target a physical iPhone. AR placement needs a device; the simulator can walk the survey without world tracking.
 - No backend, accounts, external datasets, or third-party dependencies.
+- **OpenJEV exception:** Optional advisory via HTTPS to `api.openjev.sh`. This is strictly advisory guidance that does NOT override measured rule-based checks. The feature is feature-flagged and gracefully degrades when the API key is not configured or the service is unavailable.
 - Do not add ERCOT data, satellite imagery, automatic equipment detection, a Base integration, or production-grade permitting logic unless a later task explicitly asks for it.
 - GPS is the phone’s property fix (latitude, longitude, timestamp, reported horizontal accuracy) when location permission is granted. Do not describe it as the precise battery position.
 
@@ -54,6 +55,8 @@ Configurable Base guidance (Austin):
 
 The placement preview is **green** only when every required check has measured evidence and passes. **Amber** means unknown. **Red** means an observed conflict.
 
+**OpenJEV advisory:** The Review screen shows an optional OpenJEV advisory panel when the API key is configured. This panel sends survey state and current BaseRuleSet pass/conflict/unknown results to `api.openjev.sh/v1/systemone` with model `openjev`, asking typed questions about visit readiness, next action, and priority gaps. The advisory is strictly guidance and does NOT override the measured green/amber/red from EligibilityRule. The panel gracefully hides or shows "advisory unavailable" when offline, unauthorized, or timed out.
+
 Official references:
 
 - https://www.basepowercompany.com/specs/core
@@ -80,7 +83,7 @@ Base’s product filters stay on the survey for a person to read. Renters are wa
 - `BaseAR/Electrical` — meter and breaker capture, amperage, OCR hook
 - `BaseAR/Placement` — AR placement, battery geometry, measurements
 - `BaseAR/Rules` — `EligibilityRule`, `BaseRuleSet`
-- `BaseAR/Review` — review screen and JSON export
+- `BaseAR/Review` — review screen, JSON export, and optional OpenJEV advisory
 - `BaseAR/Location` — one-shot property location
 
 See `README.md` for device setup, what already runs, and what is still stubbed.

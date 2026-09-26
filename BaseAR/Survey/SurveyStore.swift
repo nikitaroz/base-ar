@@ -22,13 +22,15 @@ final class SurveyStore {
     private let exporter: any SurveyExporting
     private let recognizer: any MeterNumberRecognizing
     private let locationProvider = PropertyLocationProvider()
+    let openJEVClient: OpenJEVClient
 
     init(
         propertyIdentifier: String,
         measurer: any PlacementMeasuring = CorePlacementMeasurer(),
         evaluator: any SurveyEvaluating = BaseSurveyEvaluator(),
         exporter: any SurveyExporting = JSONSurveyExporter(),
-        recognizer: any MeterNumberRecognizing = UnimplementedMeterNumberRecognizer()
+        recognizer: any MeterNumberRecognizing = UnimplementedMeterNumberRecognizer(),
+        openJEVClient: OpenJEVClient = OpenJEVClient(apiKey: Self.openJEVAPIKey())
     ) throws {
         let session = SurveySession.new(propertyIdentifier: propertyIdentifier)
         self.session = session
@@ -36,6 +38,7 @@ final class SurveyStore {
         self.evaluator = evaluator
         self.exporter = exporter
         self.recognizer = recognizer
+        self.openJEVClient = openJEVClient
         directory = try Self.makeDirectory(id: session.id)
         locationProvider.onFix = { [weak self] fix in
             self?.locationStatusMessage = nil
@@ -240,5 +243,16 @@ final class SurveyStore {
             .appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+    
+    /// Read OpenJEV API key from environment or Info.plist
+    private static func openJEVAPIKey() -> String? {
+        if let envKey = ProcessInfo.processInfo.environment["OPENJEV_API_KEY"], !envKey.isEmpty {
+            return envKey
+        }
+        if let plistKey = Bundle.main.object(forInfoDictionaryKey: "OPENJEV_API_KEY") as? String, !plistKey.isEmpty {
+            return plistKey
+        }
+        return nil
     }
 }

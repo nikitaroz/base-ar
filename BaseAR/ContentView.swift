@@ -46,13 +46,13 @@ struct ContentView: View {
     @ViewBuilder
     private func hubStack(store: SurveyStore) -> some View {
         NavigationStack(path: $path) {
-            GuidedSurveyView(store: store) { route in
+            SimplifiedSurveyFlow(store: store) { route in
                 path.append(route)
             }
             .navigationDestination(for: HubRoute.self) { route in
                 switch route {
                 case .guide:
-                    GuidedSurveyView(store: store) { path.append($0) }
+                    SimplifiedSurveyFlow(store: store) { path.append($0) }
                 case .home:
                     HomeInformationView(store: store)
                 case .meter:

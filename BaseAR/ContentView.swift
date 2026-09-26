@@ -1,6 +1,7 @@
 import SwiftUI
 
 private enum RootPhase {
+    case splash
     case welcome
     case hub
 }
@@ -14,30 +15,40 @@ enum HubRoute: Hashable {
 }
 
 struct ContentView: View {
-    @State private var phase: RootPhase = .welcome
+    @State private var phase: RootPhase = .splash
     @State private var store: SurveyStore?
     @State private var path = NavigationPath()
     @State private var startError: String?
+    @Namespace private var brandNamespace
 
     var body: some View {
         Group {
             switch phase {
+            case .splash:
+                SplashView(namespace: brandNamespace)
             case .welcome:
-                WelcomeView {
+                WelcomeView(namespace: brandNamespace) {
                     beginSurvey()
                 }
-                .transition(.opacity)
             case .hub:
                 if let store {
                     hubStack(store: store)
+                        .transition(.opacity)
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.35), value: phase)
+        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: phase)
         .alert("Could not start the survey", isPresented: startErrorPresented) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(startError ?? "")
+        }
+        .task {
+            guard phase == .splash else { return }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
+                phase = .welcome
+            }
         }
     }
 
@@ -103,10 +114,40 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Splash
+
+private struct SplashView: View {
+    var namespace: Namespace.ID
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            Color(.systemBackground).ignoresSafeArea()
+            Image("BrandMark")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 148, height: 148)
+                .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+                .shadow(color: Color.accentColor.opacity(0.35), radius: 24, y: 8)
+                .matchedGeometryEffect(id: "brand", in: namespace)
+                .scaleEffect(appeared ? 1.0 : 0.7)
+                .opacity(appeared ? 1.0 : 0.0)
+                .onAppear {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.75)) {
+                        appeared = true
+                    }
+                }
+                .accessibilityLabel("Base Site Survey")
+        }
+    }
+}
+
 // MARK: - Welcome
 
 private struct WelcomeView: View {
+    var namespace: Namespace.ID
     var onContinue: () -> Void
+    @State private var contentAppeared = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -118,21 +159,26 @@ private struct WelcomeView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 88, height: 88)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .matchedGeometryEffect(id: "brand", in: namespace)
                         .accessibilityHidden(true)
-                    Text("Base Site Survey")
-                        .font(.largeTitle.bold())
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Add your home details, take two electrical photos, and preview where a Base Core could sit outside.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(SurveySession.prototypeDisclaimer)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Group {
+                        Text("Base Site Survey")
+                            .font(.largeTitle.bold())
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Add your home details, take two electrical photos, and preview where a Base Core could sit outside.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(SurveySession.prototypeDisclaimer)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .opacity(contentAppeared ? 1 : 0)
+                    .offset(y: contentAppeared ? 0 : 12)
                     Spacer(minLength: 48)
                     Button(action: onContinue) {
                         Text("Start survey")
@@ -140,12 +186,18 @@ private struct WelcomeView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+                    .opacity(contentAppeared ? 1 : 0)
                 }
                 .padding(28)
                 .frame(maxWidth: .infinity, minHeight: proxy.size.height)
             }
         }
         .background(Color(.systemBackground))
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.45).delay(0.15)) {
+                contentAppeared = true
+            }
+        }
     }
 }
 
@@ -154,6 +206,7 @@ private struct WelcomeView: View {
 private struct SurveyHubView: View {
     var store: SurveyStore
     var onOpen: (HubRoute) -> Void
+    @State private var tilesAppeared = false
 
     var body: some View {
         ScrollView {
@@ -164,40 +217,49 @@ private struct SurveyHubView: View {
                     Text("\(completedSectionCount) of 4 sections complete")
                         .font(.headline)
                     ProgressView(value: Double(completedSectionCount), total: 4)
+                        .animation(.easeOut(duration: 0.4), value: completedSectionCount)
                     Text("Complete these in any order. Your answers save as you go.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
 
                 VStack(spacing: 14) {
-                    hubTile(
-                        title: "Home and personal info",
-                        subtitle: "Name, address, and home setup",
-                        symbol: "house.fill",
-                        progress: homeProgress,
-                        route: .home
-                    )
-                    hubTile(
-                        title: "Electrical meter",
-                        subtitle: "A photo and the meter number",
-                        symbol: "gauge.with.dots.needle.33percent",
-                        progress: meterProgress,
-                        route: .meter
-                    )
-                    hubTile(
-                        title: "Breaker box",
-                        subtitle: "A photo and the breaker size",
-                        symbol: "bolt.fill",
-                        progress: breakerProgress,
-                        route: .breaker
-                    )
-                    hubTile(
-                        title: "Site measurements",
-                        subtitle: "Mark the meter, panel, and gas, then measure distances.",
-                        symbol: "arkit",
-                        progress: placementProgress,
-                        route: .placement
-                    )
+                    animatedTile(index: 0) {
+                        hubTile(
+                            title: "Home and personal info",
+                            subtitle: "Name, address, and home setup",
+                            symbol: "house.fill",
+                            progress: homeProgress,
+                            route: .home
+                        )
+                    }
+                    animatedTile(index: 1) {
+                        hubTile(
+                            title: "Electrical meter",
+                            subtitle: "A photo and the meter number",
+                            symbol: "gauge.with.dots.needle.33percent",
+                            progress: meterProgress,
+                            route: .meter
+                        )
+                    }
+                    animatedTile(index: 2) {
+                        hubTile(
+                            title: "Breaker box",
+                            subtitle: "A photo and the breaker size",
+                            symbol: "bolt.fill",
+                            progress: breakerProgress,
+                            route: .breaker
+                        )
+                    }
+                    animatedTile(index: 3) {
+                        hubTile(
+                            title: "Site measurements",
+                            subtitle: "Mark the meter, panel, and gas, then measure distances.",
+                            symbol: "arkit",
+                            progress: placementProgress,
+                            route: .placement
+                        )
+                    }
                 }
 
                 Button {
@@ -217,6 +279,18 @@ private struct SurveyHubView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            guard !tilesAppeared else { return }
+            tilesAppeared = true
+        }
+    }
+
+    @ViewBuilder
+    private func animatedTile<Content: View>(index: Int, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .opacity(tilesAppeared ? 1 : 0)
+            .offset(y: tilesAppeared ? 0 : 16)
+            .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(0.08 * Double(index)), value: tilesAppeared)
     }
 
     private var homeProgress: StepProgress {

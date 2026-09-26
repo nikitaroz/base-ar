@@ -24,6 +24,8 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     var ruleResults: [RuleResult]
     var missingInformation: [String]
     var placementTone: PlacementTone
+    /// Battery model selected for AR preview. Always "base-core" after commit 71ac660.
+    var selectedBatteryModelId: String = "base-core"
     /// Fixed labels so a Base engineer reading the JSON knows units without inferring.
     var units: SurveyUnits
     /// App/device provenance for support and reproducibility.

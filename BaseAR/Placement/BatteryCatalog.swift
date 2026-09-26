@@ -21,4 +21,11 @@ enum BatteryCatalog {
         heightInches: 35.9,
         depthInches: 22
     )
+
+    static let all: [BatteryModel] = [baseCore]
+
+    static func model(for id: String?) -> BatteryModel {
+        guard let id, let match = all.first(where: { $0.id == id }) else { return baseCore }
+        return match
+    }
 }

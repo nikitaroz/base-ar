@@ -901,6 +901,7 @@ private struct MeshDrawBuffers: Sendable {
 private struct ClassifiedMeshUpdate: Sendable {
     var id: UUID
     var samples: [ClassifiedMeshSample]
+    var cloud: MeshPointCloudChunk?
     var draw: MeshDrawBuffers?
     var cloud: MeshPointCloudChunk
 }
@@ -1396,6 +1397,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return scene
         }
 
+        func pointCloudPLYData() -> Data? {
+            PointCloudPLY.data(from: Array(meshClouds.values))
+        }
+
+        var hasExportableMesh: Bool {
+            meshClouds.values.contains { !$0.positions.isEmpty }
+        }
+
         func emit() {
             placeDerivedWorkingSpace()
             var snapshot = makeSnapshot()
@@ -1579,7 +1588,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func upsertMesh(_ updates: [ClassifiedMeshUpdate]) {
             for update in updates {
                 meshSamples[update.id] = update.samples
-                meshClouds[update.id] = update.cloud
+                if let cloud = update.cloud {
+                    meshClouds[update.id] = cloud
+                }
                 if let draw = update.draw {
                     pendingMeshDraws[update.id] = draw
                 }
@@ -3192,7 +3203,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 let world = transform * SIMD4(local.x, local.y, local.z, 1)
                 worldPositions.append(SIMD3(world.x, world.y, world.z))
             }
-            let colors = cache.colors(anchor: mesh.identifier, local: positions, world: worldPositions, frame: frame).map { $0 ?? SIMD3<UInt8>(200, 200, 200) }
+            let colors = Array(repeating: SIMD3<UInt8>(200, 200, 200), count: vertexCount)
             var triangles: [UInt32] = []
             triangles.reserveCapacity(faceCount * 3)
 
@@ -3237,8 +3248,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return ClassifiedMeshUpdate(
                 id: mesh.identifier,
                 samples: samples,
-                draw: MeshDrawBuffers(positions: positions, wall: wall, floor: floor, other: other),
-                cloud: MeshPointCloudChunk(positions: worldPositions, colors: colors, triangles: triangles)
+                cloud: MeshPointCloudChunk(positions: worldPositions, colors: colors, triangles: triangles),
+                draw: MeshDrawBuffers(positions: positions, wall: wall, floor: floor, other: other)
             )
         }
 

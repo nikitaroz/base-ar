@@ -289,6 +289,10 @@ final class SurveyStore {
         return evaluator.evaluate(copy)
     }
 
+    func setSelectedBatteryModel(_ modelId: String) {
+        session.selectedBatteryModelId = modelId
+    }
+
     func commitPlacement(_ snapshot: PlacementSceneSnapshot) {
         guard snapshot.batteryModelID == session.selectedBatteryModelId else { return }
         let capture = session.placement.captureIdentity

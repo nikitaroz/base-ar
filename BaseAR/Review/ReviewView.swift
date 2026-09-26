@@ -11,6 +11,7 @@ struct ReviewView: View {
     @State private var electricalExpanded = false
     @State private var placementExpanded = false
     @State private var checksExpanded = false
+    @State private var jevClient = TypeSafeJevClient()
 
     var body: some View {
         ScrollView {
@@ -21,6 +22,7 @@ struct ReviewView: View {
                 if !nextActions.isEmpty {
                     nextActionsCard
                 }
+                TypeSafeJevAdvisoryView(session: store.session, client: jevClient)
                 details
                 jsonPreviewSection
                 shareSection

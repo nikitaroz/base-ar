@@ -190,8 +190,8 @@ private struct SurveyHubView: View {
                         route: .breaker
                     )
                     hubTile(
-                        title: "Battery placement",
-                        subtitle: "See where it could go",
+                        title: "Site measurements",
+                        subtitle: "Mark the meter, panel, and gas, then measure distances.",
                         symbol: "arkit",
                         progress: placementProgress,
                         route: .placement

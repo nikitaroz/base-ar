@@ -141,9 +141,9 @@ struct ReviewView: View {
                 }
             }
 
-            detailCard(title: "Placement", symbol: "arkit", isExpanded: $placementExpanded) {
+            detailCard(title: "Site measurements", symbol: "arkit", isExpanded: $placementExpanded) {
                 placementDetails
-                editButton("Edit placement", route: .placement)
+                editButton("Edit site measurements", route: .placement)
             }
 
             detailCard(title: "Eligibility checks", symbol: "checklist", isExpanded: $checksExpanded) {
@@ -351,7 +351,7 @@ struct ReviewView: View {
             ReviewAction(route: .home, title: "Home and personal info", symbol: "house.fill", count: homeMissingCount),
             ReviewAction(route: .meter, title: "Electrical meter", symbol: "gauge.with.dots.needle.33percent", count: meterMissingCount),
             ReviewAction(route: .breaker, title: "Breaker box", symbol: "bolt.fill", count: breakerMissingCount),
-            ReviewAction(route: .placement, title: "Battery placement", symbol: "arkit", count: placementMissingCount)
+            ReviewAction(route: .placement, title: "Site measurements", symbol: "arkit", count: placementMissingCount)
         ].filter { $0.count > 0 }
     }
 

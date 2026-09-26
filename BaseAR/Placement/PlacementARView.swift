@@ -104,6 +104,7 @@ struct PlacementARView: View {
     @State private var pendingSave: PlacementSaveRequest? = nil
     @State private var statusMessage: String? = nil
     @State private var trackingMessage: String? = nil
+    @State private var equipmentMessage: String? = nil
     @State private var isVisible = false
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
@@ -231,6 +232,7 @@ struct PlacementARView: View {
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
+                        onEquipmentStatus: { equipmentMessage = $0 },
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
@@ -373,6 +375,11 @@ struct PlacementARView: View {
             }
             if let trackingMessage {
                 Text(trackingMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            } else if let equipmentMessage {
+                Text(equipmentMessage)
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -806,6 +813,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
+    var onEquipmentStatus: (String?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
 
     func makeUIView(context: Context) -> ARView {
@@ -833,6 +841,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             onScreenshot: onScreenshot,
             onFailure: onFailure,
             onTrackingStatus: onTrackingStatus,
+            onEquipmentStatus: onEquipmentStatus,
             onCoachingActiveChange: onCoachingActiveChange
         )
     }
@@ -884,6 +893,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var onScreenshot: (@MainActor (UUID, UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
     private var onTrackingStatus: ((String?) -> Void)?
+    private var onEquipmentStatus: ((String?) -> Void)?
+    private var lastEquipmentMessage: String?
+    private var lastEquipmentGeneration: UInt64?
     private var onCoachingActiveChange: ((Bool) -> Void)?
     private var onGuide: ((ScanGuide) -> Void)?
     private var onLiveFeet: ((Double?) -> Void)?
@@ -1041,6 +1053,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
+            onEquipmentStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void
         ) {
             self.mode = mode
@@ -1068,6 +1081,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onScreenshot = onScreenshot
             self.onFailure = onFailure
             self.onTrackingStatus = onTrackingStatus
+            self.onEquipmentStatus = onEquipmentStatus
             self.onCoachingActiveChange = onCoachingActiveChange
             if startedScanning, !reportedScanLoadError, let loadError = equipmentBridge.detector.loadError {
                 reportedScanLoadError = true
@@ -1110,6 +1124,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         func pauseIfIdle() {
             guard isPrepared else { return }
+            equipmentBridge.trackingInterrupted()
             cancelScreenshot()
             isRunning = false
             callbackEpoch.withLock { $0 = UUID() }
@@ -1129,7 +1144,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onScreenshot = nil
             onFailure = nil
             onTrackingStatus = nil
-            onGuide = nil
+            onEquipmentStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
             cancelScreenshot()
@@ -1166,6 +1181,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func coachingOverlayViewDidRequestSessionReset(_ coachingOverlayView: ARCoachingOverlayView) {
+            equipmentBridge.trackingInterrupted()
             // Do not reset world tracking underneath existing evidence.
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
@@ -1469,6 +1485,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
+            equipmentBridge.trackingInterrupted()
             let message = error.localizedDescription
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
@@ -1479,6 +1496,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         nonisolated func sessionWasInterrupted(_ session: ARSession) {
+            equipmentBridge.trackingInterrupted()
             let epoch = callbackEpoch.withLock { $0 }
             Task { @MainActor in
                 guard self.callbackEpoch.withLock({ $0 }) == epoch else { return }
@@ -1784,6 +1802,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         @objc func tickAim() {
             let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
             equipmentBridge.setViewport(arView.bounds.size, orientation: interface)
+            updateEquipmentStatus()
             if let packet = equipmentBridge.takeLatest() {
                 applyScan(packet)
             }
@@ -2137,80 +2156,47 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             emit()
         }
 
-        /// Drops the meter lock and starts the walk over. The panel lock goes too, so it cannot block the next meter.
-        func clearMeterForRescan() {
-            guard meterLock.locked || meterWallHit != nil else { return }
-            let meterPoint = meterWallHit?.position ?? meterGroundPosition ?? .zero
-            if panelLock.locked || panelWallHit != nil {
-                clearEquipmentLock(.panel)
+        private func clearTransientEquipmentObservations() {
+            boxOverlay.items = []
+            if !meterLock.locked { meterLock = EquipmentLock() }
+            if !panelLock.locked { panelLock = EquipmentLock() }
+        }
+
+        private func publishEquipmentStatus(_ message: String?) {
+            guard message != lastEquipmentMessage else { return }
+            lastEquipmentMessage = message
+            onEquipmentStatus?(message)
+        }
+
+        private func updateEquipmentStatus() {
+            guard scanningEquipment, isRunning, !coachingActive else {
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus(nil)
+                return
             }
-            clearEquipmentLock(.meter)
-            scanGuide = ScanGuide()
-            banRelock(.electricMeter, point: meterPoint)
-            resetHold()
-            onGuide?(scanGuide)
-        }
-
-        /// Drops the panel lock and its step-back. The meter walk stays.
-        func clearPanelForRescan() {
-            guard panelLock.locked || panelWallHit != nil else { return }
-            let point = panelWallHit?.position ?? panelGroundPosition ?? .zero
-            clearEquipmentLock(.panel)
-            scanGuide.panelSteps = 0
-            scanGuide.panelLookedLeft = false
-            scanGuide.panelLookedRight = false
-            scanGuide.panelLookedAlong = false
-            scanGuide.panelFallbackSectors = 0
-            if scanGuide.meterSurroundDone {
-                scanGuide.panelWalkNeeded = true
+            guard let observation = equipmentBridge.latestObservation else {
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus(trackingBlockedMessage == nil
+                    ? "Waiting for a fresh equipment scan. You can also mark equipment manually." : nil)
+                return
             }
-            banRelock(.breakerPanel, point: point)
-            resetHold()
-            onGuide?(scanGuide)
-        }
-
-        /// Fences and side yards can stop a 10-step walk-back. Finishes the current step-back as is.
-        func skipStepBack() {
-            var next = scanGuide
-            if meterLock.locked, !next.meterSurroundDone {
-                next.meterSteps = ScanGuide.wideLookSteps
-                next.meterLookedLeft = true
-                next.meterLookedRight = true
-                next.meterLookedAlong = true
-                next.meterWideLookDone = true
-                next.panelWalkNeeded = !panelLock.locked
-            } else if panelLock.locked, next.panelWalkNeeded, !next.panelSurroundDone {
-                next.panelSteps = ScanGuide.wideLookSteps
-                next.panelLookedLeft = true
-                next.panelLookedRight = true
-                next.panelLookedAlong = true
+            if observation.generation != lastEquipmentGeneration {
+                clearTransientEquipmentObservations()
+                lastEquipmentGeneration = observation.generation
             }
-            guard next != scanGuide else { return }
-            scanGuide = next
-            onGuide?(next)
-        }
-
-        private func banRelock(_ kind: EquipmentKind, point: SIMD3<Float>) {
-            relockBan = (kind, point)
-        }
-
-        /// The cleared object stays banned while its box is still in frame. Aiming elsewhere lifts the ban.
-        private func relockAllowed(_ kind: EquipmentKind, point: SIMD3<Float>) -> Bool {
-            guard let ban = relockBan, ban.kind == kind else { return true }
-            guard simd_distance(ban.point, point) < 0.45 else {
-                relockBan = nil
-                return true
+            switch observation.status {
+            case .success:
+                publishEquipmentStatus(nil)
+            case .noDetections:
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus("No meter or panel detected in this frame. Reframe or mark it manually.")
+            case .modelUnavailable, .inferenceFailed, .frameUnavailable:
+                clearTransientEquipmentObservations()
+                publishEquipmentStatus("Automatic equipment scanning is unavailable. Mark the meter and panel manually.")
             }
-            return false
         }
 
-        private func releaseRelockBanIfUnseen(_ kinds: Set<EquipmentKind>) {
-            guard equipmentBridge.detector.loadError == nil else { return }
-            guard let ban = relockBan, !kinds.contains(ban.kind) else { return }
-            relockBan = nil
-        }
-
-        /// Detector boxes are only the latest frame. A lock stores the wall position and does not leave a cube.
+        /// Boxes stay on the camera. A hit counts toward a lock only after it lands on a wall or, failing that, LiDAR depth.
         private func applyScan(_ packet: EquipmentScanFrame) {
             guard isRunning, scanningEquipment, !coachingActive, trackingAllowsConfirmation(report: false) else {
                 boxOverlay.items = []
@@ -2221,14 +2207,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
-            // Far away, the meter and panel look alike. One box scored as both is one object; keep the stronger label.
-            if let meter = best[.electricMeter], let panel = best[.breakerPanel],
-               Self.overlap(meter.boundingBox, panel.boundingBox) > 0.3 {
-                best[meter.confidence >= panel.confidence ? .breakerPanel : .electricMeter] = nil
-            }
-            pendingScan = packet
-            pendingDetections = Array(best.values)
-            releaseRelockBanIfUnseen(Set(best.keys))
+            // A lock requires a continuous run of usable observations, not unrelated
+            // hits accumulated across a failure, absence or generation change.
+            if best[.electricMeter] == nil, !meterLock.locked { meterLock = EquipmentLock() }
+            if best[.breakerPanel] == nil, !panelLock.locked { panelLock = EquipmentLock() }
+            var items: [EquipmentBoxOverlay.Item] = []
             var lockedSomething = false
             // Weak boxes still draw, but only confident ones count toward a lock.
             // Stepping back leaves holdTarget nil, so a box in view cannot lock a random wall.

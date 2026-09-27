@@ -21,6 +21,7 @@ struct ReviewView: View {
                     nextActionsCard
                 }
                 details
+                TypeSafeJevAdvisoryView(session: store.session)
                 jsonPreviewSection
                 shareSection
             }

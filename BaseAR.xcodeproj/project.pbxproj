@@ -26,6 +26,8 @@
 		B1000000000000000000000C /* SurveyEvaluating.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000C /* SurveyEvaluating.swift */; };
 		B1000000000000000000000D /* SurveyExporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000D /* SurveyExporting.swift */; };
 		B1000000000000000000000E /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000E /* ReviewView.swift */; };
+		F9000000000000000000C001 /* TypeSafeJevClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000C001 /* TypeSafeJevClient.swift */; };
+		F9000000000000000000C002 /* TypeSafeJevAdvisoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */; };
 		B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000F /* PropertyLocationProvider.swift */; };
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
@@ -71,6 +73,8 @@
 		B2000000000000000000000C /* SurveyEvaluating.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyEvaluating.swift; sourceTree = "<group>"; };
 		B2000000000000000000000D /* SurveyExporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyExporting.swift; sourceTree = "<group>"; };
 		B2000000000000000000000E /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
+		FA000000000000000000C001 /* TypeSafeJevClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevClient.swift; sourceTree = "<group>"; };
+		FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevAdvisoryView.swift; sourceTree = "<group>"; };
 		B2000000000000000000000F /* PropertyLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationProvider.swift; sourceTree = "<group>"; };
 		B20000000000000000000010 /* AddressCompleter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressCompleter.swift; sourceTree = "<group>"; };
 		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
@@ -211,6 +215,8 @@
 			children = (
 				B2000000000000000000000D /* SurveyExporting.swift */,
 				B2000000000000000000000E /* ReviewView.swift */,
+				FA000000000000000000C001 /* TypeSafeJevClient.swift */,
+				FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */,
 			);
 			path = Review;
 			sourceTree = "<group>";
@@ -356,6 +362,8 @@
 				B1000000000000000000000C /* SurveyEvaluating.swift in Sources */,
 				B1000000000000000000000D /* SurveyExporting.swift in Sources */,
 				B1000000000000000000000E /* ReviewView.swift in Sources */,
+				F9000000000000000000C001 /* TypeSafeJevClient.swift in Sources */,
+				F9000000000000000000C002 /* TypeSafeJevAdvisoryView.swift in Sources */,
 				B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */,
 				B10000000000000000000010 /* AddressCompleter.swift in Sources */,
 				B10000000000000000000011 /* PropertyLocationMap.swift in Sources */,

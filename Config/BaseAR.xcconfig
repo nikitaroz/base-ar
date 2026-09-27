@@ -1,5 +1,7 @@
 // Shared defaults. Developers override these in the ignored Local.xcconfig.
 DEVELOPMENT_TEAM =
 PRODUCT_BUNDLE_IDENTIFIER = com.example.BaseAR
+// Optional TypeSafe Jev advisory on Review. Leave empty here; set it only in Local.xcconfig. Never commit a key.
+TYPESAFE_API_KEY =
 
 #include? "Local.xcconfig"

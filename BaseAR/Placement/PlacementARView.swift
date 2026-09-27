@@ -42,6 +42,9 @@ private enum CoachTip: String {
     case slideToWall = "Slide it closer to the wall"
     case dragBattery = "Drag to move, then tap Next"
     case tapNext = "Tap Next"
+    case tapMeter = "Tap the meter to mark it"
+    case tapPanel = "Tap the panel to mark it"
+    case cantSee = "Can't see anything. Point the back camera at the wall"
     case located = "Located"
     case scanned = "Scanned"
 
@@ -64,6 +67,8 @@ private enum CoachTip: String {
         case .slideToWall: "hand.draw.fill"
         case .dragBattery: "hand.draw.fill"
         case .tapNext: "checkmark.circle.fill"
+        case .tapMeter, .tapPanel: "hand.tap.fill"
+        case .cantSee: "eye.slash.fill"
         case .located, .scanned: "checkmark.seal.fill"
         }
     }
@@ -160,6 +165,10 @@ struct PlacementARView: View {
     @State private var manualMark: PlacementTarget? = nil
     @State private var liveFeetText: String? = nil
     @State private var hasStartedAR = true
+    /// The detector had its chance; a tap on the screen now marks the meter or panel.
+    @State private var showsTapHint = false
+    /// Tracking never started, which almost always means the back lens is covered or facing a blank surface.
+    @State private var cameraSeesNothing = false
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -276,14 +285,28 @@ struct PlacementARView: View {
         if let statusMessage {
             return Feedback(text: statusMessage, symbol: "exclamationmark.octagon.fill", tint: .red)
         }
+        if cameraSeesNothing, trackingMessage != nil {
+            return Feedback(.cantSee, tint: .orange)
+        }
         if let trackingMessage {
             return CoachTip(rawValue: trackingMessage).map { Feedback($0, tint: .orange) }
                 ?? Feedback(text: trackingMessage, symbol: "exclamationmark.triangle.fill", tint: .orange)
         }
         if let flashTip { return Feedback(flashTip, tint: .green) }
+        if let tapHint { return Feedback(tapHint) }
         if let equipmentTip { return Feedback(equipmentTip) }
         if let motionTip { return Feedback(motionTip) }
         return nil
+    }
+
+    /// After a while on Find the meter/panel, say that a tap marks it. The detector keeps looking meanwhile.
+    private var tapHint: CoachTip? {
+        guard showsTapHint, step == .scan, manualMark == nil else { return nil }
+        switch cue {
+        case .findMeter: return .tapMeter
+        case .findPanel: return .tapPanel
+        case .stepBack, .stepBackFromPanel, .ready: return nil
+        }
     }
 
     /// Center-dot lock only while the prompt is asking for one object. Stepping back should not lock a random wall.
@@ -379,7 +402,30 @@ struct PlacementARView: View {
             guard statusMessage != nil, (try? await Task.sleep(for: .seconds(4))) != nil else { return }
             statusMessage = nil
         }
+        // No buttons on the scan: offer tap-to-mark once the detector has had a fair try on this target.
+        .task(id: scanKey) {
+            showsTapHint = false
+            guard step == .scan, cue == .findMeter || cue == .findPanel,
+                  (try? await Task.sleep(for: .seconds(12))) != nil else { return }
+            showsTapHint = true
+        }
+        // The top line moves on by itself once the meter, panel, and look-around are done.
+        .task(id: scanKey) {
+            guard step == .scan, manualMark == nil, cue == .ready,
+                  (try? await Task.sleep(for: .seconds(1.2))) != nil,
+                  step == .scan, cue == .ready else { return }
+            goForward()
+        }
+        // Initializing for this long with frames arriving means the lens sees nothing to track.
+        .task(id: trackingMessage) {
+            cameraSeesNothing = false
+            guard trackingMessage == CoachTip.holdStill.rawValue || trackingMessage == CoachTip.moreDetail.rawValue,
+                  (try? await Task.sleep(for: .seconds(5))) != nil else { return }
+            cameraSeesNothing = true
+        }
     }
+
+    private var scanKey: String { "\(step)-\(cue)" }
 
     private var arScreen: some View {
         let tone = liveAssessment.placementTone
@@ -646,28 +692,10 @@ struct PlacementARView: View {
         }
     }
 
+    /// The scan has no buttons: it advances on its own, a tap marks a missed meter or panel,
+    /// and a swipe from the left edge leaves (leaving commits the scan, as Skip used to).
     private var scanControls: some View {
-        VStack(spacing: 8) {
-            Button("Next", action: goForward)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(cue != .ready)
-            if let missedTarget {
-                Button(missedTarget == .meter ? "Mark meter yourself" : "Mark panel yourself") {
-                    manualMark = missedTarget
-                }
-                .font(.footnote)
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-            }
-            Button("Skip for now") {
-                cancelPendingSave()
-                commitLiveScene()
-                onContinue()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-        }
+        EmptyView()
     }
 
     private var finishControls: some View {
@@ -709,14 +737,6 @@ struct PlacementARView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
-
-            Button("Skip for now") {
-                cancelPendingSave()
-                commitLiveScene()
-                onContinue()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
 
             Button("Back", action: goBack)
                 .buttonStyle(.bordered)
@@ -927,7 +947,8 @@ struct PlacementARView: View {
     }
 
     private var placementMode: PlacementTarget {
-        if step == .scan, let manualMark { return manualMark }
+        // During the scan a tap marks whichever of the meter or panel is still missing.
+        if step == .scan { return manualMark ?? missedTarget ?? .battery }
         if step == .gas { return .gasMeter }
         return .battery
     }
@@ -936,10 +957,10 @@ struct PlacementARView: View {
         step != .finish && !isSaving && !departingAfterCapture
     }
 
-    /// Taps place a mark. The scan itself does not use the center dot.
+    /// Taps place a mark. The scan itself does not use the center dot; a tap there marks the missing meter or panel.
     private var tapEnabled: Bool {
         switch step {
-        case .scan: manualMark != nil
+        case .scan: manualMark != nil || missedTarget != nil
         case .gas, .battery: true
         case .finish: false
         }

@@ -364,6 +364,12 @@ struct ReviewView: View {
             LabeledContent("Existing whole-home battery", value: yesNo(store.session.electrical.hasExistingWholeHomeBattery))
             LabeledContent("Planned batteries", value: batteryCountText)
             LabeledContent("Gas meter outside", value: gasAnswerText)
+            BatteryCountDecisionSummary(decision: BatteryCountDecision.make(
+                plannedCount: store.session.electrical.plannedBatteryCount,
+                hasSolar: store.session.electrical.hasSolar,
+                panelBusRatingAmps: store.session.electrical.panelBusRatingAmps,
+                propertyIdentifier: store.session.propertyIdentifier
+            ))
         }
     }
 
@@ -390,6 +396,11 @@ struct ReviewView: View {
                 .foregroundStyle(.secondary)
             if store.placementController?.hasExportableMesh == true {
                 Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Surfaces carry the camera's colors (light gray where the camera never saw them), and each face is labeled wall, floor, window, and so on. The measurements are drawn in: green passes, red conflicts, amber unknown.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if let frames = store.placementController?.keyframes.count, frames > 0 {
+                Text("Share includes a capture folder: \(frames) upright scan photos with LiDAR depth, in the same coordinates as scene.ply. capture/frames.json lists each camera pose and its intrinsics.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -452,7 +463,7 @@ struct ReviewView: View {
     }
 
     private var jsonPreview: String? {
-        guard let url = store.exportURLs.first(where: { $0.pathExtension == "json" }),
+        guard let url = store.surveyJSONURL,
               let data = try? Data(contentsOf: url),
               let text = String(data: data, encoding: .utf8) else { return nil }
         return text
@@ -475,8 +486,8 @@ struct ReviewView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             Text(store.placementController?.hasExportableMesh == true
-                ? "Shares the current responses, photos, missing-item list, and scene.ply. The survey is also saved locally as survey.json."
-                : "Shares the current responses, photos, and missing-item list. The survey is also saved locally as survey.json. A LiDAR mesh is included as scene.ply after the placement scan captures one.")
+                ? "Shares one zipped folder with survey.json, the photos, scene.ply, and the scan capture. The survey is also saved locally."
+                : "Shares one zipped folder with survey.json and the photos. The survey is also saved locally. A LiDAR mesh (scene.ply) and scan capture are added after the placement scan.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

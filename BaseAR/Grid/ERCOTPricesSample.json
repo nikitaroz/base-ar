@@ -1,0 +1,35 @@
+{
+  "sampleDate": "2026-08-14",
+  "zones": {
+    "LZ_AEN": {
+      "cheapHourPriceUSDPerMWh": 22.34,
+      "expensiveHourPriceUSDPerMWh": 187.42,
+      "cheapHourLabel": "3 AM",
+      "expensiveHourLabel": "6 PM"
+    },
+    "LZ_NORTH": {
+      "cheapHourPriceUSDPerMWh": 24.10,
+      "expensiveHourPriceUSDPerMWh": 215.60,
+      "cheapHourLabel": "3 AM",
+      "expensiveHourLabel": "6 PM"
+    },
+    "LZ_SOUTH": {
+      "cheapHourPriceUSDPerMWh": 21.50,
+      "expensiveHourPriceUSDPerMWh": 168.90,
+      "cheapHourLabel": "4 AM",
+      "expensiveHourLabel": "7 PM"
+    },
+    "LZ_HOUSTON": {
+      "cheapHourPriceUSDPerMWh": 28.75,
+      "expensiveHourPriceUSDPerMWh": 234.15,
+      "cheapHourLabel": "3 AM",
+      "expensiveHourLabel": "5 PM"
+    },
+    "LZ_WEST": {
+      "cheapHourPriceUSDPerMWh": 19.80,
+      "expensiveHourPriceUSDPerMWh": 145.30,
+      "cheapHourLabel": "3 AM",
+      "expensiveHourLabel": "7 PM"
+    }
+  }
+}

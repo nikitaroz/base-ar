@@ -1858,6 +1858,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated let equipmentBridge = EquipmentScanBridge()
         /// Camera colors for `scene.ply`, remembered per mesh anchor so a nudge of the anchor does not miss.
         nonisolated let meshColors = MeshColorCache()
+        /// Posed photos and depth from new viewpoints during the scan, zipped next to `scene.ply`.
+        nonisolated let keyframes = KeyframeRecorder()
         private let boxOverlay = EquipmentBoxOverlay(frame: .zero)
         private var meterGroundPosition: SIMD3<Float>?
         private var panelGroundPosition: SIMD3<Float>?
@@ -2034,7 +2036,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             hideWorldBoxesIfNeeded()
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
-            equipmentBridge.setEnabled(scanning && !coachingActive)
+            updateDetectorGate()
+            updateKeyframeGate()
             if !scanning {
                 clearPendingScan()
                 refreshEquipmentBoxes()
@@ -2120,6 +2123,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 self.aimDot.isHidden = true
                 self.holdReticle.isHidden = true
                 self.equipmentBridge.setEnabled(false)
+                self.updateKeyframeGate()
                 self.onCoachingActiveChange?(true)
             }
         }
@@ -2127,7 +2131,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
             Task { @MainActor in
                 self.coachingActive = false
-                self.equipmentBridge.setEnabled(self.scanningEquipment)
+                self.updateDetectorGate()
+                self.updateKeyframeGate()
                 self.onCoachingActiveChange?(false)
             }
         }
@@ -2291,6 +2296,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
             equipmentBridge.consider(frame)
+            keyframes.consider(frame)
             let message = Self.trackingMessage(for: frame.camera.trackingState)
             let changed = trackingNotice.withLock { current -> Bool in
                 guard current != message else { return false }
@@ -2464,6 +2470,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelMarker?.removeFromParent()
                 panelMarker = nil
                 panelGroundPosition = position
+                updateKeyframeGate()
             case .gasMeter:
                 gasMarker?.removeFromParent()
                 gasMarker = nil
@@ -2480,14 +2487,32 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterWallMarker = nil
                 meterWallHit = hit
                 meterLock.locked = true
+                keyframes.captureNext()
             case .panel:
                 panelWallMarker?.removeFromParent()
                 panelWallMarker = nil
                 panelWallHit = hit
                 panelLock.locked = true
+                keyframes.captureNext()
             default:
                 return
             }
+            updateKeyframeGate()
+        }
+
+        /// A home has one meter and one panel. Once the asked-for item is locked there is nothing left to find,
+        /// so the detector stops instead of boxing random objects for the rest of the session. A redo turns it back on.
+        private func updateDetectorGate() {
+            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && searchableTarget() != nil)
+        }
+
+        /// Scan photos start at the panel lock. Frames from the search before it are mostly ground and sky,
+        /// and would spend the frame budget before the look-around. The Live Survey stops the detector once both
+        /// are locked, so this does not wait on `scanningEquipment`: the gas and battery steps are the look-around.
+        /// Frames arrive only while the Live Survey's session runs.
+        private func updateKeyframeGate() {
+            let panelLocked = panelWallHit != nil || panelGroundPosition != nil
+            keyframes.setEnabled(!coachingActive && panelLocked)
         }
 
         private var worldBoxesHidden = false
@@ -2977,6 +3002,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.panelPosition = nil
                 scene.panelWallPosition = nil
                 scene.panelWallNormal = nil
+                updateKeyframeGate()
             case .battery, .gasMeter:
                 return
             }
@@ -2984,6 +3010,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             if let clearedScanCapture {
                 onScanCaptureCleared?(clearedScanCapture)
             }
+            updateDetectorGate()
             emit()
         }
 
@@ -3020,7 +3047,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             var best: [EquipmentKind: EquipmentDetection] = [:]
             // Weak boxes still draw. Only boxes at the lock score count toward a lock or a hold.
+            // A kind that is already locked has been found; there is only one per home. Its boxes elsewhere are
+            // false hits, and letting them win the tie-break below would hide the item still being searched for.
+            // A box on the locked item itself is still caught by the separation guard in `lockRejection`.
             for detection in packet.detections where detection.confidence >= EquipmentDetection.drawConfidence {
+                let alreadyLocked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
+                if alreadyLocked { continue }
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
@@ -3342,6 +3374,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelLockSource = source
             }
             resetHold()
+            updateDetectorGate()
         }
 
         /// The locked meter cut from the same frame as its box, for a fallback meter photo. From 1–3 m the number is

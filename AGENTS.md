@@ -106,8 +106,9 @@ Official references:
 - `BaseAR/Electrical`: meter-number scan, OCR, typed numbers
 - `BaseAR/Placement`: Live Survey view, scene controller, detector, battery geometry, measurements
 - `BaseAR/Rules`: `EligibilityRule`, `BaseRuleSet`, `SurveyEvaluating`
-- `BaseAR/Review`: review screen, JSON and PLY export, optional Jev advisory
+- `BaseAR/Review`: review screen, zipped export (survey.json, photos, scene.ply, scan capture), optional Jev advisory
 - `BaseAR/Location`: one-shot property location, address suggestions
+- `BaseAR/Grid`: ERCOT load-zone context and the one-versus-two Core decision card. Does not affect placement color; `gridContext` may appear in `survey.json`.
 - `docs/context`: 26 Sep context pack (start with its `README.md`); `docs/site-survey-research`: research snapshot, not implemented rules
 
 ## Signing and keys

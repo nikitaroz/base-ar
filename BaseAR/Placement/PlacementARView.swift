@@ -318,9 +318,6 @@ struct PlacementARView: View {
                 unsupportedScreen
             }
         }
-        .navigationTitle("Scan")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.visible, for: .navigationBar)
         .onAppear {
             guard arSupported, hasStartedAR else { return }
             departingAfterCapture = false

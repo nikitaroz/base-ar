@@ -123,13 +123,6 @@ struct SimplifiedSurveyFlow: View {
         .fullScreenCover(isPresented: $showingRealtimeScreen) {
             NavigationStack {
                 RealtimeSurveyView(store: store)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Done") {
-                                showingRealtimeScreen = false
-                            }
-                        }
-                    }
             }
         }
     }

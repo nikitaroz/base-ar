@@ -1,44 +1,56 @@
 import SwiftUI
 
 /// Live scan: AR find meter → panel → placement. The AR view owns the only two lines of text on the camera.
-/// TypeSafe Jev coaching stays behind the menu so it never competes with them.
+/// No top bar: swipe right from the left edge to leave, like a back swipe. TypeSafe Jev tips live on Review.
 struct RealtimeSurveyView: View {
     var store: SurveyStore
     @Environment(\.dismiss) private var dismiss
-    @State private var showingJevCoaching = false
+    @State private var dragOffset: CGFloat = 0
+
+    /// Touches start inside this strip so pans on the camera still reach the AR view.
+    private let edgeWidth: CGFloat = 24
 
     var body: some View {
-        PlacementARView(store: store) {
-            dismiss()
-        }
-        .navigationTitle("Live Scan")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Back to survey") {
-                        dismiss()
-                    }
-                    Button("Get Tips") {
-                        showingJevCoaching = true
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
+        GeometryReader { geometry in
+            PlacementARView(store: store) {
+                dismiss()
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .offset(x: dragOffset)
+            .overlay(alignment: .leading) {
+                edgeSwipe(width: geometry.size.width)
             }
         }
-        .sheet(isPresented: $showingJevCoaching) {
-            NavigationStack {
-                TypeSafeJevCoachingView(store: store)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { showingJevCoaching = false }
-                        }
-                    }
-            }
-        }
+        .background(Color(.systemGroupedBackground))
+        .accessibilityAction(.escape) { dismiss() }
     }
 
+    private func edgeSwipe(width: CGFloat) -> some View {
+        Color.clear
+            .frame(width: edgeWidth)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                    .onChanged { value in
+                        dragOffset = max(0, value.translation.width)
+                    }
+                    .onEnded { value in
+                        let travel = max(value.translation.width, value.predictedEndTranslation.width)
+                        if travel > width * 0.35 {
+                            withAnimation(.easeOut(duration: 0.2)) { dragOffset = width }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                // The slide already happened; skip the cover's own slide-down.
+                                var transaction = Transaction()
+                                transaction.disablesAnimations = true
+                                withTransaction(transaction) { dismiss() }
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 }
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
+    }
 }
 
 /// Minimal coaching detail view (replaces verbose advisory panel)

@@ -22,6 +22,61 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
+/// One phone-motion cue for the bottom feedback line, drawn as an animated SF Symbol plus kid copy.
+/// The raw value is the copy, so tracking text from the session maps back to its graphic. Copy never carries a distance.
+private enum CoachTip: String {
+    case lookUp = "Look up at it"
+    case pointDown = "Point your phone down"
+    case stepBack = "Take a few steps back"
+    case turnAlongWall = "Turn to look along the wall"
+    case scootLeft = "Scoot left"
+    case scootRight = "Scoot right"
+    case zoomIn = "Get closer"
+    case aimAtWall = "Aim at the wall"
+    case holdStill = "Hold still"
+    case slowDown = "Slow down"
+    case moveSlowly = "Move the phone slowly"
+    case moreDetail = "Aim at something with more detail"
+    case paused = "Paused"
+    case aimDot = "Aim the dot, then tap +"
+    case slideToWall = "Slide it closer to the wall"
+    case dragBattery = "Drag to move, then tap Next"
+    case tapNext = "Tap Next"
+    case located = "Located"
+    case scanned = "Scanned"
+
+    var symbol: String {
+        switch self {
+        case .lookUp: "arrow.up.circle.fill"
+        case .pointDown: "arrow.down.circle.fill"
+        case .stepBack: "figure.walk.motion"
+        case .turnAlongWall: "arrow.triangle.2.circlepath"
+        case .scootLeft: "arrow.left.circle.fill"
+        case .scootRight: "arrow.right.circle.fill"
+        case .zoomIn: "plus.magnifyingglass"
+        case .aimAtWall: "viewfinder"
+        case .holdStill: "hand.raised.fill"
+        case .slowDown: "tortoise.fill"
+        case .moveSlowly: "iphone.gen3.radiowaves.left.and.right"
+        case .moreDetail: "sparkle.magnifyingglass"
+        case .paused: "pause.circle.fill"
+        case .aimDot: "plus.circle.fill"
+        case .slideToWall: "hand.draw.fill"
+        case .dragBattery: "hand.draw.fill"
+        case .tapNext: "checkmark.circle.fill"
+        case .located, .scanned: "checkmark.seal.fill"
+        }
+    }
+
+    /// Motion cues keep pulsing so the phone movement reads at a glance. Confirmations do not.
+    var pulses: Bool {
+        switch self {
+        case .located, .scanned, .tapNext, .paused: false
+        default: true
+        }
+    }
+}
+
 /// Walk back from a locked meter or panel, then pan so the mesh sees the wall.
 /// One step is about 2.5 ft. The wide look is done only after the distance and the three views.
 private struct ScanGuide: Equatable {
@@ -94,9 +149,9 @@ struct PlacementARView: View {
     @State private var departingAfterCapture = false
     @State private var statusMessage: String? = nil
     @State private var trackingMessage: String? = nil
-    @State private var equipmentMessage: String? = nil
-    /// "Located" or "Scanned" for a moment after a lock or a finished look-around.
-    @State private var flashMessage: String? = nil
+    @State private var equipmentTip: CoachTip? = nil
+    /// Located or Scanned for a moment after a lock or a finished look-around.
+    @State private var flashTip: CoachTip? = nil
     @State private var isVisible = false
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
@@ -155,53 +210,79 @@ struct PlacementARView: View {
         }
     }
 
-    /// Phone-motion cue from the scan guide and wall check. Never carries a distance.
-    private var motionCue: String? {
+    /// Phone-motion cue from the scan guide and wall check, for when the detector has nothing to say.
+    private var motionTip: CoachTip? {
         switch step {
         case .scan:
             switch manualMark {
-            case .meter: return meterIsMarked ? "Tap Next" : "Aim the dot, then tap +"
-            case .panel: return panelIsMarked ? "Tap Next" : "Aim the dot, then tap +"
+            case .meter: return meterIsMarked ? .tapNext : .aimDot
+            case .panel: return panelIsMarked ? .tapNext : .aimDot
             case nil, .battery, .gasMeter: break
             }
             switch cue {
-            case .findMeter, .findPanel: return nil
+            case .findMeter, .findPanel: return .lookUp
             case .stepBack:
-                return surroundCue(steps: guide.meterSteps, left: guide.meterLookedLeft,
+                return surroundTip(steps: guide.meterSteps, left: guide.meterLookedLeft,
                                    right: guide.meterLookedRight, along: guide.meterLookedAlong)
             case .stepBackFromPanel:
-                return surroundCue(steps: guide.panelSteps, left: guide.panelLookedLeft,
+                return surroundTip(steps: guide.panelSteps, left: guide.panelLookedLeft,
                                    right: guide.panelLookedRight, along: guide.panelLookedAlong)
-            case .ready: return "Tap Next"
+            case .ready: return .tapNext
             }
         case .gas:
-            return scene.gasMeterPosition == nil ? "Aim the dot, then tap +" : "Tap Next"
+            return scene.gasMeterPosition == nil ? .aimDot : .tapNext
         case .battery:
-            guard scene.batteryPosition != nil else { return "Point down at the ground" }
+            guard scene.batteryPosition != nil else { return .pointDown }
             if let wallFeet = scene.automaticWallClearanceFeet, wallFeet > BaseRuleSet.maxWallDistanceFeet {
-                return "Slide closer to the wall"
+                return .slideToWall
             }
-            return "Drag to move, then tap Next"
+            return .dragBattery
         case .finish:
             return nil
         }
     }
 
-    private func surroundCue(steps: Int, left: Bool, right: Bool, along: Bool) -> String {
-        if steps < ScanGuide.wideLookSteps { return "Walk back" }
-        if !along { return "Look along the wall" }
-        if !left { return "Scoot left" }
-        if !right { return "Scoot right" }
-        return "Walk back"
+    private func surroundTip(steps: Int, left: Bool, right: Bool, along: Bool) -> CoachTip {
+        if steps < ScanGuide.wideLookSteps { return .stepBack }
+        if !along { return .turnAlongWall }
+        if !left { return .scootLeft }
+        if !right { return .scootRight }
+        return .stepBack
+    }
+
+    private struct Feedback: Equatable {
+        let text: String
+        let symbol: String
+        let tint: Color
+        let pulses: Bool
+
+        init(_ tip: CoachTip, tint: Color = .blue) {
+            text = tip.rawValue
+            symbol = tip.symbol
+            self.tint = tint
+            pulses = tip.pulses
+        }
+
+        init(text: String, symbol: String, tint: Color) {
+            self.text = text
+            self.symbol = symbol
+            self.tint = tint
+            pulses = false
+        }
     }
 
     /// One bottom line at a time: errors, then tracking, then a fresh find, then the detector, then motion.
-    private var feedback: (text: String, color: Color)? {
-        if let statusMessage { return (statusMessage, .red) }
-        if let trackingMessage { return (trackingMessage, .orange) }
-        if let flashMessage { return (flashMessage, .green) }
-        if let equipmentMessage { return (equipmentMessage, .primary) }
-        if let motionCue { return (motionCue, .primary) }
+    private var feedback: Feedback? {
+        if let statusMessage {
+            return Feedback(text: statusMessage, symbol: "exclamationmark.octagon.fill", tint: .red)
+        }
+        if let trackingMessage {
+            return CoachTip(rawValue: trackingMessage).map { Feedback($0, tint: .orange) }
+                ?? Feedback(text: trackingMessage, symbol: "exclamationmark.triangle.fill", tint: .orange)
+        }
+        if let flashTip { return Feedback(flashTip, tint: .green) }
+        if let equipmentTip { return Feedback(equipmentTip) }
+        if let motionTip { return Feedback(motionTip) }
         return nil
     }
 
@@ -281,20 +362,20 @@ struct PlacementARView: View {
             }
         }
         .onChange(of: meterIsMarked) { _, found in
-            if found { flashMessage = "Located" }
+            if found { flashTip = .located }
         }
         .onChange(of: panelIsMarked) { _, found in
-            if found { flashMessage = "Located" }
+            if found { flashTip = .located }
         }
         .onChange(of: guide.meterSurroundDone) { _, done in
-            if done { flashMessage = "Scanned" }
+            if done { flashTip = .scanned }
         }
         .onChange(of: guide.panelSurroundDone) { _, done in
-            if done { flashMessage = "Scanned" }
+            if done { flashTip = .scanned }
         }
-        .task(id: flashMessage) {
-            guard flashMessage != nil, (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
-            flashMessage = nil
+        .task(id: flashTip) {
+            guard flashTip != nil, (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
+            flashTip = nil
         }
         // One line is shared, so an old error must not hide live feedback for long.
         .task(id: statusMessage) {
@@ -332,7 +413,7 @@ struct PlacementARView: View {
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
-                        onEquipmentStatus: { equipmentMessage = $0 },
+                        onEquipmentStatus: { equipmentTip = $0 },
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
@@ -466,6 +547,30 @@ struct PlacementARView: View {
         .background(.ultraThinMaterial, in: Capsule())
     }
 
+    /// Animated SF Symbol plus kid copy, one cue at a time. Height stays fixed so the buttons do not jump.
+    private var feedbackLine: some View {
+        HStack(spacing: 12) {
+            if let feedback {
+                Image(systemName: feedback.symbol)
+                    .font(.system(size: 30, weight: .semibold))
+                    .foregroundStyle(feedback.tint)
+                    .symbolEffect(.pulse, options: .repeating, isActive: feedback.pulses)
+                    .symbolEffect(.bounce, value: feedback.symbol)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
+                Text(feedback.text)
+                    .font(.headline)
+                    .foregroundStyle(feedback.tint == .red ? Color.red : Color.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .animation(.easeInOut(duration: 0.2), value: feedback)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
     private var taskLineView: some View {
         Text(taskLine)
             .font(.title3.weight(.semibold))
@@ -479,13 +584,7 @@ struct PlacementARView: View {
 
     private var bottomBar: some View {
         VStack(spacing: 12) {
-            Text(feedback?.text ?? " ")
-                .font(.headline)
-                .foregroundStyle(feedback?.color ?? .primary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 24)
-                .animation(.easeInOut(duration: 0.2), value: feedback?.text)
-                .accessibilityAddTraits(.updatesFrequently)
+            feedbackLine
             stepControls
         }
         .padding(16)
@@ -1128,7 +1227,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
-    var onEquipmentStatus: (String?) -> Void
+    var onEquipmentStatus: (CoachTip?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
 
     func makeUIView(context: Context) -> ARView {
@@ -1210,8 +1309,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var onScreenshot: (@MainActor (UUID, UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
     private var onTrackingStatus: ((String?) -> Void)?
-    private var onEquipmentStatus: ((String?) -> Void)?
-    private var lastEquipmentMessage: String?
+    private var onEquipmentStatus: ((CoachTip?) -> Void)?
+    private var lastEquipmentTip: CoachTip?
     private var lastEquipmentGeneration: UInt64?
     private var onCoachingActiveChange: ((Bool) -> Void)?
     private var onGuide: ((ScanGuide) -> Void)?
@@ -1247,8 +1346,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         fileprivate var pendingMeshDraws: [UUID: MeshDrawBuffers] = [:]
         var lastMeshDraw = Date.distantPast
         var transferBox: ModelEntity?
-        var trackingBlockedMessage: String? = "Hold still"
-        private let trackingNotice = OSAllocatedUnfairLock<String?>(initialState: "Hold still")
+        var trackingBlockedMessage: String? = CoachTip.holdStill.rawValue
+        private let trackingNotice = OSAllocatedUnfairLock<String?>(initialState: CoachTip.holdStill.rawValue)
         nonisolated let equipmentBridge = EquipmentScanBridge()
         /// Camera colors for `scene.ply`, remembered per world cell across mesh updates.
         nonisolated let meshColors = MeshColorCache()
@@ -1260,7 +1359,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var pendingDetections: [EquipmentDetection] = []
         private var pendingScan: EquipmentScanFrame?
         /// Latest bottom-line hint while finding the meter or panel.
-        private var scanHint: String?
+        private var scanHint: CoachTip?
         private var holdAnchor: SIMD3<Float>?
         private var holdSince: CFTimeInterval?
         /// After Clear, the same spot cannot lock again until the phone looks away or aims somewhere else.
@@ -1373,7 +1472,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
-            onEquipmentStatus: @escaping (String?) -> Void,
+            onEquipmentStatus: @escaping (CoachTip?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void
         ) {
             self.mode = mode
@@ -1438,7 +1537,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard let configuration else { return }
             callbackEpoch.withLock { $0 = UUID() }
             isRunning = true
-            setTrackingMessage("Hold still")
+            setTrackingMessage(CoachTip.holdStill.rawValue)
             arView.session.run(configuration, options: [])
             startAiming()
         }
@@ -1450,7 +1549,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             isRunning = false
             callbackEpoch.withLock { $0 = UUID() }
             equipmentBridge.setEnabled(false)
-            setTrackingMessage("Paused")
+            setTrackingMessage(CoachTip.paused.rawValue)
             // Any in-flight rotation gesture is invalidated by pausing the session.
             rotationStartYaw = appliedYaw
             stopAiming()
@@ -2453,10 +2552,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             if !panelLock.locked { panelLock = EquipmentLock() }
         }
 
-        private func publishEquipmentStatus(_ message: String?) {
-            guard message != lastEquipmentMessage else { return }
-            lastEquipmentMessage = message
-            onEquipmentStatus?(message)
+        private func publishEquipmentStatus(_ tip: CoachTip?) {
+            guard tip != lastEquipmentTip else { return }
+            lastEquipmentTip = tip
+            onEquipmentStatus?(tip)
         }
 
         private func updateEquipmentStatus() {
@@ -2480,7 +2579,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 publishEquipmentStatus(holdLockKind() == nil ? nil : scanHint)
             case .noDetections:
                 clearTransientEquipmentObservations()
-                publishEquipmentStatus(holdLockKind() == nil ? nil : "Look up")
+                publishEquipmentStatus(holdLockKind() == nil ? nil : .lookUp)
             case .modelUnavailable, .inferenceFailed, .frameUnavailable:
                 clearTransientEquipmentObservations()
                 publishEquipmentStatus(nil)
@@ -2539,18 +2638,26 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             for target: EquipmentKind?,
             best: [EquipmentKind: EquipmentDetection],
             packet: EquipmentScanFrame
-        ) -> String? {
+        ) -> CoachTip? {
             guard let target, equipmentBridge.detector.loadError == nil else { return nil }
             let locked = target == .electricMeter ? meterLock.locked : panelLock.locked
             guard !locked else { return nil }
-            guard let detection = best[target] else { return "Look up" }
+            guard let detection = best[target] else { return .lookUp }
             let rect = Self.viewRect(for: detection.boundingBox, in: packet)
-            let viewArea = max(packet.viewSize.width * packet.viewSize.height, 1)
-            if detection.confidence < 0.5 || rect.width * rect.height < viewArea * 0.02 {
-                return "Move closer"
+            let viewArea = max(arView.bounds.width * arView.bounds.height, 1)
+            let boxArea = rect.width * rect.height
+            if detection.confidence < 0.5 || boxArea < viewArea * 0.02 { return .zoomIn }
+            if boxArea > viewArea * 0.6 { return .stepBack }
+            // Same slack as the center-dot hold, so "Hold still" only shows when a hold can lock.
+            let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+            if !rect.insetBy(dx: -32, dy: -32).contains(center) {
+                let dx = rect.midX - center.x
+                let dy = rect.midY - center.y
+                if abs(dy) > abs(dx) { return dy < 0 ? .lookUp : .pointDown }
+                return dx < 0 ? .scootLeft : .scootRight
             }
-            if project(detection, in: packet) == nil { return "Aim at the wall" }
-            return "Hold still"
+            if project(detection, in: packet) == nil { return .aimAtWall }
+            return .holdStill
         }
 
         private func project(_ detection: EquipmentDetection, in packet: EquipmentScanFrame) -> (position: SIMD3<Float>, normal: SIMD3<Float>, normalIsMeasured: Bool)? {
@@ -3247,17 +3354,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .normal:
                 return nil
             case .notAvailable:
-                return "Move the phone slowly"
+                return CoachTip.moveSlowly.rawValue
             case .limited(let reason):
                 switch reason {
                 case .initializing, .relocalizing:
-                    return "Hold still"
+                    return CoachTip.holdStill.rawValue
                 case .excessiveMotion:
-                    return "Slow down"
+                    return CoachTip.slowDown.rawValue
                 case .insufficientFeatures:
-                    return "Aim at something with more detail"
+                    return CoachTip.moreDetail.rawValue
                 @unknown default:
-                    return "Hold still"
+                    return CoachTip.holdStill.rawValue
                 }
             }
         }

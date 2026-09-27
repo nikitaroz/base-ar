@@ -1,0 +1,21 @@
+AGENTS.md
+  s_535a502178fe4f::t_3affc1e980c5da 34,38,85,91,156
+README.md
+  s_535a502178fe4f::t_e12ffb2db66362 79-80,247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "33efacb6cce037902b28106c933d3e5de2fefd17",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

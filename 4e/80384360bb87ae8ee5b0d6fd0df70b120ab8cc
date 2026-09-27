@@ -1,0 +1,22 @@
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_723c9685fa4f15 124-125,133-137
+  s_535a502178fe4f::t_b193cab73392cb 138-139
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_723c9685fa4f15 148-159
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4e80384360bb87ae8ee5b0d6fd0df70b120ab8cc",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

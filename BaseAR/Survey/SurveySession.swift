@@ -240,7 +240,6 @@ enum EquipmentLockSource: String, Codable, Sendable {
 }
 
 struct PlacementEvidence: Codable, Sendable, Equatable {
-    var screenshotFilename: String?
     var batteryPlaced: Bool = false
     var meterMarked: Bool = false
     var gasMeterMarked: Bool = false

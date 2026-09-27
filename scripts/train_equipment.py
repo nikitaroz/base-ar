@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "training" / "dataset" / "data.yaml"
 RUNS = ROOT / "training" / "runs"
-BASE = "yolo26n.pt"
+BASE = "yolo26s.pt"
 IMGSZ = 640
 DESTINATION = ROOT / "BaseAR" / "Placement" / "EquipmentScan.mlpackage"
 

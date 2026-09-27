@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Draft YOLO labels for training/raw with a large YOLOE model, for a human to review.
 
-Only raw/meter/ is auto-labeled: Commons panels are European switchboards and hurt more
-than they help. Hand-labeled photos (a .txt sidecar next to the image, in training/site/
+raw/meter/ (Commons) and openverse/{meter,panel}/ are auto-labeled. Commons panels are
+European switchboards and hurt more than they help, so they are skipped. Hand-labeled photos (a .txt sidecar next to the image, in training/site/
 and training/reference/) are copied as-is and repeated so they outweigh Commons.
 training/negatives/ holds photos with no meter or panel and empty labels, so the model
 learns to stay quiet on disconnects, batteries, and other gray boxes.
@@ -33,10 +33,15 @@ PROMPTS = {
     "load center": 1, "fuse box": 1, "distribution board": 1,
 }
 FOLDER_CLASS = {"meter": 0, "panel": 1}
-RAW_KINDS = ["meter"]
+# (folder, kind) pairs drafted by the models. Commons panels are skipped: European switchboards.
+AUTO_SOURCES = [("raw", "meter"), ("openverse", "meter")]
 OWN_CONF = 0.3
+# The last fine-tuned model knows US equipment on siding; YOLOE knows the wider world. Both draft boxes.
+DOMAIN_CHECKPOINT = ROOT / "best_v3.pt"
+DOMAIN_CONF = 0.4
 VAL_FRACTION = 0.15
-HAND_LABELED = ["site", "reference", "negatives"]
+# openverse_hand/ holds Openverse panels labeled by hand; drafted panel boxes were too unreliable.
+HAND_LABELED = ["site", "reference", "negatives", "openverse_hand"]
 # Held-out site photos, so validation measures the real target look.
 VAL_STEMS = {"meter_IMG_5092", "meter_IMG_5094", "panel_IMG_5084", "panel_IMG_5096",
              "neg_IMG_5110", "neg_IMG_5113", "neg_IMG_5116"}
@@ -47,9 +52,12 @@ COLORS = ["#2f9e44", "#e8590c"]
 def main() -> None:
     from ultralytics import YOLOE
 
+    from ultralytics import YOLO
+
     model = YOLOE(CHECKPOINT)
     names = list(PROMPTS)
     model.set_classes(names)
+    domain = YOLO(str(DOMAIN_CHECKPOINT)) if DOMAIN_CHECKPOINT.exists() else None
 
     dataset, review = ROOT / "dataset", ROOT / "review"
     for folder in (dataset, review):
@@ -60,7 +68,7 @@ def main() -> None:
     review.mkdir()
 
     excluded = set((ROOT / "exclude.txt").read_text().split()) if (ROOT / "exclude.txt").exists() else set()
-    images = [(p, FOLDER_CLASS[kind]) for kind in RAW_KINDS for p in sorted((ROOT / "raw" / kind).glob("*.jpg"))
+    images = [(p, FOLDER_CLASS[kind]) for source, kind in AUTO_SOURCES for p in sorted((ROOT / source / kind).glob("*.jpg"))
               if p.stem not in excluded]
     images += [(p, FOLDER_CLASS.get(p.stem.split("_")[0], -1)) for folder in HAND_LABELED for p in sorted((ROOT / folder).glob("*.jpg"))]
     random.seed(7)
@@ -85,14 +93,22 @@ def main() -> None:
                 continue
             lines.append(f"{cls} {' '.join(f'{v:.5f}' for v in xywhn)}")
             boxes.append((cls, score, xyxy))
-        # Drop duplicate boxes from different phrasings of the same class.
+        if domain is not None:
+            extra = domain.predict(str(path), conf=DOMAIN_CONF, verbose=False, imgsz=640)[0]
+            found = zip(extra.boxes.xywhn.tolist(), extra.boxes.xyxy.tolist(), extra.boxes.cls.tolist(), extra.boxes.conf.tolist())
+            for xywhn, xyxy, cls, score in found:
+                if int(cls) != own:
+                    continue
+                lines.append(f"{own} {' '.join(f'{v:.5f}' for v in xywhn)}")
+                boxes.append((own, score, xyxy))
+        # Drop duplicate boxes from different phrasings and from the two models.
         lines, boxes = dedupe(lines, boxes)
 
         if not any(cls == own for cls, _, _ in boxes):
             unlabeled.append(str(path.relative_to(ROOT)))
             continue
         split = "val" if random.random() < VAL_FRACTION else "train"
-        stem = f"{path.parent.name}_{path.stem}"
+        stem = f"{path.parent.parent.name}_{path.stem}"
         shutil.copy(path, dataset / "images" / split / f"{stem}.jpg")
         (dataset / "labels" / split / f"{stem}.txt").write_text("\n".join(lines) + "\n")
         drawn.append((path, boxes, stem))

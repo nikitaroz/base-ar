@@ -9,9 +9,12 @@ final class SurveyStore {
     var meterImage: UIImage?
     /// The one zipped survey folder handed to the share sheet.
     private(set) var exportURLs: [URL] = []
-    /// Local survey.json from the last export, for the review preview.
+    /// Local survey.json from the last export.
     private(set) var surveyJSONURL: URL?
     private(set) var lastExportError: String?
+    /// True while an export is writing. Share waits for it.
+    private(set) var isExporting = false
+    private var exportTask: Task<Void, Never>?
     /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
     private(set) var meterNumberNote: String?
     private(set) var isReadingMeterNumber = false
@@ -371,21 +374,36 @@ final class SurveyStore {
     }
 
     /// Writes the survey files, then shares them as one zipped folder so AirDrop sends a single item.
-    func exportForSharing() {
+    /// The mesh, keyframes, and zip are written off the main actor; exports run one at a time, in call order.
+    func exportForSharing() async {
+        let previous = exportTask
+        let task = Task { @MainActor in
+            await previous?.value
+            await runExport()
+        }
+        exportTask = task
+        await task.value
+    }
+
+    private func runExport() async {
         refreshAssessment()
+        isExporting = true
+        defer { isExporting = false }
+        let parts = placementController?.pointCloudParts()
+        let keyframes = placementController?.keyframes
+        let snapshot = session
+        let directory = directory
+        let exporter = exporter
         do {
-            session.placement.pointCloudFilename = try writePointCloud()
-            let capture = try placementController?.keyframes.finalize()
-            session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
-            session.placement.capturedFrameCount = capture == nil ? nil : placementController?.keyframes.count
-            surveyJSONURL = try exporter.write(session, to: directory)
-            exportURLs = [try packageSurvey(including: [
-                "survey.json",
-                session.placement.pointCloudFilename,
-                session.electrical.meterPhotoFilename,
-                session.electrical.panelPhotoFilename,
-                capture == nil ? nil : "capture"
-            ].compactMap { $0 })]
+            let result = try await Task.detached(priority: .userInitiated) {
+                try Self.writeExport(session: snapshot, mesh: parts, keyframes: keyframes, directory: directory, exporter: exporter)
+            }.value
+            // Only the export's own fields: anything the user changed meanwhile stays, and the next export writes it.
+            session.placement.pointCloudFilename = result.session.placement.pointCloudFilename
+            session.placement.captureManifestPath = result.session.placement.captureManifestPath
+            session.placement.capturedFrameCount = result.session.placement.capturedFrameCount
+            surveyJSONURL = result.surveyJSON
+            exportURLs = [result.archive]
             lastExportError = nil
         } catch {
             exportURLs = []
@@ -393,8 +411,37 @@ final class SurveyStore {
         }
     }
 
+    private struct ExportResult: Sendable {
+        var session: SurveySession
+        var surveyJSON: URL
+        var archive: URL
+    }
+
+    private nonisolated static func writeExport(
+        session: SurveySession,
+        mesh: (chunks: [MeshPointCloudChunk], comments: [String])?,
+        keyframes: KeyframeRecorder?,
+        directory: URL,
+        exporter: any SurveyExporting
+    ) throws -> ExportResult {
+        var session = session
+        session.placement.pointCloudFilename = try writePointCloud(mesh, in: directory)
+        let capture = try keyframes?.finalize()
+        session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
+        session.placement.capturedFrameCount = capture == nil ? nil : keyframes?.count
+        let surveyJSON = try exporter.write(session, to: directory)
+        let archive = try packageSurvey(from: directory, including: [
+            "survey.json",
+            session.placement.pointCloudFilename,
+            session.electrical.meterPhotoFilename,
+            session.electrical.panelPhotoFilename,
+            capture == nil ? nil : "capture"
+        ].compactMap { $0 })
+        return ExportResult(session: session, surveyJSON: surveyJSON, archive: archive)
+    }
+
     /// Copies the named survey files into a dated folder and zips it. Unzipping gives that one folder.
-    private func packageSurvey(including names: [String]) throws -> URL {
+    private nonisolated static func packageSurvey(from directory: URL, including names: [String]) throws -> URL {
         let files = FileManager.default
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -447,10 +494,13 @@ final class SurveyStore {
     }
 
     /// Latest LiDAR mesh as `scene.ply`. Removes a stale file when the scan has no mesh.
-    private func writePointCloud() throws -> String? {
+    private nonisolated static func writePointCloud(
+        _ mesh: (chunks: [MeshPointCloudChunk], comments: [String])?,
+        in directory: URL
+    ) throws -> String? {
         let name = "scene.ply"
         let url = directory.appendingPathComponent(name)
-        guard let data = placementController?.pointCloudPLYData() else {
+        guard let mesh, let data = PointCloudPLY.data(from: mesh.chunks, comments: mesh.comments) else {
             if FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)
             }

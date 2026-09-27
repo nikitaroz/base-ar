@@ -1969,6 +1969,8 @@ private struct CaptureCandidate {
     var quality: CaptureReading?
     var textFirst: Bool
     var source: String
+    /// The detector's score for a box candidate; 0 for text.
+    var confidence: Float = 0
 }
 
 /// Battery center slides on a line parallel to the meter wall.
@@ -2829,8 +2831,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// A home has one meter and one panel. Once the asked-for item is locked there is nothing left to find,
         /// so the detector stops instead of boxing random objects for the rest of the session. A redo turns it back on.
         private func updateDetectorGate() {
-            // It also runs for a few seconds after the panel lock when a wider panel photo is wanted.
-            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && (searchableTarget() != nil || widePanelPhoto != nil))
+            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && searchableTarget() != nil)
         }
 
         /// Scan photos start at the panel lock. Frames from the search before it are mostly ground and sky,
@@ -3459,7 +3460,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.meterWallPosition = nil
                 scene.meterWallNormal = nil
             case .panel:
-                widePanelPhoto = nil
+                panelPending = nil
                 panelLock = EquipmentLock()
                 panelLockSource = nil
                 panelNormalSnapped = false
@@ -3516,7 +3517,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 capture.breakStreak()
                 return
             }
-            considerWidePanelPhoto(packet)
             var best: [EquipmentKind: EquipmentDetection] = [:]
             // Weak boxes still draw. Only boxes at the lock score count toward a lock or a hold.
             // A kind that is already locked has been found; there is only one per home. Its boxes elsewhere are
@@ -3551,22 +3551,20 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             // Only the object this step is asking for can lock. Both kinds still draw.
             let asked = holdLockKind()
-            var streakTarget = asked
             if Self.scanCaptureEnabled {
-                scanHint = settledCaptureHint(evaluateCapture(packet))
-                // Late fallback, meter only. Glare, a dirty cover, a short number, or a barcode-only plate can keep
-                // the label from ever reading twice, and with no meter there is no battery spot. After
-                // `lateDetectorLockSeconds` of searching, the detector-streak lock below (main's rule: five agreeing
-                // wall hits at the lock score, height and separation guards) may lock it too, on a sharp, exposed box.
-                // Its source is `.detector`, so no number is suggested; Review asks for it. Not the panel: on its own
-                // that lock took any wall for the panel.
-                streakTarget = holdLockKind()
-                guard streakTarget == .electricMeter, let searchStartedAt,
-                      CACurrentMediaTime() - searchStartedAt >= Self.lateDetectorLockSeconds else { return }
-            } else {
-                scanHint = hint(for: asked, best: best)
+                // The capture gate is the only way the scan locks the meter or the panel: a sharp, exposed photo and
+                // agreeing reads (the meter number twice, identically). No detector-only lock, however long the
+                // search runs; the bottom line keeps saying what the capture needs, and the edge swipe leaves.
+                // An identified panel waits for a whole-panel photo instead (see `PanelPending`).
+                if panelPending != nil, asked == .breakerPanel {
+                    scanHint = settledCaptureHint(considerPanelPhoto(packet))
+                } else {
+                    scanHint = settledCaptureHint(evaluateCapture(packet))
+                }
+                return
             }
-            guard let target = streakTarget else { return }
+            scanHint = hint(for: asked, best: best)
+            guard let target = asked else { return }
             // A lock needs an unbroken run: a frame without a usable box for the target starts the count over.
             guard let detection = best[target], detection.confidence >= EquipmentDetection.lockConfidence,
                   !Self.scanCaptureEnabled || detection.quality.map({ CaptureQuality.problem($0) == nil }) ?? true,
@@ -3685,6 +3683,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 searchTarget = target
                 searchStartedAt = target == nil ? nil : now
                 manualMarkOffered = false
+                // An identified panel waits for its whole-panel photo only while the scan still asks for the panel.
+                if target != .breakerPanel { panelPending = nil }
             }
             let status: EquipmentObservationStatus = equipmentBridge.detector.loadError != nil ? .modelMissing : detectorStatus
             if target != nil {
@@ -3694,17 +3694,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     manualMarkOffered = true
                 }
             }
-            if let wide = widePanelPhoto, now >= wide.until {
-                // Past its few seconds the close-up stays as the panel photo.
-                widePanelPhoto = nil
-                updateDetectorGate()
-            }
             let live = target != nil && !coachingActive && trackingBlockedMessage == nil && freshScan != nil
             let hint: CoachTip?
             if target != nil {
                 hint = live && status == .ok ? scanHint : nil
-            } else if widePanelPhoto != nil {
-                hint = .stepBackWholePanel
             } else {
                 hint = mode == .gasMeter ? gasHint : nil
             }
@@ -3712,7 +3705,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 hint: hint,
                 manualTarget: manualMarkOffered ? target : nil,
                 detector: status,
-                widePanelPhotoPending: widePanelPhoto != nil
+                widePanelPhotoPending: panelPending != nil
             )
             guard feedback != lastScanFeedback else { return }
             lastScanFeedback = feedback
@@ -4246,9 +4239,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private static let hintSettleEvaluations = 2
         /// Text-first search for the meter too, when the detector gives no box. A meter word must be on the label.
         private static let textFirstMeterEnabled = true
-        /// Seconds of searching for the meter before the late detector lock may happen, so the label read gets its
-        /// chance first. Well inside the Live Survey's 60 s find wait. Tune on device.
-        private static let lateDetectorLockSeconds: CFTimeInterval = 20
 
         /// One detector packet through the gate. Returns the bottom-line cue for the current target.
         private func evaluateCapture(_ packet: EquipmentScanFrame) -> CoachTip? {
@@ -4373,7 +4363,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if capture.records.isEmpty, capture.emptyReads >= Self.captureEmptyReadsForHint {
                     return area < Self.captureCloseArea ? .closerToLabel : .faceLabel
                 }
+                // Two different numbers in the window: the print is too small or the phone is moving.
+                if Set(capture.records.compactMap(\.read.value)).count >= 2 {
+                    return area < Self.captureCloseArea ? .closerToLabel : .holdStill
+                }
             case .breakerPanel:
+                if identifyPanelByBox(candidate, packet: packet) { return nil }
                 // No main-breaker read yet: a printed label wants the whole panel in view, a closed door wants opening.
                 let hasMainRead = capture.records.contains { $0.read.value?.hasPrefix(ScanTextRead.mainPrefix) == true }
                 if !hasMainRead, capture.readsWithoutMain >= Self.captureEmptyReadsForHint {
@@ -4383,11 +4378,34 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return target == .electricMeter ? .readingNumber : .readingBreaker
         }
 
+        /// A real panel box, steady at the detector's lock score for `panelBoxOnlyStreak` passing evaluations, is the
+        /// panel even when no text reads (a closed door). Not while a read is running or a MAIN read waits for its
+        /// match: those decide the amps. The amps stay nil, so Review asks.
+        private func identifyPanelByBox(_ candidate: CaptureCandidate, packet: EquipmentScanFrame) -> Bool {
+            guard candidate.source == Self.panelBoxSource, candidate.confidence >= EquipmentDetection.lockConfidence,
+                  capture.streak >= Self.panelBoxOnlyStreak, !capture.ocrInFlight, !capture.landings.isEmpty,
+                  !capture.records.contains(where: { $0.read.value?.hasPrefix(ScanTextRead.mainPrefix) == true }) else { return false }
+            let count = Float(capture.landings.count)
+            let point = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.point } / count
+            let normalSum = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.normal }
+            guard simd_length(normalSum) > 0.001 else { return false }
+            let normal = simd_normalize(normalSum)
+            guard trackingBlockedMessage == nil, relockAllowed(.breakerPanel, point: point),
+                  lockRejection(.breakerPanel, at: point, normal: normal, checkHeight: true) == nil else { return false }
+            logCapture(.breakerPanel, "IDENTIFIED", "box-only streak=\(capture.streak) score=\(candidate.confidence)", packet: packet)
+            resetCapture()
+            identifyPanel(PanelPending(point: point, normal: normal, amps: nil, basis: nil), frame: PanelPhotoFrame(packet, box: candidate.box))
+            return true
+        }
+
         /// The detector's box for the target, a meter-labeled box standing in for the panel, or a label read by text.
         private func captureCandidate(for target: EquipmentKind, in packet: EquipmentScanFrame, now: CFTimeInterval) -> CaptureCandidate? {
             let boxes = packet.detections.filter { $0.confidence >= Self.captureMinConfidence }
             if let own = boxes.filter({ $0.kind == target }).max(by: { $0.confidence < $1.confidence }) {
-                return CaptureCandidate(box: own.boundingBox, quality: own.quality, textFirst: false, source: "\(target.rawValue)-box")
+                return CaptureCandidate(
+                    box: own.boundingBox, quality: own.quality, textFirst: false, source: "\(target.rawValue)-box",
+                    confidence: own.confidence
+                )
             }
             // Off the demo wall the panel class almost never fires; panels come back as weak meter boxes. With the
             // meter already locked, a meter box somewhere else can be the panel. Only the main-breaker read decides.
@@ -4536,8 +4554,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return count
         }
 
-        /// Locks and hands over the photo once the image checks held for the whole streak and enough reads agree (see
-        /// `readsNeeded`). Same guards as every other lock path.
+        /// Once the image checks held for the whole streak and enough reads agree (see `readsNeeded`): the meter locks
+        /// and hands over its photo (the sharp crop that read the number); the panel is identified and locks only with
+        /// a whole-panel photo (`identifyPanel`). Same guards as every other lock path.
         @discardableResult
         private func tryCapture() -> Bool {
             guard let target = capture.target, capture.streak >= Self.captureStreakRequired,
@@ -4552,18 +4571,22 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let normal = simd_length(normalSum) > 0.001 ? simd_normalize(normalSum) : lastLanding.normal
             guard trackingBlockedMessage == nil, relockAllowed(target, point: point),
                   lockRejection(target, at: point, normal: normal, checkHeight: true) == nil else { return false }
-            let halfWidth = target == .electricMeter ? capture.meterHalfWidth : nil
-            lockEquipment(target, at: EquipmentLock.Sample(point: point, normal: normal), source: .scanCapture, halfWidth: halfWidth)
-            logCapture(target, "CAPTURED", "value=\(value) basis=\(latest.read.panel?.basis?.rawValue ?? "-") reads=\(capture.records.count) image=\(image.width)x\(image.height)")
             let read = latest.read
             let context = latest.context
-            resetCapture()
-            switch target {
-            case .electricMeter:
-                onScanCapture?(ScanCapture(kind: .electricMeter, image: UIImage(cgImage: image), meterNumber: read.meter?.number))
-            case .breakerPanel:
-                deliverPanelCapture(read: read, context: context, closeUp: image, lockPoint: point)
+            if target == .breakerPanel {
+                logCapture(target, "IDENTIFIED", "value=\(value) basis=\(read.panel?.basis?.rawValue ?? "-") reads=\(capture.records.count) label=\(read.panel?.labelMode == true)")
+                resetCapture()
+                identifyPanel(
+                    PanelPending(point: point, normal: normal, amps: read.panel?.amps, basis: read.panel?.basis),
+                    frame: PanelPhotoFrame(context, box: context.source == Self.panelBoxSource ? context.candidateBox : nil)
+                )
+                return true
             }
+            let halfWidth = capture.meterHalfWidth
+            lockEquipment(target, at: EquipmentLock.Sample(point: point, normal: normal), source: .scanCapture, halfWidth: halfWidth)
+            logCapture(target, "CAPTURED", "value=\(value) reads=\(capture.records.count) image=\(image.width)x\(image.height)")
+            resetCapture()
+            onScanCapture?(ScanCapture(kind: .electricMeter, image: UIImage(cgImage: image), meterNumber: read.meter?.number))
             recordLockFrame(kind: target.rawValue, source: "scan-capture", point: point, reason: FrameRecorder.Reason.capture)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             // The view's step machine reads `widePanelPhotoPending` before it sees the lock.
@@ -4574,25 +4597,61 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         // MARK: - Panel photo
 
-        /// The panel photo is the whole panel, not the label the OCR read: the detector's panel box grown 20% when it
-        /// sits 3% or more inside every frame edge and covers 10–70% of the frame, otherwise the whole upright frame.
-        /// It must be sharp and exposed, seen at most 45° off the panel.
+        /// The panel locks only with a clear, sharp photo of the whole panel face, never on a close-up of a label
+        /// inside it (owner, 27 Sep). The photo is the detector's panel box grown 20% when that box sits 3% or more
+        /// inside every frame edge and covers 10–70% of the frame, seen from 0.5 m or more; otherwise the whole upright
+        /// frame, from 0.7 m or more. Either way it must be sharp and exposed, at most 45° off the panel.
         private static let panelPhotoPadding: CGFloat = 0.2
         private static let panelPhotoEdgeMargin: CGFloat = 0.03
         private static let panelPhotoArea: ClosedRange<CGFloat> = 0.10...0.70
         private static let panelPhotoMaxObliqueDegrees: Float = 45
-        /// Closer than this, or a read of a printed label, and the scan waits a few seconds for a wider photo.
+        /// Closest camera for a photo framed by the panel box. Tune on device.
         private static let panelPhotoMinDistanceMeters: Float = 0.5
-        private static let widePanelPhotoSeconds: CFTimeInterval = 4
+        /// Closest camera for a whole-frame photo with no panel box: a 0.8 m panel fills the portrait frame's height
+        /// at about 0.65 m. Tune on device.
+        private static let panelFullFramePhotoMinDistanceMeters: Float = 0.7
+        /// A panel box seen this far from the identified panel is something else.
+        private static let panelPhotoBoxRadiusMeters: Float = 0.4
+        /// A real panel box alone identifies the panel after this many passing evaluations in a row (about 2 s),
+        /// at the detector's lock score and with no MAIN read waiting for its match. Tune on device.
+        private static let panelBoxOnlyStreak = 8
 
-        private struct WidePanelPhoto {
-            var until: CFTimeInterval
+        /// The panel was identified (agreeing reads, or a steady panel box) but has no whole-panel photo yet. Nothing
+        /// locks until one comes, with no time limit: the bottom line asks to step back, and the edge swipe leaves.
+        /// The view sees it as `ScanFeedback.widePanelPhotoPending`, before the panel lock.
+        private struct PanelPending {
             var point: SIMD3<Float>
             var normal: SIMD3<Float>
+            var amps: Int?
+            var basis: MainBreakerBasis?
         }
 
-        private var widePanelPhoto: WidePanelPhoto?
-        private var widePanelPhotoRendering = false
+        /// One frame that might be the panel photo.
+        private struct PanelPhotoFrame {
+            var pixels: CopiedPixels?
+            var orientation: CGImagePropertyOrientation
+            var camera: SIMD3<Float>
+            /// A real panel box on this frame, on the identified panel. Nil for text, a meter box, or no box.
+            var box: CGRect?
+
+            init(_ context: CaptureReadContext, box: CGRect?) {
+                pixels = context.pixels
+                orientation = context.orientation
+                camera = context.cameraPosition
+                self.box = box
+            }
+
+            init(_ packet: EquipmentScanFrame, box: CGRect?) {
+                pixels = packet.pixels
+                orientation = packet.visionOrientation
+                let column = packet.cameraTransform.columns.3
+                camera = SIMD3(column.x, column.y, column.z)
+                self.box = box
+            }
+        }
+
+        private var panelPending: PanelPending?
+        private var panelPhotoRendering = false
 
         /// The region of the upright frame to keep as the panel photo, or nil when a panel box is too big to frame.
         private static func panelPhotoRegion(box: CGRect?) -> CGRect? {
@@ -4605,92 +4664,95 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return CaptureQuality.padded(box, by: panelPhotoPadding)
         }
 
-        /// Hands over the panel capture. The photo comes from the winning read's own frame; a close-up of a label, a
-        /// box filling the frame, or a camera under 0.5 m keeps the scan on the panel for a few seconds for a wider one.
-        private func deliverPanelCapture(read: ScanTextRead, context: CaptureReadContext, closeUp: CGImage, lockPoint: SIMD3<Float>) {
-            let result = ScanCapture(
-                kind: .breakerPanel,
-                image: UIImage(cgImage: closeUp),
-                mainBreakerAmps: read.panel?.amps,
-                mainBreakerBasis: read.panel?.amps == nil ? nil : read.panel?.basis
-            )
-            let box = context.source == Self.panelBoxSource ? context.candidateBox : nil
-            let area = box.map { $0.width * $0.height } ?? 0
-            let tooClose = simd_distance(context.cameraPosition, lockPoint) < Self.panelPhotoMinDistanceMeters
-            let oblique = context.landingNormal.map { Self.obliqueDegrees(normal: $0, from: lockPoint, to: context.cameraPosition) } ?? 0
-            let region = Self.panelPhotoRegion(box: box)
-            var photoPasses = false
-            if let pixels = context.pixels, let region, oblique <= Self.panelPhotoMaxObliqueDegrees,
-               let reading = CaptureQuality.measure(pixels.buffer, visionRect: region, orientation: context.orientation) {
-                photoPasses = CaptureQuality.problem(reading) == nil
+        /// Where this frame's whole-panel photo would come from, or the cue for what keeps it from being one.
+        private func panelPhotoPlan(_ frame: PanelPhotoFrame, pending: PanelPending) -> (region: CGRect?, cue: CoachTip?) {
+            guard let pixels = frame.pixels else { return (nil, .stepBackWholePanel) }
+            if Self.obliqueDegrees(normal: pending.normal, from: pending.point, to: frame.camera) > Self.panelPhotoMaxObliqueDegrees {
+                return (nil, .faceLabel)
             }
-            if read.panel?.labelMode == true || area > Self.panelPhotoArea.upperBound || tooClose || !photoPasses {
-                beginWidePanelPhoto(at: lockPoint)
+            guard let region = Self.panelPhotoRegion(box: frame.box) else { return (nil, .stepBackWholePanel) }
+            let framedByBox = region != CGRect(x: 0, y: 0, width: 1, height: 1)
+            let minDistance = framedByBox ? Self.panelPhotoMinDistanceMeters : Self.panelFullFramePhotoMinDistanceMeters
+            guard simd_distance(frame.camera, pending.point) >= minDistance else { return (nil, .stepBackWholePanel) }
+            guard let reading = CaptureQuality.measure(pixels.buffer, visionRect: region, orientation: frame.orientation) else {
+                return (nil, .holdStill)
             }
-            guard photoPasses, let pixels = context.pixels, let region else {
-                onScanCapture?(result)
-                return
-            }
-            let orientation = context.orientation
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let photo = PlacementSceneController.renderPhoto(pixels, region: region, orientation: orientation)
-                await self?.finishPanelCapture(result, photo: photo)
+            switch CaptureQuality.problem(reading) {
+            case .tooDark: return (nil, .tooDark)
+            case .tooBright: return (nil, .tooBright)
+            case .blurry: return (nil, .holdStill)
+            case nil: return (region, nil)
             }
         }
 
-        private func finishPanelCapture(_ capture: ScanCapture, photo: CGImage?) {
-            var result = capture
-            if let photo { result.image = UIImage(cgImage: photo) }
-            onScanCapture?(result)
-        }
-
-        private func beginWidePanelPhoto(at point: SIMD3<Float>) {
-            let normal = panelWallHit?.normal ?? SIMD3(0, 0, 1)
-            widePanelPhoto = WidePanelPhoto(until: CACurrentMediaTime() + Self.widePanelPhotoSeconds, point: point, normal: normal)
-            updateDetectorGate()
-        }
-
-        private func endWidePanelPhoto() {
-            guard widePanelPhoto != nil else { return }
-            widePanelPhoto = nil
-            updateDetectorGate()
+        /// The panel is identified. The frame that did it becomes the photo when it shows the whole panel; otherwise
+        /// the scan waits for one (`considerPanelPhoto`).
+        private func identifyPanel(_ pending: PanelPending, frame: PanelPhotoFrame) {
+            panelPending = pending
+            let plan = panelPhotoPlan(frame, pending: pending)
+            if let region = plan.region, let pixels = frame.pixels {
+                renderPanelPhoto(pixels, region: region, orientation: frame.orientation)
+            } else {
+                logCapture(.breakerPanel, "WAIT-WHOLE-PANEL", "\(plan.cue.map { "\($0)" } ?? "-")")
+                scanHint = plan.cue ?? .stepBackWholePanel
+            }
             publishScanFeedback()
         }
 
-        /// While a wider panel photo is wanted: the first frame that frames the whole panel, sharp and exposed, from
-        /// 0.5 m or more and at most 45° off, replaces panel.jpg. The lock and the amps stay as they are.
-        private func considerWidePanelPhoto(_ packet: EquipmentScanFrame) {
-            guard let wide = widePanelPhoto else { return }
-            guard CACurrentMediaTime() < wide.until else {
-                endWidePanelPhoto()
-                return
-            }
-            guard packet.status == .ok, trackingBlockedMessage == nil, !widePanelPhotoRendering, let pixels = packet.pixels else { return }
-            let column = packet.cameraTransform.columns.3
-            let camera = SIMD3<Float>(column.x, column.y, column.z)
-            guard simd_distance(camera, wide.point) >= Self.panelPhotoMinDistanceMeters,
-                  Self.obliqueDegrees(normal: wide.normal, from: wide.point, to: camera) <= Self.panelPhotoMaxObliqueDegrees,
-                  Self.projects(wide.point, into: packet, margin: 0.05) else { return }
-            let box = packet.detections
-                .filter { $0.kind == .breakerPanel && $0.confidence >= Self.captureMinConfidence }
-                .max { $0.confidence < $1.confidence }?.boundingBox
-            guard let region = Self.panelPhotoRegion(box: box),
-                  let reading = CaptureQuality.measure(pixels.buffer, visionRect: region, orientation: packet.visionOrientation),
-                  CaptureQuality.problem(reading) == nil else { return }
-            widePanelPhotoRendering = true
-            let orientation = packet.visionOrientation
+        /// While an identified panel waits for its photo: the first frame that shows it whole, sharp and exposed,
+        /// becomes panel.jpg and locks the panel. Returns the bottom-line cue.
+        private func considerPanelPhoto(_ packet: EquipmentScanFrame) -> CoachTip? {
+            guard let pending = panelPending else { return nil }
+            guard packet.status == .ok, trackingBlockedMessage == nil else { return nil }
+            if panelPhotoRendering { return .holdStill }
+            guard Self.projects(pending.point, into: packet, margin: 0.05) else { return .pointAtPanel }
+            let box = pendingDetections
+                .first { $0.kind == .breakerPanel && $0.confidence >= Self.captureMinConfidence }
+                .flatMap { detection -> CGRect? in
+                    guard let landing = pendingLandings[.breakerPanel],
+                          simd_distance(landing.position, pending.point) <= Self.panelPhotoBoxRadiusMeters else { return nil }
+                    return detection.boundingBox
+                }
+            let plan = panelPhotoPlan(PanelPhotoFrame(packet, box: box), pending: pending)
+            guard let region = plan.region, let pixels = packet.pixels else { return plan.cue ?? .stepBackWholePanel }
+            renderPanelPhoto(pixels, region: region, orientation: packet.visionOrientation)
+            return .holdStill
+        }
+
+        private func renderPanelPhoto(_ pixels: CopiedPixels, region: CGRect, orientation: CGImagePropertyOrientation) {
+            panelPhotoRendering = true
             Task.detached(priority: .userInitiated) { [weak self] in
                 let photo = PlacementSceneController.renderPhoto(pixels, region: region, orientation: orientation)
-                await self?.finishWidePanelPhoto(photo)
+                await self?.completePanelCapture(photo)
             }
         }
 
-        private func finishWidePanelPhoto(_ photo: CGImage?) {
-            widePanelPhotoRendering = false
-            guard widePanelPhoto != nil, let photo else { return }
-            onScanCapture?(ScanCapture(kind: .breakerPanel, image: UIImage(cgImage: photo), photoOnly: true))
-            logCapture(.breakerPanel, "WIDE-PHOTO", "\(photo.width)x\(photo.height)")
-            endWidePanelPhoto()
+        /// Locks the identified panel with its whole-panel photo and hands both over. The amps are the MAIN read's,
+        /// or nil so Review asks.
+        private func completePanelCapture(_ photo: CGImage?) {
+            panelPhotoRendering = false
+            guard let pending = panelPending, let photo else { return }
+            // A tracking drop or coaching mid-render: the next good frame tries again.
+            guard holdLockKind() == .breakerPanel, trackingBlockedMessage == nil else { return }
+            guard relockAllowed(.breakerPanel, point: pending.point),
+                  lockRejection(.breakerPanel, at: pending.point, normal: pending.normal, checkHeight: true) == nil else {
+                panelPending = nil
+                publishScanFeedback()
+                return
+            }
+            panelPending = nil
+            lockEquipment(.breakerPanel, at: EquipmentLock.Sample(point: pending.point, normal: pending.normal), source: .scanCapture)
+            logCapture(.breakerPanel, "CAPTURED", "amps=\(pending.amps.map(String.init) ?? "-") basis=\(pending.basis?.rawValue ?? "-") photo=\(photo.width)x\(photo.height)")
+            onScanCapture?(ScanCapture(
+                kind: .breakerPanel,
+                image: UIImage(cgImage: photo),
+                mainBreakerAmps: pending.amps,
+                mainBreakerBasis: pending.amps == nil ? nil : pending.basis
+            ))
+            recordLockFrame(kind: EquipmentKind.breakerPanel.rawValue, source: "scan-capture", point: pending.point, reason: FrameRecorder.Reason.capture)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            publishScanFeedback()
+            emit()
         }
 
         /// True when the world point lands inside the packet's camera image, `margin` in from every edge.

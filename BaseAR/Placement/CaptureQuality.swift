@@ -222,6 +222,9 @@ enum ScanTextParser {
     static let minLineConfidence: Float = 0.3
     /// The largest handle's print must be this much taller than the tallest branch numeral.
     static let handleHeightRatio: CGFloat = 1.15
+    /// The largest-handle path (C) is off: the main breaker's amps are read only beside MAIN, otherwise they stay nil
+    /// and Review asks (owner, 27 Sep). Kept for a later field test.
+    static let largestHandleEnabled = false
 
     struct MeterRead: Sendable, Equatable {
         var number: String
@@ -232,7 +235,7 @@ enum ScanTextParser {
 
     /// One panel crop's reading.
     struct PanelRead: Sendable, Equatable {
-        /// The main breaker's rating, when a MAIN rule (or the largest handle) read one.
+        /// The main breaker's rating, when a MAIN rule read one (the largest handle only if `largestHandleEnabled`).
         var amps: Int?
         var basis: MainBreakerBasis?
         /// The crop is a panel (a label, branch handles, or panel words) even when no main rating was read.
@@ -297,7 +300,7 @@ enum ScanTextParser {
 
     /// The main breaker's rating on this crop, and whether the crop is a panel at all. Nil when it is not a panel
     /// (a meter, a disconnect, an appliance, or text with no panel words). `detectorPanelBox` is a real panel box
-    /// from the detector: only then may the largest-handle path run.
+    /// from the detector: only then may the largest-handle path run, and only with `largestHandleEnabled`.
     static func panelRead(in raw: [ScanTextLine], detectorPanelBox: Bool) -> PanelRead? {
         let lines = raw.filter { $0.confidence >= minLineConfidence }
         let texts = lines.map { normalize($0.text) }
@@ -346,7 +349,7 @@ enum ScanTextParser {
         }
 
         // (C) Largest handle: a breaker face with branch handles in view, never a printed label.
-        if detectorPanelBox, !labelMode, branch.count >= 2 {
+        if largestHandleEnabled, detectorPanelBox, !labelMode, branch.count >= 2 {
             let ratingsOnly = lines.filter { matches(normalize($0.text), ratingOnly) && !vetoed($0) }
             let values = Set(ratingsOnly.flatMap { tokens(in: normalize($0.text)) })
             let tallestBranch = branch.map(\.box.height).max() ?? 0

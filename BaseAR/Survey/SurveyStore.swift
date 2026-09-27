@@ -307,6 +307,10 @@ final class SurveyStore {
                 setMainBreakerAmperage(amps, source: .ocr, note: Self.scanReadNote)
                 session.electrical.mainBreakerAmperageBasis = capture.mainBreakerBasis
                 mainBreakerFromScan = true
+            } else if capture.mainBreakerAmps == nil, hasAmps, session.electrical.mainBreakerAmperageSource == .ocr {
+                // This panel photo read no MAIN. An older, unconfirmed scan read (the 22:31 run kept a stab rating,
+                // 125) does not stand beside it; Review asks.
+                setMainBreakerAmperage(nil)
             }
         }
         refreshAssessment()

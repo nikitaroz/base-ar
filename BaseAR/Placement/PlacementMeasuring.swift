@@ -575,12 +575,16 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let dot = simd_dot(meterNormal, panelNormal)
         let separation = abs(simd_dot(panelPoint - meterPoint, meterNormal))
         if abs(dot) >= wallSameDirectionDotThreshold { return separation <= sameWallPlaneToleranceMeters }
-        guard separation <= sameWallPlaneToleranceMeters else { return false }
+        // A tilted patch is a few tens of degrees off; a lock on the other wall of a corner is about 90° off.
+        guard dot >= Self.wallRunMinDot, separation <= sameWallPlaneToleranceMeters else { return false }
         return wallRuns(from: meterPoint, to: panelPoint, normal: meterNormal, samples: snapshot.classifiedMesh)
     }
 
     /// Share of 10 cm along-wall strips between two points on one wall that must hold a wall face on that plane.
     static let wallRunShare: Float = 0.6
+    /// Lock normals this far apart (about 53°) may still be one wall when the mesh shows it running between them. The
+    /// demo wall's panel patch was 37° off the siding. Tune on device.
+    static let wallRunMinDot: Float = 0.6
     /// A wall face this close to the plane (in front of or behind it) is on it. The meter face sits about 0.12 m in
     /// front of the siding, so this also finds the siding behind a lock made on the meter's glass.
     static let wallRunPlaneToleranceMeters: Float = 0.15

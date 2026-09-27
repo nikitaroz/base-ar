@@ -1,0 +1,95 @@
+.githooks/pre-commit
+  s_535a502178fe4f::t_7ff618401c4933 1-14
+AGENTS.md
+  s_535a502178fe4f::t_0170f32f8fc21d 32,34,37,40,156
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_4e0453e438627f 49,111,287,423,564,572,582,590
+BaseAR/Assets.xcassets/OnboardingBatteries.imageset/Contents.json
+  s_535a502178fe4f::t_f7129f35db249c 4-5,11-13
+BaseAR/Assets.xcassets/OnboardingBatteries.imageset/OnboardingBatteries.svg
+  s_535a502178fe4f::t_3e0872285c0afa 1-12
+BaseAR/Assets.xcassets/OnboardingEmail.imageset/Contents.json
+  s_535a502178fe4f::t_3cfa6356e4a971 4-5,11-13
+BaseAR/Assets.xcassets/OnboardingEmail.imageset/OnboardingEmail.svg
+  s_535a502178fe4f::t_834cde626e2fa4 1-6
+BaseAR/Assets.xcassets/OnboardingGasMeter.imageset/Contents.json
+  s_535a502178fe4f::t_0b0bcbc5725a0a 4-5,11-13
+BaseAR/Assets.xcassets/OnboardingGasMeter.imageset/OnboardingGasMeter.svg
+  s_535a502178fe4f::t_3784f0be4ff029 1-9
+BaseAR/Grid/GridService.swift
+  s_535a502178fe4f::t_0cab8c866f052e 3-9,11-21,27-29,31,35-41
+BaseAR/Grid/PricingSource.swift
+  s_535a502178fe4f::t_88acd04fc3790b 1-47
+BaseAR/Onboarding/OnboardingPages.swift
+  s_535a502178fe4f::t_72d1b0b0c9ebe8 203-206
+BaseAR/Placement/EquipmentDetecting.swift
+  s_535a502178fe4f::t_678506b6a23450 24-27,102-106,121-123,143-144,172-183
+BaseAR/Placement/EquipmentScan.mlpackage/Manifest.json
+  s_535a502178fe4f::t_c3f44a52f0aa26 4,10,17
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_fbbd582a9d773b 301-423,489-490,493,563,680-701,959,986-993,1000-1001,1013-1025,1045,1048,1050,1187,1189,1273-1274,1581,1589,1593,1596,1641,1814,1829,1831,1834,2140-2142,2162-2163,2614,2643-2648,2650,2660,3317,3349-3351,3354-3355,3359-3360,3737-3747,3755,4748,4849-4850,4856-4866
+BaseAR/Placement/PlacementMeasuring.swift
+  s_535a502178fe4f::t_40c68151113251 2,62-73,96-98,228,272,520-522,528,749-760,970
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_ce6dd56192d2e7 62,390,452-455,457-463,466
+BaseAR/Review/TypeSafeJevClient.swift
+  s_535a502178fe4f::t_bba91b82d81b73 126,263
+BaseAR/Rules/BaseRuleSet.swift
+  s_535a502178fe4f::t_1569b4ad6aa7c1 32,171,206,219,222,225-226,229-230,277
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_3bd20b2314fdfb 331-332
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_f0c5daa6cac72b 12,15-17,127,132,143,151-152,154-156,199-200,202,384-385,396-405,408,410-416,418-426,434-462,464,517-520,523
+README.md
+  s_535a502178fe4f::t_7b28fac3e97158 15,17,58,80,103,124-125,131,133-134,247-257,259,261,264-267,290
+docs/context/electrical-equipment-guide.md
+  s_535a502178fe4f::t_01e305ec610106 31,119
+"reports/Base battery form vs app.md"
+  s_535a502178fe4f::t_47bb3665bdcfce 36,39,54,72
+scripts/autolabel.py
+  s_535a502178fe4f::t_e97906e6e541b1 2,4-9,11-13,15,20,24,26-44,49,52-53,55,57-60,62-133,137,151,155-160,162-165,167-170
+scripts/bootstrap-signing.sh
+  s_535a502178fe4f::t_e5774156f43ce0 2-9,13-17,20,25-32,34-36,38,41-45,48-54,57-58,62,64,67,75
+scripts/fetch_commons.py
+  s_535a502178fe4f::t_6641da78d54ec3 2,4-6,11,17,20-40,42-44,46-51,56-63,67,70-72,78-81,85-86,88,97-98,101,104-105,109,113-130,134,136,140-153,155-156,159,161-165
+scripts/fetch_openverse.py
+  s_535a502178fe4f::t_3bcd2f07f301a8 2,4-7,12,19,22-32,34-57,61-104,106,108-112
+scripts/photoset/autolabel.py
+  s_535a502178fe4f::t_0632ad08e48db7 1-456
+scripts/photoset/fetch_commons.py
+  s_535a502178fe4f::t_d265c06501fafa 1-210
+scripts/photoset/fetch_openverse.py
+  s_535a502178fe4f::t_da7b12f1609b22 1-183
+scripts/photoset/open_images.py
+  s_535a502178fe4f::t_3be55646bd5086 5
+scripts/requirements-training.txt
+  s_535a502178fe4f::t_7bbe5b245633d5 8
+scripts/train_equipment.py
+  s_535a502178fe4f::t_4b34041aed3c17 4-5
+tools/viewer/README.md
+  s_535a502178fe4f::t_8ad5492ab257f2 7-8
+tools/viewer/src/App.tsx
+  s_535a502178fe4f::t_6a81c2bd41f1be 2,38-40,44-45,55,58-113,115-131,133-138,142-151,187-204,212-213,217-219,277-281,289,292-294,297,303-304,307-310,316-331,334-337,339-342,344-358,361-364,366-367,383-384,389-390,395,400,410,412,414,419
+tools/viewer/src/lib/checker.d.ts
+  s_535a502178fe4f::t_405bd8652a41ea 71
+tools/viewer/src/lib/checker.js
+  s_535a502178fe4f::t_3a79dbde283842 60,274-276,280-282,287,290,293-296,298-299,301-305,381-383
+tools/viewer/src/lib/scene.ts
+  s_535a502178fe4f::t_688c4d0dbb4e32 109,343-350,352,378-380,384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a7025ef5d9f8ce434d2cc8f3cc920bddba3e74fb",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

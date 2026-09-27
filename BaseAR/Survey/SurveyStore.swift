@@ -18,6 +18,12 @@ final class SurveyStore {
     private(set) var meterPhotoIsScanCrop = false
     /// True while the meter number is what OCR read from that crop, so dropping the crop drops the number too.
     private var meterNumberFromScanCrop = false
+    /// The Live Survey's photo of the panel, from its automatic capture.
+    private(set) var panelImage: UIImage?
+    /// Shown under the main-breaker value after a scan read it. Cleared when the user sets the value.
+    private(set) var mainBreakerNote: String?
+    /// True while the main-breaker value is the scan's read, so a redone panel drops it with the photo.
+    private var mainBreakerFromScan = false
     /// Shown when the property fix failed or location access is off. Nil while waiting or after a fix.
     private(set) var locationStatusMessage: String?
     /// True from the tap until a fix or a failure. The form uses this so the tap has an immediate result.
@@ -85,6 +91,9 @@ final class SurveyStore {
         if let placementController { return placementController }
         let created = PlacementSceneController()
         created.setActiveModel(BatteryCatalog.baseCore)
+        // The scan captures the meter and the panel by itself; the survey keeps the photo and the value it read.
+        created.onScanCapture = { [weak self] capture in self?.acceptScanCapture(capture) }
+        created.onScanCaptureCleared = { [weak self] kind in self?.dropScanCapture(kind) }
         placementController = created
         return created
     }
@@ -130,8 +139,12 @@ final class SurveyStore {
         refreshAssessment()
     }
 
-    func setMainBreakerAmperage(_ value: Int?) {
+    /// `source` is `.manual` for anything the user typed or tapped. Only the scan's own read passes `.ocr`.
+    func setMainBreakerAmperage(_ value: Int?, source: MeterNumberSource = .manual, note: String? = nil) {
         session.electrical.mainBreakerAmperage = value
+        session.electrical.mainBreakerAmperageSource = value == nil ? nil : source
+        mainBreakerNote = note
+        mainBreakerFromScan = false
         refreshAssessment()
     }
 
@@ -236,6 +249,83 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// The Live Survey's automatic capture. The photo is the sharp, well-lit crop the scan read; the value goes in
+    /// as a scan read ("Read by scan — check it") the user confirms in Review. A value the user typed is never
+    /// replaced, and neither is a photo the user took.
+    func acceptScanCapture(_ capture: ScanCapture) {
+        let jpeg = Self.uprightJPEG(capture.image)
+        switch capture.kind {
+        case .electricMeter:
+            if meterImage == nil || meterPhotoIsScanCrop {
+                // A scan photo replaces an older scan photo, so a stale OCR pass on that one must not land.
+                meterReadGeneration += 1
+                isReadingMeterNumber = false
+                meterImage = capture.image
+                meterPhotoIsScanCrop = true
+                session.electrical.meterPhotoFilename = write(jpeg, filename: "meter.jpg")
+            }
+            if let number = capture.meterNumber, canTakeScanRead(session.electrical.meterNumberSource, hasValue: hasMeterNumber) {
+                setMeterNumber(number, source: .ocr, note: Self.scanReadNote)
+                // Tied to this capture even when the user's own photo was kept, so a redone meter drops it.
+                meterNumberFromScanCrop = true
+            }
+        case .breakerPanel:
+            panelImage = capture.image
+            session.electrical.panelPhotoFilename = write(jpeg, filename: "panel.jpg")
+            let hasAmps = session.electrical.mainBreakerAmperage != nil
+            if let amps = capture.mainBreakerAmps, canTakeScanRead(session.electrical.mainBreakerAmperageSource, hasValue: hasAmps) {
+                setMainBreakerAmperage(amps, source: .ocr, note: Self.scanReadNote)
+                mainBreakerFromScan = true
+            }
+        }
+        refreshAssessment()
+    }
+
+    /// A redone or restarted scan lock: its photo goes, and a value only the scan read goes with it.
+    func dropScanCapture(_ kind: EquipmentKind) {
+        switch kind {
+        case .electricMeter:
+            dropScanMeterPhoto()
+            // The user's own photo stays, but a number only this capture read does not.
+            if meterNumberFromScanCrop, session.electrical.meterNumberSource == .ocr {
+                setMeterNumber("")
+            }
+        case .breakerPanel:
+            panelImage = nil
+            if let name = session.electrical.panelPhotoFilename {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+            }
+            session.electrical.panelPhotoFilename = nil
+            if mainBreakerFromScan, session.electrical.mainBreakerAmperageSource == .ocr {
+                setMainBreakerAmperage(nil)
+            }
+            refreshAssessment()
+        }
+    }
+
+    /// "Looks right" on a scan-read meter number: the user now vouches for it.
+    func confirmScannedMeterNumber() {
+        guard session.electrical.meterNumberSource == .ocr, let number = session.electrical.meterNumber else { return }
+        setMeterNumber(number, source: .manual)
+    }
+
+    /// "Looks right" on a scan-read main breaker: the user now vouches for it, so the breaker rule can decide.
+    func confirmScannedMainBreaker() {
+        guard session.electrical.mainBreakerAmperageSource == .ocr, let amps = session.electrical.mainBreakerAmperage else { return }
+        setMainBreakerAmperage(amps, source: .manual)
+    }
+
+    static let scanReadNote = "Read by scan — check it"
+
+    private var hasMeterNumber: Bool {
+        !(session.electrical.meterNumber ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// A scan read may fill an empty value or replace an earlier read. Never a value the user entered.
+    private func canTakeScanRead(_ source: MeterNumberSource?, hasValue: Bool) -> Bool {
+        !hasValue || source == .ocr
+    }
+
     func measurements(for snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
         measurer.measure(snapshot)
     }
@@ -299,6 +389,7 @@ final class SurveyStore {
             }
             for name in [
                 session.electrical.meterPhotoFilename,
+                session.electrical.panelPhotoFilename,
                 session.placement.screenshotFilename
             ] {
                 guard let name else { continue }

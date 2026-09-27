@@ -30,6 +30,9 @@ struct EquipmentDetection: Sendable {
     /// The detector's own score for this box (`VNRecognizedObjectObservation.confidence`), not the label share.
     var confidence: Float
     var boundingBox: CGRect
+    /// Focus and exposure inside the box, measured on the inference queue for the capture gate. Nil past the
+    /// first few boxes of a frame, or for a box too small to measure.
+    var quality: CaptureReading? = nil
 }
 
 /// Why a frame came back with the boxes it has. A model that failed to load or run must not look like an empty wall.
@@ -217,9 +220,13 @@ struct EquipmentScanFrame: Sendable {
     /// Media time when the frame was captured, so a packet held past a stalled inference is not read as current.
     var capturedAt: CFTimeInterval = 0
     var status: EquipmentObservationStatus = .ok
-    /// The camera image the boxes came from. Kept only when a meter box is in it, so a meter lock can crop its
-    /// fallback photo from this same frame instead of a later one.
+    /// The camera image the boxes came from, so a lock crops its photo and the capture gate reads text from this
+    /// same frame instead of a later one. A copy: no `ARFrame` is kept.
     var pixels: CopiedPixels?
+    /// The middle of the screen (`EquipmentScanBridge.centerFraction` of each side) as a Vision-normalized rect of
+    /// the upright image, and its focus and exposure. The text-first panel search reads this region.
+    var centerRegion: CGRect?
+    var centerQuality: CaptureReading?
 
     var displayTransform: CGAffineTransform {
         CGAffineTransform(a: displayA, b: displayB, c: displayC, d: displayD, tx: displayTX, ty: displayTY)
@@ -229,6 +236,10 @@ struct EquipmentScanFrame: Sendable {
 /// Copies AR frames on the session callback and runs the detector on a background queue. The latest packet is drained on the main thread.
 final class EquipmentScanBridge: @unchecked Sendable {
     let detector = YOLOEquipmentDetector()
+    /// Share of the screen's width and height, around its center, that counts as "in the middle" for the capture gate.
+    static let centerFraction: CGFloat = 0.6
+    /// Boxes per frame that get a focus and exposure reading, strongest first.
+    private static let measuredBoxes = 4
     private let gate = OSAllocatedUnfairLock(initialState: Gate())
     private let latest = OSAllocatedUnfairLock<EquipmentScanFrame?>(initialState: nil)
     private let inference = DispatchQueue(label: "BaseAR.equipment-scan", qos: .userInitiated)
@@ -302,10 +313,25 @@ final class EquipmentScanBridge: @unchecked Sendable {
         inference.async { [self] in
             var packet = geometry
             let result = detector.detectResult(in: copied.buffer, orientation: visionOrientation)
-            packet.detections = result.detections
+            var detections = result.detections.sorted { $0.confidence > $1.confidence }
+            for index in detections.indices.prefix(Self.measuredBoxes) {
+                detections[index].quality = CaptureQuality.measure(
+                    copied.buffer,
+                    visionRect: detections[index].boundingBox,
+                    orientation: visionOrientation
+                )
+            }
+            packet.detections = detections
             packet.status = result.status
-            if result.detections.contains(where: { $0.kind == .electricMeter }) {
+            if result.status == .ok {
                 packet.pixels = copied
+                let center = CaptureQuality.centerVisionRect(
+                    fraction: Self.centerFraction,
+                    displayTransform: transform,
+                    orientation: visionOrientation
+                )
+                packet.centerRegion = center
+                packet.centerQuality = CaptureQuality.measure(copied.buffer, visionRect: center, orientation: visionOrientation)
             }
             let finished = packet
             latest.withLock { $0 = finished }

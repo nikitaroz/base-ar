@@ -1,0 +1,16 @@
+BaseAR/Placement/PlacementARView.swift
+  h_cb88e130246132 1863,1890,1892
+BaseAR/Review/TypeSafeJevClient.swift
+  h_cb88e130246132 31-37,120,136-137,145-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ee94701ac95ef250a3fb460be098f701fcf9a912",
+  "prompts": {},
+  "humans": {
+    "h_cb88e130246132": {
+      "author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

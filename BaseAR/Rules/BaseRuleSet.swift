@@ -20,12 +20,7 @@ enum BaseRuleSet {
     static let rules: [EligibilityRule] = [
         austinBreaker,
         solarOrTwoBatteries,
-        planningFootprint,
-        meterDistance,
-        wallDistance,
-        windowClearance,
-        equipmentAccess,
-        gasMeterClearance,
+        siteSpot,
         transferSwitchSpace,
         meterHeight,
         frontWorkingSpace,
@@ -86,119 +81,45 @@ enum BaseRuleSet {
         }
     )
 
-    private static let planningFootprint = EligibilityRule(
-        id: "planning-footprint",
-        title: "3 ft × 3 ft footprint",
-        requirement: "Each battery needs a 3 ft × 3 ft planning footprint.",
-        isRequired: true,
-        evaluate: { session in
-            let side = Int(footprintSideFeet)
-            guard session.placement.batteryPlaced else {
-                return .unknown("The battery has not been placed, so the \(side) ft pad was not checked on site.")
-            }
-            if let clear = session.placement.footprintIsClear {
-                return clear
-                    ? .pass("The \(side) ft × \(side) ft pad was measured clear.")
-                    : .conflict("The \(side) ft × \(side) ft pad was measured as blocked.")
-            }
-            if session.placement.footprintClearAttested == true {
-                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested the \(side) ft × \(side) ft pad is clear. Not a measurement.")
-            }
-            return .unknown("The preview draws a \(side) ft × \(side) ft pad. Clearance inside that pad was not measured from the scan.")
-        }
-    )
+    /// The site check replaces the battery-position rules (pad, meter distance, wall distance, window, working-space
+    /// access, gas clearance): the Live Survey places no battery. It asks once, from the finished mesh, whether a spot
+    /// that meets all of them exists beside the meter. Found is measured; the gas part rests on how the gas meter was
+    /// shown or answered, so a spot beside a gas meter the scan did not recognize, or "No gas meter" on Home Info,
+    /// passes as attested (teal), never measured.
+    static let siteSpotRuleID = "site-spot"
 
-    private static let meterDistance = EligibilityRule(
-        id: "meter-distance",
-        title: "Within 20 ft of the meter",
-        requirement: "The battery should be within 20 ft of the electric meter.",
+    private static let siteSpot = EligibilityRule(
+        id: siteSpotRuleID,
+        title: "Space for a battery beside the meter",
+        requirement: "A clear \(Int(footprintSideFeet)) ft × \(Int(footprintSideFeet)) ft ground spot within \(Int(maxWallDistanceFeet)) ft of the meter wall, within \(Int(maxMeterDistanceFeet)) ft of the meter, at least \(Int(minGasMeterDistanceFeet)) ft from a gas meter, not in front of a window, and out of the meter's and panel's working space.",
         isRequired: true,
         evaluate: { session in
-            distanceOutcome(
-                feet: session.placement.distanceToMeterFeet,
-                missing: "The battery and electric meter have not both been placed, so this distance was not measured.",
-                passes: { $0 <= maxMeterDistanceFeet },
-                passText: { "Measured distance to the electric meter is \($0), within 20 ft." },
-                conflictText: { "Measured distance to the electric meter is \($0), farther than 20 ft." }
-            )
-        }
-    )
-
-    private static let wallDistance = EligibilityRule(
-        id: "wall-distance",
-        title: "Within 1 ft of the wall",
-        requirement: "The battery should be within 1 ft of the wall.",
-        isRequired: true,
-        evaluate: { session in
-            distanceOutcome(
-                feet: session.placement.distanceToWallFeet,
-                missing: "Clearance from the battery to the wall has not been measured.",
-                passes: { $0 <= maxWallDistanceFeet },
-                passText: { "Measured clearance to the nearest detected wall is \($0), within 1 ft." },
-                conflictText: { "Measured clearance to the nearest detected wall is \($0), more than 1 ft." }
-            )
-        }
-    )
-
-    private static let windowClearance = EligibilityRule(
-        id: "not-in-front-of-window",
-        title: "Not in front of a window",
-        requirement: "The battery cannot be placed in front of a window.",
-        isRequired: true,
-        evaluate: { session in
-            guard session.placement.batteryPlaced else {
-                return .unknown("The battery has not been placed.")
+            let placement = session.placement
+            guard let spot = placement.batterySpot else {
+                return .unknown("The site check runs when the Live Survey's look-around finishes.")
             }
-            guard let clear = session.placement.clearOfWindows else {
-                return .unknown("The wall behind the battery has not been scanned, so a window there was not checked.")
+            switch spot.status {
+            case .noMeter:
+                return .unknown("No meter was found on the wall, so the ground beside it was not checked.")
+            case .noWall:
+                return .unknown("Not enough of the ground and wall beside the meter was scanned to find a spot that meets Base's spacing rules.")
+            case .allRejected:
+                let reasons = siteSpotReasons(spot.rejections)
+                return .conflict("Every scanned spot beside the meter breaks one of Base's spacing rules" + (reasons.isEmpty ? "." : ": \(reasons)."))
+            case .placed:
+                let found = "A spot that meets Base's spacing rules was found beside the meter."
+                if placement.gasMeterPosition != nil {
+                    // The scan does not recognize gas meters yet: a spot the user showed is their showing.
+                    if placement.gasMeterMarkSource == .recognized {
+                        return .pass(found + " It is at least \(Int(minGasMeterDistanceFeet)) ft from the gas meter.")
+                    }
+                    return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: found + " It is at least \(Int(minGasMeterDistanceFeet)) ft from the spot you showed as the gas meter. The scan did not recognize it; check the gas photo.")
+                }
+                if placement.gasMeterNotPresent {
+                    return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: found + " You reported no gas meter, so the \(Int(minGasMeterDistanceFeet)) ft gas clearance rests on your answer.")
+                }
+                return .unknown(found + " The gas meter was not shown, so its \(Int(minGasMeterDistanceFeet)) ft clearance was not checked.")
             }
-            return clear
-                ? .pass("The scanned wall behind the cabinet has no window in front of the battery.")
-                : .conflict("A detected window overlaps the cabinet, so the battery is in front of a window.")
-        }
-    )
-
-    private static let equipmentAccess = EligibilityRule(
-        id: "meter-panel-access",
-        title: "Not in front of the meter or panel",
-        requirement: "Keep the \(Int(workingSpaceWidthInches)) × \(Int(workingSpaceDepthInches)) in working space in front of the meter and the panel free of the battery.",
-        isRequired: true,
-        evaluate: { session in
-            guard session.placement.batteryPlaced else {
-                return .unknown("The battery has not been placed.")
-            }
-            guard let clear = session.placement.keepsEquipmentAccess else {
-                return .unknown("The meter and the panel both need to be found in the Live Survey to check the battery stays out of their working space.")
-            }
-            return clear
-                ? .pass("The battery stays out of the working space in front of the meter and the panel.")
-                : .conflict("The battery stands in the working space in front of the meter or the panel.")
-        }
-    )
-
-    private static let gasMeterClearance = EligibilityRule(
-        id: "gas-meter-clearance",
-        title: "At least 3 ft from a gas meter",
-        requirement: "The battery must be at least 3 ft from a gas meter.",
-        isRequired: true,
-        evaluate: { session in
-            if session.placement.distanceToGasMeterFeet == nil, session.placement.gasMeterNotPresent {
-                // The user's answer, not a measurement, so the best this home can reach is "attested".
-                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
-            }
-            guard let feet = session.placement.distanceToGasMeterFeet, feet.isFinite, feet >= 0 else {
-                return .unknown("The gas meter was not shown on the scan, so clearance was not measured.")
-            }
-            let formatted = String(format: "%.1f ft", feet)
-            guard feet >= minGasMeterDistanceFeet else {
-                return .conflict("Measured \(formatted) from the pad to the gas meter, closer than 3 ft.")
-            }
-            // The scan does not recognize gas meters yet: a spot the user showed (or an older file's tap) is their
-            // showing, so the distance passes as attested until the gas photo is checked.
-            if session.placement.gasMeterMarkSource == .recognized {
-                return .pass("Measured distance to the gas meter is \(formatted), at least 3 ft.")
-            }
-            return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "Measured \(formatted) from the pad to the spot you showed as the gas meter. The scan did not recognize it; check the gas photo.")
         }
     )
 
@@ -251,6 +172,9 @@ enum BaseRuleSet {
             if session.placement.transferSwitchSpaceAttested == true {
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested transfer-switch space beside the meter is available. Not a measurement.")
             }
+            if session.placement.lidarMeshAvailable {
+                return .unknown("Not enough of the wall beside the meter was scanned to check space for a transfer switch.")
+            }
             return .unknown("Space for a transfer switch beside the meter was not measured. Without a mesh scan it stays unknown.")
         }
     )
@@ -272,15 +196,12 @@ enum BaseRuleSet {
 
 }
 
-/// `passText` and `conflictText` receive the distance already formatted, such as "4.2 ft".
-private func distanceOutcome(
-    feet: Double?,
-    missing: String,
-    passes: (Double) -> Bool,
-    passText: (String) -> String,
-    conflictText: (String) -> String
-) -> RuleOutcome {
-    guard let feet, feet.isFinite, feet > 0 else { return .unknown(missing) }
-    let formatted = String(format: "%.1f ft", feet)
-    return passes(feet) ? .pass(passText(formatted)) : .conflict(conflictText(formatted))
+/// The distinct reasons in a site check's "+0.9 m: pad blocked" rejections, in first-seen order.
+private func siteSpotReasons(_ rejections: [String]) -> String {
+    var seen: [String] = []
+    for rejection in rejections {
+        let reason = rejection.split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? rejection
+        if !reason.isEmpty, !seen.contains(reason) { seen.append(reason) }
+    }
+    return seen.joined(separator: ", ")
 }

@@ -486,8 +486,6 @@ struct PlacementARView: View {
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
     @State private var capturedFrames = 0
-    @State private var cachedLiveAssessment: SurveyAssessment?
-    @State private var cachedLiveScene: PlacementSceneSnapshot?
     /// The bottom line as shown, paced so it does not flicker at the detector's rate.
     @State private var pacer = FeedbackPacer()
     @State private var latestFeedback: Feedback?
@@ -1022,12 +1020,6 @@ struct PlacementARView: View {
             while !Task.isCancelled {
                 capturedFrames = store.placementController?.keyframes.count ?? 0
                 try? await Task.sleep(for: .seconds(0.5))
-            }
-        }
-        .task {
-            while !Task.isCancelled {
-                refreshLiveAssessment()
-                try? await Task.sleep(for: .seconds(1.5))
             }
         }
     }

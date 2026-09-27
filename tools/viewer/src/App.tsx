@@ -120,7 +120,7 @@ function SceneLegend({ analysis, colorMode, showGrid, showFloor }: { analysis: A
         {floor.some((f) => f.kind === "lowwall") && <Swatch className="bg-amber-300/70" text="Wall not confirmed" />}
       </div>}
       {(has("meter_wall", "meter_ground", "panel_wall", "panel_ground", "gas_meter") || analysis.transferBox) && <div className={group}>
-        {has("meter_wall", "meter_ground") && <Swatch round className="bg-purple-500" text={analysis.reach ? "Meter · 20 ft ring" : "Meter"} />}
+        {has("meter_wall", "meter_ground") && <Swatch round className="bg-purple-500" text={analysis.reach && analysis.rules ? `Meter · ${analysis.rules.max_meter_distance_ft} ft ring` : "Meter"} />}
         {analysis.transferBox && <Swatch className="border border-purple-500" text="Transfer switch" />}
         {has("panel_wall", "panel_ground") && <Swatch round className="bg-teal-500" text="Panel" />}
         {has("gas_meter") && <Swatch round className="bg-pink-500" text="Gas meter" />}

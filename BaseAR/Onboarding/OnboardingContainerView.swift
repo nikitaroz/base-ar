@@ -36,7 +36,7 @@ struct OnboardingContainerView: View {
                 .tint(Color.accentColor)
                 .frame(height: 4)
                 .animation(.easeOut(duration: 0.35), value: progress)
-            if step != .done {
+            if step != .done && step != .email {
                 Button("Skip") { onFinish() }
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -57,6 +57,9 @@ struct OnboardingContainerView: View {
         case .name:
             OnboardingNamePage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
+        case .email:
+            OnboardingEmailPage(store: store, onNext: advance)
+                .transition(pageTransition)
         case .address:
             OnboardingAddressPage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
@@ -65,6 +68,9 @@ struct OnboardingContainerView: View {
                 .transition(pageTransition)
         case .batteryCount:
             OnboardingBatteryCountPage(store: store, onNext: advance, onSkip: onFinish)
+                .transition(pageTransition)
+        case .gasMeter:
+            OnboardingGasMeterPage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
         case .done:
             OnboardingDonePage(onContinue: onFinish)
@@ -91,9 +97,11 @@ struct OnboardingContainerView: View {
 enum OnboardingStep: Int, CaseIterable, Equatable {
     case intro
     case name
+    case email
     case address
     case ownership
     case batteryCount
+    case gasMeter
     case done
 
     static let total = OnboardingStep.allCases.count

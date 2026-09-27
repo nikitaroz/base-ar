@@ -202,12 +202,29 @@ struct ScanTextLine: Sendable, Equatable {
 }
 
 /// Label text that decides a capture. Pure, so the rules can be read and tuned without a device.
+///
+/// Main breaker: an amp rating counts only on an explicit MAIN row (path A: "MAIN BREAKER 200A", or MAIN and the
+/// rating in the next cell of that row) or printed alone right above or below MAIN (path B). A row with a panel-rating
+/// word (stab, bus, max, rated, lugs, AIC, kA, AWG, torque, volts, Hz, catalog, model, series, type, total, branch,
+/// a range like 100-225) never gives the main breaker: "Maximum per stab | 125A" on the demo wall's label is not it.
+/// Path C, the largest handle print among the branch handles, runs only on a real panel box with at least two branch
+/// numerals in view, never on a printed label. Two different MAIN values give nil. A crop that is a panel without a
+/// readable MAIN (a label, three or more branch numerals, or panel words, and not a disconnect or an appliance) is
+/// still panel evidence, so the panel can lock with the amps left for Review.
 enum ScanTextParser {
+    /// Main-breaker ratings read beside MAIN. 60, 70, and 90 are left for Review to ask about.
     static let breakerRatings: Set<Int> = [100, 125, 150, 175, 200, 225]
+    /// 225 is a bus number far more often than a main handle, so the largest-handle path never gives it.
+    static let handleRatings: Set<Int> = [100, 125, 150, 175, 200]
     /// Meter numbers (the nameplate or utility asset number) run 7–12 digits. The kWh register is 5–6 digits.
     static let meterDigits = 7...12
     /// A line read below this is too unsure to decide anything. Tune on device.
     static let minLineConfidence: Float = 0.3
+    /// The largest handle's print must be this much taller than the tallest branch numeral.
+    static let handleHeightRatio: CGFloat = 1.15
+    /// The largest-handle path (C) is off: the main breaker's amps are read only beside MAIN, otherwise they stay nil
+    /// and Review asks (owner, 27 Sep). Kept for a later field test.
+    static let largestHandleEnabled = false
 
     struct MeterRead: Sendable, Equatable {
         var number: String
@@ -216,30 +233,202 @@ enum ScanTextParser {
         var hasMeterCue: Bool
     }
 
-    struct BreakerRead: Sendable, Equatable {
-        var amps: Int
-        /// The rating plus the "MAIN" it sat beside, when there was one.
-        var box: CGRect
-        var nearMain: Bool
+    /// One panel crop's reading.
+    struct PanelRead: Sendable, Equatable {
+        /// The main breaker's rating, when a MAIN rule read one (the largest handle only if `largestHandleEnabled`).
+        var amps: Int?
+        var basis: MainBreakerBasis?
+        /// The crop is a panel (a label, branch handles, or panel words) even when no main rating was read.
+        var isPanelEvidence: Bool
+        /// Two or more printed-label words (torque, AWG, stab, warning, listed…): a label, not the breaker face.
+        var labelMode: Bool
+        /// The rating and its MAIN, or the lines that made it panel evidence. Vision-normalized in the crop.
+        var box: CGRect?
     }
 
-    /// The meter number on this label, or nil. AC and heat-pump nameplates also carry long numbers, so a label
-    /// with refrigerant or compressor words never gives one.
-    static func meterNumber(in lines: [ScanTextLine]) -> MeterRead? {
-        let usable = lines.filter { $0.confidence >= minLineConfidence }
-        guard !usable.contains(where: { isApplianceLabel($0.text) }) else { return nil }
-        let cue = usable.contains { hasMeterCue($0.text) }
-        let labels = usable.filter { isMeterNumberLabel($0.text) }
+    // MARK: Shared
+
+    /// Vision sometimes returns Cyrillic or Greek look-alikes ("TУРE C18 З0TA"). Fold them, then lowercase, before any
+    /// word test.
+    static func normalize(_ text: String) -> String {
+        String(text.flatMap { lookAlikes[$0].map(Array.init) ?? [$0] }).lowercased()
+    }
+
+    private static let lookAlikes: [Character: String] = [
+        "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T",
+        "У": "Y", "Х": "X", "З": "3", "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x",
+        "Α": "A", "Β": "B", "Ε": "E", "Κ": "K", "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Χ": "X"
+    ]
+
+    static func matches(_ text: String, _ pattern: String) -> Bool {
+        text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// Observations on one printed row: vertical centers within 0.6 of the taller box's height. OCR splits a label's
+    /// table row into boxes ("Maximum per stab" | "125A"); the whole row is the line.
+    static func rowMates(of line: ScanTextLine, in lines: [ScanTextLine]) -> [ScanTextLine] {
+        lines.filter { other in
+            abs(other.box.midY - line.box.midY) < max(other.box.height, line.box.height) * 0.6
+        }.sorted { $0.box.minX < $1.box.minX }
+    }
+
+    static func rowText(of line: ScanTextLine, in lines: [ScanTextLine]) -> String {
+        rowMates(of: line, in: lines).map { normalize($0.text) }.joined(separator: " ")
+    }
+
+    // MARK: Main breaker
+
+    /// A whole rating token: not glued to letters, digits, '.', '/', '-', or '#', with an optional A, AMP(S), AMPERE(S).
+    static let ratingToken = #"(?<![\w#./\-])(100|125|150|175|200|225)(?:\s*(?:a|amps?|amperes?))?(?![\w/.\-%°])"#
+    /// The observation is nothing but a rating ("200", "200A", "200 AMP").
+    static let ratingOnly = #"^\s*(100|125|150|175|200|225)\s*(?:a|amps?|amperes?)?\s*$"#
+    static let branchOnly = #"^\s*(15|20|25|30|40|50)\s*a?\s*$"#
+    /// MAIN as a word (not "maintain", "remain", "domain"), MAIN BREAKER/BKR/CB/DISCONNECT, SERVICE DISCONNECT.
+    static let mainWord = #"(?<![a-z])(main(\s*(breaker|brkr|bkr|cb|disconnect|disc))?|service\s+disconnect)(?![a-z])"#
+    /// "Main lugs (only)", "MLO", "main bus", "non-main": the panel has no main breaker, or the number is the bus.
+    static let notAMain = #"(?<![a-z])(main\s*lugs?|mlo|main\s*bus|non[\s-]?main|main\s*lug\s*only)(?![a-z])"#
+    /// Row words that change what an amp number on that row means.
+    static let rowVeto = #"(?<![a-z])(per\s*st[a@][bdh]s?|stabs?|bus(\s*bar)?|max(imum)?|min(imum)?|rated|ratings?|lugs?|mlo|sccr|short[\s-]*circuit|interrupt\w*|withstand|k?aic|\d\s*ka(?![a-z])|ka(?![a-z])|awg|kcmil|mcm|torque|tighten\w*|in[\s.\-]*[l1i|\[]?bs|lb[\s.\-]*in|\d\s*v(ac|dc)?(?![a-z])|volts?|vac|vdc|\d\s*hz|hz|\d\s*ph(?![a-z])|phase|load\s*cent(er|re)|panelboard|cat(alog)?\.?\s*(no|#)|model|series|type|suitable|service\s+entrance|not\s+to\s+exceed|total|branch|tandem|feeder|sub[\s-]*feed|\d\s*[-–]\s*\d)(?![a-z])"#
+    /// Two or more of these and the crop is a printed label or table, not a breaker face.
+    static let labelWords = #"(?<![a-z])(awg|torque|tighten\w*|in[\s.\-]*[l1i|\[]?bs|stabs?|install\w*|accordance|codes?|warning|caution|danger|listed|catalog|cat\.?\s*no|sccr|suitable|conductors?|copper|alumin\w*|wire)(?![a-z])"#
+    static let panelWords = #"(?<![a-z])(panel|main|bus|lugs?|mlo|load\s*cent(er|re)|panelboard|breakers?|circuits?|stabs?|neutral|ground(ing)?\s*bar|square\s*d|siemens|eaton|cutler|murray|homeline|tye|awg|torque)(?![a-z])"#
+    /// A meter nameplate (kWh, watthour, CL200 or "CL.200", FM2S, Kh 7.2): not a panel.
+    static let meterCue = #"(?<![a-z])(kwh|watt[\s-]?hour|cl[\s.\-]?(10|20|100|200|320)(?!\d)|fm\s*\d+s|form\s*\d+s|k\s?h\s*\d)"#
+    static let disconnectOnly = #"(?<![a-z])((ac\s+)?disconnect|discon|fusible|non[\s-]?fusible|pull[\s-]?out)(?![a-z])"#
+
+    private static let ratingRegex = try? NSRegularExpression(pattern: ratingToken, options: [.caseInsensitive])
+
+    /// The main breaker's rating on this crop, and whether the crop is a panel at all. Nil when it is not a panel
+    /// (a meter, a disconnect, an appliance, or text with no panel words). `detectorPanelBox` is a real panel box
+    /// from the detector: only then may the largest-handle path run, and only with `largestHandleEnabled`.
+    static func panelRead(in raw: [ScanTextLine], detectorPanelBox: Bool) -> PanelRead? {
+        let lines = raw.filter { $0.confidence >= minLineConfidence }
+        let texts = lines.map { normalize($0.text) }
+        if texts.contains(where: { matches($0, meterCue) }) { return nil }
+        // AC condensers and heat pumps carry "breaker" and "circuit" too, and the detector scores them as meters.
+        if texts.contains(where: isApplianceLabel) { return nil }
+        let labelHits = texts.filter { matches($0, labelWords) }.count
+        let labelMode = labelHits >= 2
+        let branch = lines.filter { matches(normalize($0.text), branchOnly) }
+        let disconnectBox = texts.contains { matches($0, disconnectOnly) && !matches($0, mainWord) }
+        let evidence = !disconnectBox && (labelMode || branch.count >= 3 || texts.contains { matches($0, panelWords) })
+        let vetoed: (ScanTextLine) -> Bool = { matches(rowText(of: $0, in: lines), rowVeto) }
+        let evidenceBox = lines.map(\.box).reduce(nil as CGRect?) { partial, box in partial.map { $0.union(box) } ?? box }
+
+        var found: [(amps: Int, basis: MainBreakerBasis, box: CGRect)] = []
+        let mains = lines.filter { let text = normalize($0.text); return matches(text, mainWord) && !matches(text, notAMain) }
+        for main in mains where !matches(rowText(of: main, in: lines), notAMain) && !vetoed(main) {
+            // (A) MAIN and the rating in one observation, or in the next cell of the same row.
+            let row = rowMates(of: main, in: lines)
+            let adjacent = row.filter { $0 == main || horizontalGap($0.box, main.box) <= max($0.box.height, main.box.height) * 8 }
+            let rowRatings = adjacent.flatMap { tokens(in: normalize($0.text)) }
+            if rowRatings.count == 1 {
+                found.append((rowRatings[0], .mainRow, adjacent.map(\.box).reduce(main.box) { $0.union($1) }))
+                continue
+            }
+            if rowRatings.count > 1 { continue }
+            // (B) The rating alone, directly above or below MAIN.
+            let stacked = lines.filter { other in
+                other != main && matches(normalize(other.text), ratingOnly)
+                    && abs(other.box.midY - main.box.midY) <= max(other.box.height, main.box.height) * 1.8
+                    && abs(other.box.midY - main.box.midY) >= max(other.box.height, main.box.height) * 0.6
+                    && horizontalOverlap(other.box, main.box) >= 0.3
+                    && !vetoed(other)
+            }
+            let values = Set(stacked.flatMap { tokens(in: normalize($0.text)) })
+            if values.count == 1, let amps = values.first {
+                found.append((amps, .mainNeighbor, stacked.map(\.box).reduce(main.box) { $0.union($1) }))
+            }
+        }
+        let mainValues = Set(found.map(\.amps))
+        if mainValues.count == 1, let first = found.first {
+            return PanelRead(amps: first.amps, basis: first.basis, isPanelEvidence: true, labelMode: labelMode, box: first.box)
+        }
+        if mainValues.count > 1 {
+            return PanelRead(amps: nil, basis: nil, isPanelEvidence: true, labelMode: labelMode, box: evidenceBox)
+        }
+
+        // (C) Largest handle: a breaker face with branch handles in view, never a printed label.
+        if largestHandleEnabled, detectorPanelBox, !labelMode, branch.count >= 2 {
+            let ratingsOnly = lines.filter { matches(normalize($0.text), ratingOnly) && !vetoed($0) }
+            let values = Set(ratingsOnly.flatMap { tokens(in: normalize($0.text)) })
+            let tallestBranch = branch.map(\.box.height).max() ?? 0
+            if values.count == 1, let amps = values.first, handleRatings.contains(amps),
+               let line = ratingsOnly.max(by: { $0.box.height < $1.box.height }),
+               line.box.height >= tallestBranch * handleHeightRatio {
+                return PanelRead(amps: amps, basis: .largestHandle, isPanelEvidence: true, labelMode: false, box: line.box)
+            }
+        }
+        return evidence ? PanelRead(amps: nil, basis: nil, isPanelEvidence: true, labelMode: labelMode, box: evidenceBox) : nil
+    }
+
+    /// The same MAIN rules on lines with no boxes (a photo's text top to bottom, or the live number scanner's
+    /// transcripts): path A on each line, path B on the line right above or below MAIN. No largest-handle path.
+    static func mainBreakerAmps(inLines raw: [String]) -> Int? {
+        let texts = raw.map(normalize)
+        if texts.contains(where: { matches($0, meterCue) }) { return nil }
+        if texts.contains(where: isApplianceLabel) { return nil }
+        var found: [Int] = []
+        for (index, text) in texts.enumerated()
+        where matches(text, mainWord) && !matches(text, notAMain) && !matches(text, rowVeto) {
+            let ratings = tokens(in: text)
+            if ratings.count == 1 {
+                found.append(ratings[0])
+                continue
+            }
+            if ratings.count > 1 { continue }
+            let neighbors = [index - 1, index + 1].filter { texts.indices.contains($0) }.map { texts[$0] }
+            let values = Set(neighbors.filter { matches($0, ratingOnly) && !matches($0, rowVeto) }.flatMap { tokens(in: $0) })
+            if values.count == 1, let amps = values.first { found.append(amps) }
+        }
+        let values = Set(found)
+        return values.count == 1 ? values.first : nil
+    }
+
+    static func tokens(in text: String) -> [Int] {
+        guard let ratingRegex else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        return ratingRegex.matches(in: text, range: range).compactMap { match in
+            Range(match.range(at: 1), in: text).flatMap { Int(text[$0]) }
+        }.filter { breakerRatings.contains($0) }
+    }
+
+    static func horizontalGap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        max(0, max(a.minX, b.minX) - min(a.maxX, b.maxX))
+    }
+
+    static func horizontalOverlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+        let shared = min(a.maxX, b.maxX) - max(a.minX, b.minX)
+        return max(0, shared) / max(min(a.width, b.width), 0.001)
+    }
+
+    // MARK: Meter number
+
+    /// SERIAL (and OCR's "sertal", "seria1"), S/N, METER NO, MTR NO, or METER beside or above the number.
+    static let serialLabel = #"(?<![a-z])(ser[il1t|][a@][l1i]|s\s*/\s*n|serial\s*(no|number|#)|meter\s*(no|number|#)|mtr\s*(no|#)?|meter)(?![a-z])"#
+    /// A long number on these lines is a register, a model, a certification, or a date, not the meter number.
+    static let meterLineVeto = #"(?<![a-z])(kwh|kvarh|kw|kvar|fcc|ic\s*:|pat(ent)?|model|cat(alog)?|mfg|made|date|lot)(?![a-z])"#
+
+    /// The meter number on this label, or nil. The tallest long number wins, and one on or right under a serial label
+    /// wins over a taller one. AC and heat-pump nameplates also carry long numbers, so a label with refrigerant or
+    /// compressor words never gives one. The kWh register, FCC ids, models, phone numbers, and an LCD test pattern
+    /// ("8888888") are never the meter number.
+    static func meterNumber(in raw: [ScanTextLine]) -> MeterRead? {
+        let lines = raw.filter { $0.confidence >= minLineConfidence }
+        let texts = lines.map { normalize($0.text) }
+        guard !texts.contains(where: isApplianceLabel) else { return nil }
+        let cue = texts.contains(where: hasMeterCue)
         var best: (score: Double, read: MeterRead)?
-        for line in usable {
-            let lower = line.text.lowercased()
-            // The usage register sits on the kWh line. It is never the meter number.
-            if lower.contains("kwh") { continue }
-            for run in digitRuns(in: line.text) where meterDigits.contains(run.digits.count) {
+        for (line, text) in zip(lines, texts) {
+            if matches(text, meterLineVeto) { continue }
+            for run in digitRuns(in: text) where meterDigits.contains(run.digits.count) {
                 if looksLikePhoneNumber(run.grouping) { continue }
+                if Set(run.digits).count == 1 { continue }
                 var score = Double(line.box.height) * 20 + Double(line.confidence)
-                if isMeterNumberLabel(line.text) || labels.contains(where: { isNear($0.box, line.box) }) {
-                    score += 2
+                let row = rowText(of: line, in: lines)
+                let above = lines.filter { $0.box.midY > line.box.midY && $0.box.midY - line.box.midY <= line.box.height * 2.5 }
+                if matches(row, serialLabel) || above.contains(where: { matches(normalize($0.text), serialLabel) }) {
+                    score += 3
                 }
                 if best == nil || score > best!.score {
                     best = (score, MeterRead(number: run.digits, box: line.box, hasMeterCue: cue))
@@ -249,61 +438,11 @@ enum ScanTextParser {
         return best?.read
     }
 
-    /// The main breaker's rating on this panel, or nil. Beside "MAIN" always counts. With a detector box around the
-    /// panel, the rating printed biggest (the main handle) counts too. Never the panel's bus rating.
-    static func mainBreakerAmps(in lines: [ScanTextLine], allowLargestHandle: Bool) -> BreakerRead? {
-        let usable = lines.filter { $0.confidence >= minLineConfidence }
-        // A meter nameplate (CL200, 240V, kWh) is not a panel.
-        guard !usable.contains(where: { isStrongMeterCue($0.text) }) else { return nil }
-        let mains = usable.filter { $0.text.lowercased().contains("main") && !isPanelRatingLabel($0.text) }
-        var nearMain: (height: CGFloat, read: BreakerRead)?
-        var ratings: [(line: ScanTextLine, amps: Int)] = []
-        // The panel's own label ("200A MAX", "MAIN LUGS", "BUS RATING") carries the bus rating, never the breaker's.
-        for line in usable where !isPanelRatingLabel(line.text) {
-            for amps in ratingTokens(in: line.text) {
-                ratings.append((line, amps))
-                let onMainLine = line.text.lowercased().contains("main")
-                let neighbor = mains.first { isNear($0.box, line.box) }
-                guard onMainLine || neighbor != nil else { continue }
-                let box = neighbor.map { $0.box.union(line.box) } ?? line.box
-                if nearMain == nil || line.box.height > nearMain!.height {
-                    nearMain = (line.box.height, BreakerRead(amps: amps, box: box, nearMain: true))
-                }
-            }
-        }
-        if let nearMain { return nearMain.read }
-        guard allowLargestHandle else { return nil }
-        // Branch handles print 15, 20, 30…; the main handle's rating is the biggest print among the numbers.
-        let numeric = usable.filter { isNumberOnly($0.text) }.sorted { $0.box.height > $1.box.height }
-        guard let tallest = numeric.first,
-              let rating = ratings.first(where: { $0.line == tallest }) else { return nil }
-        if numeric.count > 1, tallest.box.height < numeric[1].box.height * 1.15 { return nil }
-        return BreakerRead(amps: rating.amps, box: tallest.box, nearMain: false)
-    }
-
-    /// Words of the panel's nameplate, whose amps are the bus rating: those numbers never count as the main breaker.
-    private static func isPanelRatingLabel(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        let words = ["bus", "lug", "max", "rated", "rating", "load center", "loadcenter", "catalog", "cat no", "cat.",
-                     "suitable", "service entrance", "short circuit", "interrupting", "sccr", "enclosure", "volt"]
-        return words.contains { lower.contains($0) }
-    }
-
+    /// A meter word anywhere on the label: the strong cues above, or "meter", "mtr", "Kh", a form number.
     static func hasMeterCue(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        if isStrongMeterCue(text) { return true }
+        let lower = normalize(text)
+        if matches(lower, meterCue) { return true }
         return lower.range(of: #"(?<![a-z])(meter|mtr|kh|fm ?\d+s|form ?\d+s)(?![a-z])"#, options: .regularExpression) != nil
-    }
-
-    private static func isStrongMeterCue(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return lower.contains("kwh") || lower.contains("watthour") || lower.contains("watt-hour")
-            || lower.range(of: #"(?<![a-z])cl ?(20|100|200|320)(?!\d)"#, options: .regularExpression) != nil
-    }
-
-    private static func isMeterNumberLabel(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return lower.range(of: #"(?<![a-z])(meter|mtr|serial|s/n|sn|meter no|mtr no)(?![a-z])"#, options: .regularExpression) != nil
     }
 
     /// Words on AC condensers and heat pumps, which the detector scores as meters.
@@ -312,19 +451,6 @@ enum ScanTextParser {
         let words = ["refrigerant", "r-410a", "r410a", "r-22", "r-454b", "r454b", "compressor", "condens", "seer", "btu",
                      "hvac", "fan motor", "heat pump", "air condition", "min. circuit", "max. fuse", "mca", "mocp"]
         return words.contains { lower.contains($0) }
-    }
-
-    private static func isNumberOnly(_ text: String) -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !trimmed.isEmpty else { return false }
-        let body = trimmed.hasSuffix("a") ? String(trimmed.dropLast()) : trimmed
-        return !body.isEmpty && body.allSatisfy(\.isNumber)
-    }
-
-    /// Two boxes on the same label: centers within a few line heights of each other.
-    private static func isNear(_ a: CGRect, _ b: CGRect) -> Bool {
-        let height = max(a.height, b.height, 0.01)
-        return abs(a.midY - b.midY) < height * 2.5 && abs(a.midX - b.midX) < max(a.width, b.width) / 2 + height * 4
     }
 
     private struct DigitRun {
@@ -365,50 +491,6 @@ enum ScanTextParser {
     private static func looksLikePhoneNumber(_ grouping: [Int]) -> Bool {
         grouping == [3, 3, 4] || grouping == [1, 3, 3, 4]
     }
-
-    /// Breaker ratings on one line: whole numbers from the rating list, not "CL200" or "200V", optionally "200A".
-    private static func ratingTokens(in text: String) -> [Int] {
-        let lower = Array(text.lowercased())
-        var found: [Int] = []
-        var index = 0
-        while index < lower.count {
-            guard lower[index].isASCII, lower[index].isNumber else {
-                index += 1
-                continue
-            }
-            var end = index
-            while end < lower.count, lower[end].isASCII, lower[end].isNumber { end += 1 }
-            defer { index = end }
-            guard let amps = Int(String(lower[index..<end])), breakerRatings.contains(amps) else { continue }
-            var before = index - 1
-            while before >= 0, lower[before] == " " { before -= 1 }
-            var word = ""
-            while before >= 0, lower[before].isLetter {
-                word = String(lower[before]) + word
-                before -= 1
-            }
-            if word.hasSuffix("cl") || word == "class" { continue }
-            if index > 0, lower[index - 1].isLetter { continue }
-            var after = end
-            while after < lower.count, lower[after] == " " { after += 1 }
-            if after < lower.count {
-                let next = lower[after]
-                // "200V", "200kWh", "200Hz", "240/120", "200.5" are not ratings. "200A", "200 AMP", "200 MAIN" are.
-                if next == "/" || next == "." || next == "," { continue }
-                if next.isLetter {
-                    var word = ""
-                    var cursor = after
-                    while cursor < lower.count, lower[cursor].isLetter {
-                        word.append(lower[cursor])
-                        cursor += 1
-                    }
-                    guard ["a", "amp", "amps", "ampere", "amperes", "main"].contains(word) else { continue }
-                }
-            }
-            found.append(amps)
-        }
-        return found
-    }
 }
 
 /// One OCR pass over a crop of a copied frame.
@@ -419,19 +501,28 @@ struct ScanTextRead: @unchecked Sendable {
     /// The Vision-normalized region of the upright frame that was read.
     var region: CGRect
     var textFirst: Bool
+    /// The crop was a real panel box from the detector, so the largest-handle path could run.
+    var detectorPanelBox = false
     var meter: ScanTextParser.MeterRead?
-    var breaker: ScanTextParser.BreakerRead?
+    var panel: ScanTextParser.PanelRead?
     /// Box of the read value in the whole upright frame (Vision-normalized), for a text-first candidate.
     var textBox: CGRect?
     /// The full-resolution crop that was read. It becomes the photo when this read captures.
     var image: CGImage?
     var lines: [String]
 
-    /// The value this read found, as text, so two reads can be compared.
+    /// A panel read with a main-breaker value is "main:<amps>"; a panel with no main read is "panel".
+    static let mainPrefix = "main:"
+    static let panelEvidence = "panel"
+
+    /// The value this read found, as text, so two reads can be compared: the meter number, "main:<amps>", or "panel".
     var value: String? {
         switch kind {
-        case .electricMeter: meter?.number
-        case .breakerPanel: breaker.map { String($0.amps) }
+        case .electricMeter:
+            return meter?.number
+        case .breakerPanel:
+            if let amps = panel?.amps { return Self.mainPrefix + String(amps) }
+            return panel?.isPanelEvidence == true ? Self.panelEvidence : nil
         }
     }
 }
@@ -448,6 +539,7 @@ final class ScanTextReader: @unchecked Sendable {
         orientation: CGImagePropertyOrientation,
         kind: EquipmentKind,
         textFirst: Bool,
+        detectorPanelBox: Bool,
         generation: Int,
         completion: @escaping @Sendable (ScanTextRead) -> Void
     ) {
@@ -457,6 +549,7 @@ final class ScanTextReader: @unchecked Sendable {
                 generation: generation,
                 region: region,
                 textFirst: textFirst,
+                detectorPanelBox: detectorPanelBox,
                 lines: []
             )
             defer { completion(result) }
@@ -493,8 +586,8 @@ final class ScanTextReader: @unchecked Sendable {
                 result.meter = ScanTextParser.meterNumber(in: lines)
                 local = result.meter?.box
             case .breakerPanel:
-                result.breaker = ScanTextParser.mainBreakerAmps(in: lines, allowLargestHandle: !textFirst)
-                local = result.breaker?.box
+                result.panel = ScanTextParser.panelRead(in: lines, detectorPanelBox: detectorPanelBox && !textFirst)
+                local = result.panel?.box
             }
             if let local {
                 result.textBox = CGRect(
@@ -515,12 +608,33 @@ struct ScanCapture: @unchecked Sendable {
     var image: UIImage
     var meterNumber: String?
     var mainBreakerAmps: Int?
+    /// A wider panel photo taken after the lock. It replaces panel.jpg only; the lock and the amps stay as they are.
+    var photoOnly = false
+    /// Which OCR rule read `mainBreakerAmps`. Nil with no amps.
+    var mainBreakerBasis: MainBreakerBasis? = nil
+}
+
+/// The frame an OCR read came from, kept with the read so the capture judges and photographs that same frame.
+struct CaptureReadContext {
+    /// When the frame was captured (media time). Agreeing reads must come from frames 0.4 s or more apart.
+    var frameTime: CFTimeInterval
+    /// Where the candidate landed on the wall, and which way the wall faced.
+    var landing: SIMD3<Float>?
+    var landingNormal: SIMD3<Float>?
+    var cameraPosition: SIMD3<Float>
+    /// The detector box that was read, and which path proposed it ("breakerPanel-box", "meter-box-as-panel", "text").
+    var candidateBox: CGRect?
+    var source: String
+    /// The copied frame, for the panel photo. Only the newest record keeps it.
+    var pixels: CopiedPixels?
+    var orientation: CGImagePropertyOrientation
 }
 
 /// One OCR read the gate kept, with where the candidate was when its frame was taken.
 struct CaptureReadRecord {
     var read: ScanTextRead
     var landing: SIMD3<Float>?
+    var context: CaptureReadContext
     var at: CFTimeInterval
 }
 
@@ -537,12 +651,17 @@ struct ScanCaptureState {
     var records: [CaptureReadRecord] = []
     var ocrInFlight = false
     var lastOCRAt: CFTimeInterval = 0
-    /// Where the candidate was when the in-flight OCR frame was taken.
-    var pendingLanding: SIMD3<Float>?
+    /// The frame and candidate of the in-flight OCR read.
+    var pendingContext: CaptureReadContext?
     /// Text-first candidate: the box of the last good read of MAIN + rating (or a meter number), and when.
     var textCandidate: (box: CGRect, at: CFTimeInterval)?
     /// Good frames in a row whose OCR found no value.
     var emptyReads = 0
+    /// Panel reads with no main-breaker value, and whether the last one was a printed label, for the hint.
+    var readsWithoutMain = 0
+    var lastReadLabelMode = false
+    /// Half the meter enclosure's width from the last passing detector box, for the lock.
+    var meterHalfWidth: Float?
 
     mutating func breakStreak() {
         streak = 0

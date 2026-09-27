@@ -5,7 +5,9 @@ import UIKit
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     /// 7: adds optional `gridContext` — ERCOT load zone + sample prices captured at survey time.
-    var schemaVersion: Int = 7
+    /// 8: adds optional `placement.gasMeterMarkSource`, `placement.gasStepOutcome`, `placement.batterySpot`,
+    /// `electrical.gasMeterPhotoFilename`, and `electrical.mainBreakerAmperageBasis`.
+    var schemaVersion: Int = 8
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -150,6 +152,10 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     var mainBreakerAmperageSource: MeterNumberSource?
     /// The Live Survey's photo of the panel, taken when it read the main breaker (v6, optional). Nil until then.
     var panelPhotoFilename: String?
+    /// The Live Survey's crop of the spot shown as the gas meter, "gas.jpg" (v8, optional). Nil until one is shown.
+    var gasMeterPhotoFilename: String?
+    /// Which OCR rule read `mainBreakerAmperage` from the panel (v8, optional). Nil when typed, or for older files.
+    var mainBreakerAmperageBasis: MainBreakerBasis?
 
     /// Solar or two batteries need a 200A panel, so only then does the bus rating matter.
     var needsPanelBusRating: Bool {
@@ -162,6 +168,49 @@ enum GasMeterAnswer: String, Codable, Sendable, CaseIterable {
     case yes
     case no
     case notSure
+}
+
+/// How the gas-meter mark was made (v8). `shownOnScan`: the user held the camera on a low spot by a wall during the
+/// gas step; the scan did not recognize a gas meter, so the clearance is attested, not measured.
+/// `recognized` is reserved for a detector that knows gas meters.
+enum GasMarkSource: String, Codable, Sendable {
+    case shownOnScan
+    case recognized
+}
+
+/// How the Live Survey's gas step ended (v8). Nil when the step never ran.
+enum GasStepOutcome: String, Codable, Sendable {
+    case shown
+    case timedOut
+    case answeredNo
+    case rejectedInReview
+}
+
+/// Which OCR rule read the main-breaker amperage (v8): on the row that says MAIN, the row next to MAIN, or the
+/// largest handle print on a real panel box.
+enum MainBreakerBasis: String, Codable, Sendable {
+    case mainRow
+    case mainNeighbor
+    case largestHandle
+}
+
+/// The battery spot the Live Survey suggested by itself (v8). `alongWallFeet` is positive toward the panel.
+struct BatterySpotSummary: Codable, Sendable, Equatable {
+    enum Status: String, Codable, Sendable {
+        case placed
+        case noMeter
+        case noWall
+        case allRejected
+    }
+
+    var status: Status
+    var source = "autoSuggested"
+    /// Along the meter wall from the meter, in feet. Positive toward the panel.
+    var alongWallFeet: Double?
+    var towardPanel: Bool?
+    var candidatesTried = 0
+    /// One short reason per rejected candidate, for engineers and DEBUG builds.
+    var rejections: [String] = []
 }
 
 struct PlacementAnchor: Codable, Sendable, Equatable {
@@ -240,7 +289,6 @@ enum EquipmentLockSource: String, Codable, Sendable {
 }
 
 struct PlacementEvidence: Codable, Sendable, Equatable {
-    var screenshotFilename: String?
     var batteryPlaced: Bool = false
     var meterMarked: Bool = false
     var gasMeterMarked: Bool = false
@@ -267,7 +315,6 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var meterHeightFeet: Double?
     var frontWorkspaceWidthInches: Double?
     var frontWorkspaceDepthInches: Double?
-    var meterAndPanelSameWall: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
     var panelPosition: PlacementAnchor?
@@ -281,7 +328,8 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
     /// Explicit answer after positioning the 30 × 36 in overlay. Nil stays unknown.
     var frontWorkingSpaceIsClear: Bool?
-    /// Explicit homeowner observation; no geometry-only inference is accepted.
+    /// True when the meter and panel wall taps sit on the same wall (either side counts).
+    /// Populated by `CorePlacementMeasurer.meterAndPanelSameWall` from the two wall locks.
     var meterAndPanelShareWall: Bool?
     var workingSpacePosition: PlacementAnchor?
     var workingSpaceYawRadians: Float?
@@ -290,6 +338,12 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     /// Manifest of the posed scan photos and LiDAR depth, relative to survey.json. Nil when nothing was captured.
     var captureManifestPath: String?
     var capturedFrameCount: Int?
+    /// How the gas-meter mark was made (v8). Nil with no mark, and for older files.
+    var gasMeterMarkSource: GasMarkSource?
+    /// How the Live Survey's gas step ended (v8). Nil when it never ran.
+    var gasStepOutcome: GasStepOutcome?
+    /// The battery spot the scan suggested by itself (v8). Nil until the scan finishes.
+    var batterySpot: BatterySpotSummary?
 
     init() {}
 }

@@ -1,4 +1,5 @@
 import Foundation
+import os
 import simd
 
 /// A vertical plane copied out of ARKit so measurement code does not keep AR objects.
@@ -58,6 +59,18 @@ enum TransferSwitchReservation {
     static let outFromWallMeters: Float = 30 * BatteryGeometry.inchesToMeters
 }
 
+private let meshKeyCounter = OSAllocatedUnfairLock(initialState: 0)
+
+extension PlacementSceneSnapshot {
+    /// A key no other `classifiedMesh` has used in this run of the app.
+    static func newMeshKey() -> Int {
+        meshKeyCounter.withLock { value in
+            value += 1
+            return value
+        }
+    }
+}
+
 struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
@@ -80,6 +93,9 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var lidarMeshAvailable: Bool = false
     /// Classified face samples near the battery, meter, or working space.
     var classifiedMesh: [ClassifiedMeshSample] = []
+    /// Names this exact `classifiedMesh`, so measuring reuses one scan index for it. 0 means unnamed: always rebuilt.
+    /// Set only beside `classifiedMesh`, from `newMeshKey()`.
+    var classifiedMeshKey = 0
     /// Rounded automatic wall clearance so the placement screen refreshes when the scan changes.
     var automaticWallClearanceFeet: Double?
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
@@ -93,6 +109,12 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var workingSpaceYawRadians: Float = 0
     var draftMeasurementStart: MeasurementEndpoint?
     var draftMeasurementEnd: MeasurementEndpoint?
+    /// Half the meter enclosure's width along its wall, from the lock box. Nil until the meter locks.
+    var meterHalfWidthMeters: Float?
+    /// How the gas-meter mark was made. Nil with no mark.
+    var gasMarkSource: GasMarkSource?
+    /// The scan's own battery-spot suggestion. Nil until the scan finishes.
+    var batterySpot: BatterySpotSummary?
 
     var hasPlacedContent: Bool {
         batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil || panelPosition != nil
@@ -112,7 +134,6 @@ struct PlacementMeasurements: Sendable, Equatable {
     var distanceToWallFeet: Double?
     var distanceToGasMeterFeet: Double?
     var meterHeightFeet: Double?
-    var meterAndPanelSameWall: Bool?
     var footprintIsClear: Bool?
     /// False when a classified window overlaps the cabinet on the host wall. Nil until that face has been scanned.
     var clearOfWindows: Bool?
@@ -149,7 +170,6 @@ extension PlacementMeasuring {
         updated.distanceToWallFeet = measured.distanceToWallFeet
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
-        updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
         // A missing mesh leaves the previous measured result in place, but only for the same spot.
         // With a mesh, nil means this spot is not measured, so an old answer must not carry over. Yes/No answers are not a measurement.
         let keepBatteryChecks = !measured.lidarMeshAvailable && measured.batteryPosition == placement.batteryPosition
@@ -163,6 +183,8 @@ extension PlacementMeasuring {
         // Provenance, not a measurement: copied from the scene so survey.json says how each spot was chosen.
         updated.meterLockSource = snapshot.meterPosition == nil ? nil : snapshot.meterLockSource
         updated.panelLockSource = snapshot.panelPosition == nil ? nil : snapshot.panelLockSource
+        updated.gasMeterMarkSource = snapshot.gasMeterPosition == nil ? nil : snapshot.gasMarkSource
+        updated.batterySpot = snapshot.batterySpot
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
         let keepWorkingSpace = !measured.lidarMeshAvailable
@@ -194,6 +216,12 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     var minObstacleSamples = 2
     /// Share of 10 cm cells under a box that must hold scanned surface before "clear" can mean clear.
     var minScanCoverage: Float = 0.6
+    /// The pad and the working space count as blocked only on this many faces spanning this much height. Fewer is
+    /// unknown, never clear: three faces smeared along an edge read as a blocked pad on the demo wall. Tune on device.
+    var minBlockingSamples = 4
+    var minBlockingHeightMeters: Float = 0.10
+    /// The meter enclosure's half width along its wall when the lock box gave none. Tune on device.
+    static let defaultMeterHalfWidthMeters: Float = 0.23
 
     func measure(_ snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
         let meterFeet = confirmed(.batteryToMeter, in: snapshot)?.distanceFeet
@@ -203,7 +231,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let wallFeet = wallDistanceFeet(snapshot)
         let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
         let sameWall = meterAndPanelSameWall(snapshot)
-        let scan = ScanIndex(snapshot.classifiedMesh)
+        let scan = ScanIndex.of(snapshot)
         let footprint = footprintClearance(snapshot, scan: scan)
         let windows = clearOfWindows(snapshot)
         let access = keepsEquipmentAccess(snapshot)
@@ -219,7 +247,6 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             distanceToWallFeet: wallFeet,
             distanceToGasMeterFeet: gasFeet,
             meterHeightFeet: heightFeet,
-            meterAndPanelSameWall: sameWall,
             footprintIsClear: footprint,
             clearOfWindows: windows,
             keepsEquipmentAccess: access,
@@ -248,7 +275,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Drawn on the side the check used: the chosen side, or the other side when only that one is clear.
     func transferSwitchBox(in snapshot: PlacementSceneSnapshot) -> TransferSwitchBox? {
-        guard let frame = transferSwitch(snapshot, scan: ScanIndex(snapshot.classifiedMesh))?.frame else { return nil }
+        guard let frame = transferSwitch(snapshot, scan: ScanIndex.of(snapshot))?.frame else { return nil }
         return TransferSwitchBox(
             center: frame.center,
             wallPoint: frame.wallPoint,
@@ -296,7 +323,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             openSide: battery
         )
         guard coverage >= minScanCoverage else { return nil }
-        return !isBlocked(snapshot.classifiedMesh) { sample in
+        let hits = snapshot.classifiedMesh.filter { sample in
             guard occupiesVolume(sample, ignoring: host) else { return false }
             return point(
                 sample.point,
@@ -308,6 +335,18 @@ struct CorePlacementMeasurer: PlacementMeasuring {
                 maxHeight: BatteryGeometry.heightMeters
             )
         }
+        return obstacleVerdict(hits)
+    }
+
+    /// Blocked needs a real object: `minBlockingSamples` faces spanning `minBlockingHeightMeters` of height. A few
+    /// faces smeared along a pad edge (mesh noise, a seam, turf) are not proof of anything, so they give unknown,
+    /// never clear. No face at all is clear.
+    private func obstacleVerdict(_ hits: [ClassifiedMeshSample]) -> Bool? {
+        guard !hits.isEmpty else { return true }
+        let heights = hits.map(\.point.y)
+        let span = (heights.max() ?? 0) - (heights.min() ?? 0)
+        if hits.count >= minBlockingSamples, span >= minBlockingHeightMeters { return false }
+        return nil
     }
 
     /// The cabinet may not stand in the meter's or panel's own 30 × 36 in working space.
@@ -343,15 +382,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     }
 
     /// The cabinet cannot sit in front of a window. A window on the host wall that falls inside the cabinet's projection is a conflict. No classified face there stays unknown.
+    /// Only a wall the mesh itself found behind the cabinet can pass: a detected plane reaches past where the wall
+    /// ends (its margin), so on the plane alone "no window" would be a guess.
     private func clearOfWindows(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard snapshot.lidarMeshAvailable, let battery = snapshot.batteryPosition?.simd else { return nil }
         guard hasScan(snapshot.classifiedMesh, around: battery, radius: 2) else { return nil }
-        guard let host = hostWall(
-            battery: battery,
-            yaw: snapshot.batteryYawRadians,
-            samples: snapshot.classifiedMesh,
-            planes: snapshot.verticalPlanes
-        ) else { return nil }
+        guard let hit = meshWallHit(battery: battery, yaw: snapshot.batteryYawRadians, samples: snapshot.classifiedMesh) else {
+            return nil
+        }
+        let host = WallFrame(point: hit.wallPoint, normal: hit.normal)
         let up = SIMD3<Float>(0, 1, 0)
         guard let along = unit(simd_cross(host.normal, up)) else { return nil }
         let span = cabinetSpanOnWall(battery: battery, yaw: snapshot.batteryYawRadians, host: host, along: along, up: up)
@@ -409,40 +448,66 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return (minAlong, maxAlong, minUp, maxUp)
     }
 
-    /// The positioned 30 × 36 in slab. Floor and the host wall are ignored. Yes/No is not consulted.
+    /// Sideways shifts of the 30 in width tried in front of the meter. The meter only needs 30 in of clear space
+    /// somewhere across its face, so one clear slide passes. Tune on device.
+    static let workingSpaceSlidesMeters: [Float] = [0, 0.05, -0.05, 0.10, -0.10, 0.15, -0.15]
+    /// 6 in: faces this close in front of the meter's face are wall-mounted equipment beside it, not an obstacle.
+    static let flushEquipmentMeters: Float = 0.15
+
+    /// The positioned 30 × 36 in slab. Floor, the host wall, and the meter's own enclosure are ignored. Yes/No is not
+    /// consulted. It needs no battery: from the meter lock, the host is the meter wall. The width slides sideways a
+    /// little (always keeping the meter enclosure inside it), and any clear slide passes. Unknown when no slide has
+    /// enough scan under it, or every covered slide holds only a few stray faces.
     private func workingSpaceClearance(_ snapshot: PlacementSceneSnapshot, scan: ScanIndex) -> Bool? {
-        guard snapshot.lidarMeshAvailable,
-              let battery = snapshot.batteryPosition?.simd,
-              let center = snapshot.workingSpacePosition?.simd else { return nil }
-        let host = hostWall(
-            battery: battery,
-            yaw: snapshot.batteryYawRadians,
-            samples: snapshot.classifiedMesh,
-            planes: snapshot.verticalPlanes
-        )
-        let coverage = scan.groundCoverage(
-            center: center,
-            yaw: snapshot.workingSpaceYawRadians,
-            halfWidth: BatteryGeometry.workingSpaceWidthMeters / 2,
-            halfDepth: BatteryGeometry.workingSpaceDepthMeters / 2,
-            inFrontOf: host,
-            openSide: battery
-        )
-        guard coverage >= minScanCoverage else { return nil }
+        guard snapshot.lidarMeshAvailable, let center = snapshot.workingSpacePosition?.simd else { return nil }
         let meterWall = wallFrame(position: snapshot.meterWallPosition, normal: snapshot.meterWallNormal)
-        let blocked = isBlocked(snapshot.classifiedMesh) { sample in
-            guard occupiesVolume(sample, ignoring: host, alsoIgnoring: meterWall) else { return false }
-            return point(
-                sample.point,
-                isInsideBoxAt: center,
-                yaw: snapshot.workingSpaceYawRadians,
-                halfWidth: BatteryGeometry.workingSpaceWidthMeters / 2,
-                halfDepth: BatteryGeometry.workingSpaceDepthMeters / 2,
-                minHeight: minObstacleHeightMeters,
-                maxHeight: 2
-            )
+        let battery = snapshot.batteryPosition?.simd
+        let host = battery.map {
+            hostWall(battery: $0, yaw: snapshot.batteryYawRadians, samples: snapshot.classifiedMesh, planes: snapshot.verticalPlanes)
+        } ?? meterWall
+        let yaw = snapshot.workingSpaceYawRadians
+        let halfWidth = BatteryGeometry.workingSpaceWidthMeters / 2
+        let halfDepth = BatteryGeometry.workingSpaceDepthMeters / 2
+        let enclosureHalf = (snapshot.meterHalfWidthMeters ?? Self.defaultMeterHalfWidthMeters) + 0.03
+        let widthAxis = SIMD3<Float>(cos(yaw), 0, -sin(yaw))
+        let up = SIMD3<Float>(0, 1, 0)
+        let meterAlong = meterWall.flatMap { unit(simd_cross(up, $0.normal)) }
+        /// Faces of the meter itself (glass, socket, collar) stand in the slab by definition. So do the sides of
+        /// equipment mounted beside it, such as the panel: the NEC lets associated equipment stand up to 6 in beyond
+        /// the meter's front inside its working space. Neither is an obstacle.
+        func isMeterEnclosure(_ sample: ClassifiedMeshSample) -> Bool {
+            guard let meterWall, let meterAlong else { return false }
+            let delta = sample.point - meterWall.point
+            let out = simd_dot(delta, meterWall.normal)
+            if out <= Self.flushEquipmentMeters { return true }
+            return abs(simd_dot(delta, meterAlong)) <= enclosureHalf && out <= 0.30 && abs(delta.y) <= 0.35
         }
-        return !blocked
+        let candidates = snapshot.classifiedMesh.filter { sample in
+            occupiesVolume(sample, ignoring: host, alsoIgnoring: meterWall) && !isMeterEnclosure(sample)
+        }
+        var sawBlocked = false
+        for slide in Self.workingSpaceSlidesMeters where abs(slide) + enclosureHalf <= halfWidth || slide == 0 {
+            let slid = center + widthAxis * slide
+            let coverage = scan.groundCoverage(
+                center: slid,
+                yaw: yaw,
+                halfWidth: halfWidth,
+                halfDepth: halfDepth,
+                inFrontOf: host,
+                openSide: battery ?? center
+            )
+            guard coverage >= minScanCoverage else { continue }
+            let hits = candidates.filter {
+                point($0.point, isInsideBoxAt: slid, yaw: yaw, halfWidth: halfWidth, halfDepth: halfDepth,
+                      minHeight: minObstacleHeightMeters, maxHeight: 2)
+            }
+            switch obstacleVerdict(hits) {
+            case true?: return true
+            case false?: sawBlocked = true
+            case nil: break
+            }
+        }
+        return sawBlocked ? false : nil
     }
 
     /// The chosen side of the meter, or the other side when the chosen one is blocked and the other is clear.
@@ -496,51 +561,98 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return deltaMeters / 0.3048
     }
 
-    /// Both taps must face the same way and lie on nearly the same plane. Opposite walls fail. Yes/No is not a fallback.
+    /// Base allows the meter and panel on the same exterior wall or on opposite sides of it (a garage panel behind an
+    /// outdoor meter, [H705]). The two normals must be parallel — same direction or opposed — and the locks must sit
+    /// on nearly the same plane. Yes/No is not a fallback.
+    /// Lock normals come from a small patch, and an open panel door or a meter collar can tilt one by 30° or more, so a
+    /// wall the mesh sees running between them also counts: most of the 10 cm strips between the two locks hold wall
+    /// faces on the meter's plane.
     private func meterAndPanelSameWall(_ snapshot: PlacementSceneSnapshot) -> Bool? {
-        guard let meterNormal = unit(snapshot.meterWallNormal?.simd ?? .zero),
-              let panelNormal = unit(snapshot.panelWallNormal?.simd ?? .zero),
+        guard let meterNormal = horizontalUnit(snapshot.meterWallNormal?.simd),
+              let panelNormal = horizontalUnit(snapshot.panelWallNormal?.simd),
               let meterPoint = snapshot.meterWallPosition?.simd,
               let panelPoint = snapshot.panelWallPosition?.simd else { return nil }
-        guard simd_dot(meterNormal, panelNormal) >= wallSameDirectionDotThreshold else { return false }
+        let dot = simd_dot(meterNormal, panelNormal)
         let separation = abs(simd_dot(panelPoint - meterPoint, meterNormal))
-        return separation <= sameWallPlaneToleranceMeters
+        if abs(dot) >= wallSameDirectionDotThreshold { return separation <= sameWallPlaneToleranceMeters }
+        // A tilted patch is a few tens of degrees off; a lock on the other wall of a corner is about 90° off.
+        guard dot >= Self.wallRunMinDot, separation <= sameWallPlaneToleranceMeters else { return false }
+        return wallRuns(from: meterPoint, to: panelPoint, normal: meterNormal, samples: snapshot.classifiedMesh)
     }
 
-    /// The wall behind the cabinet: a wall face that faces the cabinet's back, about 30° either way, and lies at or beyond it.
-    /// Faces in the bottom 10 cm are skipped: the rounded seam where wall meets ground tilts every which way,
-    /// and a sideways seam face at the cabinet's edge would otherwise win with a clearance of zero.
-    /// Faces inside the cabinet's own depth are an obstacle, not the wall, so they are skipped too.
+    /// Share of 10 cm along-wall strips between two points on one wall that must hold a wall face on that plane.
+    static let wallRunShare: Float = 0.6
+    /// Lock normals this far apart (about 53°) may still be one wall when the mesh shows it running between them. The
+    /// demo wall's panel patch was 37° off the siding. Tune on device.
+    static let wallRunMinDot: Float = 0.6
+    /// A wall face this close to the plane (in front of or behind it) is on it. The meter face sits about 0.12 m in
+    /// front of the siding, so this also finds the siding behind a lock made on the meter's glass.
+    static let wallRunPlaneToleranceMeters: Float = 0.15
+
+    /// True when most 10 cm strips from `start` to `end`, along the wall with this normal, hold a vertical wall face
+    /// within `wallRunPlaneToleranceMeters` of the plane through `start`.
+    private func wallRuns(from start: SIMD3<Float>, to end: SIMD3<Float>, normal: SIMD3<Float>, samples: [ClassifiedMeshSample]) -> Bool {
+        guard let along = unit(simd_cross(SIMD3(0, 1, 0), normal)) else { return false }
+        let bin: Float = 0.1
+        let a0 = min(0, simd_dot(end - start, along))
+        let a1 = max(0, simd_dot(end - start, along))
+        let bins = max(1, Int(((a1 - a0) / bin).rounded(.up)))
+        var filled = Set<Int>()
+        for sample in samples where sample.faceClass == .wall {
+            guard abs(sample.normal.y) < 0.45 * max(simd_length(sample.normal), 1e-6),
+                  let faceNormal = horizontalUnit(sample.normal), abs(simd_dot(faceNormal, normal)) > 0.85 else { continue }
+            let delta = sample.point - start
+            guard abs(simd_dot(delta, normal)) <= Self.wallRunPlaneToleranceMeters, abs(delta.y) <= 1.5 else { continue }
+            let position = simd_dot(delta, along)
+            guard position >= a0, position <= a1 else { continue }
+            filled.insert(min(bins - 1, Int((position - a0) / bin)))
+        }
+        return Float(filled.count) >= Self.wallRunShare * Float(bins)
+    }
+
+    /// The wall behind the cabinet: wall faces behind its back face (never in front of it), facing it within about
+    /// 30°, and at least three of them on one plane. The clearance is that cluster's median gap, so one stray face at
+    /// the cabinet's edge no longer reads as a wall at 0 in. Faces in the bottom 10 cm are skipped: the rounded seam
+    /// where wall meets ground tilts every which way.
     private func meshWallHit(battery: SIMD3<Float>, yaw: Float, samples: [ClassifiedMeshSample]) -> WallClearanceHit? {
-        let back = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0)).act(SIMD3(0, 0, 1))
-        var best: (clearance: Float, edge: SIMD3<Float>, wallPoint: SIMD3<Float>, normal: SIMD3<Float>)?
+        let rotation = simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0))
+        // The cabinet's front (+Z, where its face mark is) points away from its wall, so the wall is toward −Z.
+        let back = -rotation.act(SIMD3(0, 0, 1))
+        let side = rotation.act(SIMD3(1, 0, 0))
+        let halfDepth = BatteryGeometry.depthMeters / 2
+        let halfWidth = BatteryGeometry.widthMeters / 2
+        var faces: [(gap: Float, normal: SIMD3<Float>)] = []
         for sample in samples where sample.faceClass == .wall || sample.faceClass == .window {
             guard let normal = horizontalUnit(sample.normal), abs(simd_dot(normal, back)) >= 0.85 else { continue }
-            let dx = sample.point.x - battery.x
-            let dz = sample.point.z - battery.z
-            guard dx * dx + dz * dz <= 25 else { continue }
-            let height = sample.point.y - battery.y
-            guard height > 0.1, height < 2.5 else { continue }
-            guard abs(simd_dot(sample.point - battery, back)) >= BatteryGeometry.depthMeters / 2 - 0.05 else { continue }
-            let edge = BatteryGeometry.nearestBasePoint(origin: battery, yaw: yaw, toward: sample.point)
-            let signed = simd_dot(edge - sample.point, normal)
-            let inPlane = (edge - sample.point) - normal * signed
-            let along = simd_length(SIMD3(inPlane.x, 0, inPlane.z))
-            guard along < 0.75 else { continue }
-            let clearance = abs(signed)
-            if clearance < (best?.clearance ?? .greatestFiniteMagnitude) {
-                best = (clearance, edge, edge - normal * signed, normal)
-            }
+            let delta = sample.point - battery
+            guard delta.x * delta.x + delta.z * delta.z <= 25, delta.y > 0.1, delta.y < 2.5 else { continue }
+            let behind = simd_dot(delta, back)
+            guard behind >= halfDepth - 0.02, abs(simd_dot(delta, side)) <= halfWidth + 0.75 else { continue }
+            faces.append((behind - halfDepth, simd_dot(normal, back) > 0 ? -normal : normal))
         }
-        guard let best else { return nil }
-        return WallClearanceHit(
-            distanceFeet: Double(best.clearance) / 0.3048,
-            edge: best.edge,
-            wallPoint: best.wallPoint,
-            normal: best.normal,
-            method: .lidarMesh
-        )
+        faces.sort { $0.gap < $1.gap }
+        for index in faces.indices {
+            let start = faces[index].gap
+            let cluster = faces[index...].prefix { $0.gap <= start + Self.wallClusterMeters }
+            guard cluster.count >= Self.wallClusterFaces else { continue }
+            let gaps = cluster.map(\.gap)
+            let clearance = max(0, gaps[gaps.count / 2])
+            let normal = unit(cluster.reduce(SIMD3<Float>.zero) { $0 + $1.normal }) ?? -back
+            let edge = battery + back * halfDepth
+            return WallClearanceHit(
+                distanceFeet: Double(clearance) / 0.3048,
+                edge: edge,
+                wallPoint: edge + back * clearance,
+                normal: normal,
+                method: .lidarMesh
+            )
+        }
+        return nil
     }
+
+    /// Faces within this depth of each other are one wall plane; a plane needs this many of them. Tune on device.
+    static let wallClusterMeters: Float = 0.05
+    static let wallClusterFaces = 3
 
     /// Horizontal clearance from the battery's nearest bottom corner to a detected vertical plane.
     /// Walls are treated as reaching the ground: people usually scan a wall at chest height, well above the battery's base.
@@ -614,13 +726,17 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         guard let wallPoint = snapshot.meterWallPosition?.simd,
               let outward = horizontalUnit(snapshot.meterWallNormal?.simd ?? .zero) else { return nil }
         let up = SIMD3<Float>(0, 1, 0)
-        guard let userRight = unit(simd_cross(outward, up)) else { return nil }
+        // Facing the wall, the viewer's right. `cross(outward, up)` pointed to the viewer's left, so "left" was right.
+        guard let viewerRight = unit(simd_cross(up, outward)) else { return nil }
         let side: Float = onLeft ? -1 : 1
-        let along = userRight * side
+        let along = viewerRight * side
         let halfAlong = TransferSwitchReservation.alongWallMeters / 2
         let halfHeight = TransferSwitchReservation.heightMeters / 2
         let halfOut = TransferSwitchReservation.outFromWallMeters / 2
-        var center = wallPoint + along * (halfAlong + 0.08) + outward * halfOut
+        // The reservation starts at the meter enclosure's edge, not 8 cm from the meter's center, which put the box
+        // over the meter itself and read the meter as an obstacle.
+        let meterHalfWidth = snapshot.meterHalfWidthMeters ?? Self.defaultMeterHalfWidthMeters
+        var center = wallPoint + along * (meterHalfWidth + 0.02 + halfAlong) + outward * halfOut
         if let ground = snapshot.meterPosition?.simd {
             center.y = max(center.y, ground.y + halfHeight)
         }
@@ -674,12 +790,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     ) -> Bool {
         let height = point.y - origin.y
         guard height >= minHeight, height <= maxHeight else { return false }
+        // Same axes as the entity drawn with `simd_quatf(angle: yaw, axis: +Y)`: local X = (cos, 0, −sin) and local
+        // Z = (sin, 0, cos). The old signs tested the mirror image of the drawn box, which at the demo wall's 59° yaw
+        // turned the working space 117° and reached into the wall and past the meter's side.
         let cosYaw = cos(yaw)
         let sinYaw = sin(yaw)
         let dx = point.x - origin.x
         let dz = point.z - origin.z
-        let localX = cosYaw * dx + sinYaw * dz
-        let localZ = -sinYaw * dx + cosYaw * dz
+        let localX = cosYaw * dx - sinYaw * dz
+        let localZ = sinYaw * dx + cosYaw * dz
         return abs(localX) <= halfWidth && abs(localZ) <= halfDepth
     }
 
@@ -706,6 +825,309 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         guard length > 0.001 else { return nil }
         return vector / length
     }
+
+    // MARK: - Pad checks for the battery-spot search
+
+    /// The battery rules that move with the pad, for one candidate spot. Nil is unknown.
+    fileprivate struct PadChecks {
+        var footprintClear: Bool?
+        var withinWallDistance: Bool?
+        var clearOfWindows: Bool?
+        var keepsAccess: Bool?
+        /// Nil without a gas mark.
+        var clearOfGas: Bool?
+        var withinMeterDistance: Bool?
+    }
+
+    /// Only the checks that depend on the pad, with one `ScanIndex` shared by every candidate. Same functions as
+    /// `measure`, so a chosen spot reads the same in Review.
+    fileprivate func padChecks(_ snapshot: PlacementSceneSnapshot, scan: ScanIndex) -> PadChecks {
+        PadChecks(
+            footprintClear: footprintClearance(snapshot, scan: scan),
+            withinWallDistance: wallDistanceFeet(snapshot).map { $0 <= BaseRuleSet.maxWallDistanceFeet },
+            clearOfWindows: clearOfWindows(snapshot),
+            keepsAccess: keepsEquipmentAccess(snapshot),
+            clearOfGas: horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition).map { $0 >= BaseRuleSet.minGasMeterDistanceFeet },
+            withinMeterDistance: horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition).map { $0 <= BaseRuleSet.maxMeterDistanceFeet }
+        )
+    }
+
+    // MARK: - Lock geometry from the mesh
+
+    /// Median height of the floor faces within 0.6 m of a spot 0.3 m out from a lock (the ground in front of the
+    /// meter), `below` or more under the lock. Nil with fewer than `minSamples`. The plane raycast it goes before put
+    /// the demo wall's ground 8 cm high, on the turf edge. Pure, for the meter height and the gas height.
+    static func floorMedianY<S: Sequence>(
+        _ samples: S,
+        near point: SIMD3<Float>,
+        outward: SIMD3<Float>,
+        below: Float = 0.2,
+        minSamples: Int = 8
+    ) -> Float? where S.Element == ClassifiedMeshSample {
+        let flat = SIMD3<Float>(outward.x, 0, outward.z)
+        let length = simd_length(flat)
+        let center = length > 0.001 ? point + flat / length * 0.3 : point
+        var heights: [Float] = []
+        for sample in samples where sample.faceClass == .floor {
+            let dx = sample.point.x - center.x
+            let dz = sample.point.z - center.z
+            guard dx * dx + dz * dz <= 0.36, sample.point.y <= point.y - below else { continue }
+            heights.append(sample.point.y)
+        }
+        guard heights.count >= minSamples else { return nil }
+        heights.sort()
+        return heights[heights.count / 2]
+    }
+
+    /// The wall under a lock, from the mesh: the dominant direction of the wall faces 0–0.35 m behind the lock point
+    /// and within 0.6 m of it, in 5° bins, when at least 12 agree. `behind` is how far that wall sits behind the lock
+    /// point (the meter's glass stands off the siding). Nil keeps the lock's own patch normal: an open panel door or a
+    /// meter collar tilted the demo wall's panel patch 37° off the siding.
+    static func snappedWallNormal<S: Sequence>(
+        _ samples: S,
+        at point: SIMD3<Float>,
+        patchNormal: SIMD3<Float>
+    ) -> (normal: SIMD3<Float>, behind: Float)? where S.Element == ClassifiedMeshSample {
+        let up = SIMD3<Float>(0, 1, 0)
+        let flatPatch = SIMD3<Float>(patchNormal.x, 0, patchNormal.z)
+        guard simd_length(flatPatch) > 0.001 else { return nil }
+        let patch = simd_normalize(flatPatch)
+        let right = simd_normalize(simd_cross(up, patch))
+        let binWidth: Float = 5 * .pi / 180
+        let widest: Float = cos(50 * .pi / 180)
+        var faces: [(angle: Float, behind: Float, bin: Int)] = []
+        for sample in samples where sample.faceClass == .wall {
+            let length = simd_length(sample.normal)
+            guard length > 1e-6, abs(sample.normal.y) / length < 0.3 else { continue }
+            var flat = simd_normalize(SIMD3(sample.normal.x, 0, sample.normal.z))
+            if simd_dot(flat, patch) < 0 { flat = -flat }
+            guard simd_dot(flat, patch) >= widest, simd_distance(sample.point, point) <= 0.6 else { continue }
+            let behind = simd_dot(point - sample.point, patch)
+            guard behind >= 0, behind <= 0.35 else { continue }
+            let angle = atan2(simd_dot(flat, right), simd_dot(flat, patch))
+            faces.append((angle, behind, Int((angle / binWidth).rounded(.down))))
+        }
+        guard faces.count >= Self.snapMinFaces else { return nil }
+        var counts: [Int: Int] = [:]
+        for face in faces { counts[face.bin, default: 0] += 1 }
+        let window = { (bin: Int) in (counts[bin - 1] ?? 0) + (counts[bin] ?? 0) + (counts[bin + 1] ?? 0) }
+        guard let best = counts.keys.max(by: { window($0) < window($1) || (window($0) == window($1) && $0 > $1) }) else { return nil }
+        let cluster = faces.filter { abs($0.bin - best) <= 1 }
+        guard cluster.count >= Self.snapMinFaces else { return nil }
+        let angles = cluster.map(\.angle).sorted()
+        let behinds = cluster.map(\.behind).sorted()
+        let angle = angles[angles.count / 2]
+        return (simd_normalize(patch * cos(angle) + right * sin(angle)), behinds[behinds.count / 2])
+    }
+
+    /// Wall faces that must agree before a lock's normal is taken from the mesh. Tune on device.
+    static let snapMinFaces = 12
+}
+
+/// The Live Survey's own battery spot. Candidates stand along the meter wall on both sides, judged from the scan in the
+/// background while the user looks around, and the best is placed when the scan ends. Pure: it runs on a snapshot copy
+/// off the main thread, and the same code runs at the finish.
+///
+/// A candidate is out when the wall ends under it, when something stands between it and the meter (the conduit run),
+/// when it is within 3.25 ft of the gas mark, or when any pad rule measures a conflict. The rest rank by fewest
+/// unknown pad rules, then nearest the meter, then away from the panel.
+struct BatterySpotPlanner: Sendable {
+    /// Cabinet-center offsets from the meter along its wall, each tried on both sides. Tune on device.
+    static let offsetsMeters: [Float] = [0.9, 1.4, 1.8, 2.7, 3.6]
+    static let binMeters: Float = 0.1
+    /// Share of the 10 cm strips across the cabinet's width that must hold the meter wall. Tune on device.
+    static let wallShare: Float = 0.6
+    static let wallToleranceMeters: Float = 0.15
+    static let wallBandMeters: ClosedRange<Float> = 0.1...1.5
+    /// The run from the meter to the pad: faces here are something in the way. Tune on device.
+    static let corridorOutMeters: ClosedRange<Float> = 0.05...0.9
+    static let corridorHeightMeters: ClosedRange<Float> = 0.1...2.0
+    /// Faces this close to the meter's own plane are the siding, the meter, or the panel, not an obstacle.
+    static let corridorPlaneMeters: Float = 0.15
+    static let corridorBlockingFaces = 4
+    /// A little over the 3 ft rule, so a gas mark a few inches off does not flip the pick.
+    static let gasKeepAwayFeet: Double = 3.25
+    /// A few inches off the wall, so the back face sits inside the 1 ft wall check.
+    static let wallGapMeters: Float = 3 * BatteryGeometry.inchesToMeters
+
+    struct Input: Sendable {
+        var snapshot: PlacementSceneSnapshot
+        /// The meter lock and its outward wall normal (horizontal, unit).
+        var meterPoint: SIMD3<Float>
+        var outward: SIMD3<Float>
+        /// How far the siding sits behind the meter lock point. 0 when the mesh did not say.
+        var wallBehindMeters: Float
+        var groundY: Float
+        /// At the finish a stretch nobody scanned is out ("not scanned"); during the scan it is only pending.
+        var final: Bool
+    }
+
+    enum Verdict: Sendable, Equatable {
+        case fits(unknowns: Int)
+        case pending(String)
+        case rejected(String)
+    }
+
+    struct Candidate: Sendable, Equatable {
+        /// Along the wall from the meter, positive to the right of someone facing the wall.
+        var offsetMeters: Float
+        var position: SIMD3<Float>
+        var yaw: Float
+        var verdict: Verdict
+    }
+
+    struct Plan: Sendable, Equatable {
+        var candidates: [Candidate]
+        var winner: Candidate?
+        var status: BatterySpotSummary.Status
+        /// The panel lock along the meter wall, same sign as `offsetMeters`. Nil without a panel.
+        var panelAlongMeters: Float?
+
+        /// What survey.json records. Along-wall distances are positive toward the panel (to the right without one).
+        var summary: BatterySpotSummary {
+            let towardPanelSign: Float = (panelAlongMeters ?? 1) < 0 ? -1 : 1
+            func label(_ candidate: Candidate) -> String {
+                String(format: "%+.1f m", locale: Locale(identifier: "en_US_POSIX"), candidate.offsetMeters * towardPanelSign)
+            }
+            let rejections = candidates.compactMap { candidate -> String? in
+                switch candidate.verdict {
+                case .fits: return nil
+                case .pending(let reason), .rejected(let reason): return "\(label(candidate)): \(reason)"
+                }
+            }
+            return BatterySpotSummary(
+                status: status,
+                alongWallFeet: winner.map { Double($0.offsetMeters * towardPanelSign / BatteryGeometry.feetToMeters) },
+                towardPanel: winner.flatMap { winner in panelAlongMeters.map { ($0 < 0) == (winner.offsetMeters < 0) } },
+                candidatesTried: candidates.count,
+                rejections: rejections
+            )
+        }
+    }
+
+    static let wallEnds = "wall ends"
+    static let notScanned = "not scanned"
+
+    static func plan(_ input: Input, measurer: CorePlacementMeasurer = CorePlacementMeasurer()) -> Plan {
+        let up = SIMD3<Float>(0, 1, 0)
+        let outward = simd_normalize(SIMD3(input.outward.x, 0, input.outward.z))
+        let axis = simd_normalize(simd_cross(up, outward))
+        let wall = input.meterPoint - outward * input.wallBehindMeters
+        let yaw = atan2(outward.x, outward.z)
+        let snapshot = input.snapshot
+        let meterHalfWidth = snapshot.meterHalfWidthMeters ?? CorePlacementMeasurer.defaultMeterHalfWidthMeters
+        let panel = snapshot.panelWallPosition?.simd
+        let panelAlong = panel.map { simd_dot($0 - wall, axis) }
+
+        // One pass over the mesh: which strips hold the wall, which were seen at all, and what stands in front.
+        var wallBins = Set<Int>()
+        var seenBins = Set<Int>()
+        var corridor: [Float] = []
+        for sample in snapshot.classifiedMesh {
+            let delta = sample.point - wall
+            let along = simd_dot(delta, axis)
+            let out = simd_dot(delta, outward)
+            let height = sample.point.y - input.groundY
+            let bin = Int((along / binMeters).rounded(.down))
+            if out >= -0.3, out <= 1.5, height >= -0.3, height <= 2 { seenBins.insert(bin) }
+            switch sample.faceClass {
+            case .floor, .ceiling:
+                continue
+            case .wall, .window, .other:
+                break
+            }
+            let length = simd_length(sample.normal)
+            if length > 1e-6, abs(sample.normal.y) / length < 0.45,
+               abs(simd_dot(SIMD3(sample.normal.x, 0, sample.normal.z) / length, outward)) > 0.85,
+               abs(out) <= wallToleranceMeters, wallBandMeters.contains(height) {
+                wallBins.insert(bin)
+            }
+            let fromMeterPlane = simd_dot(sample.point - input.meterPoint, outward)
+            guard corridorOutMeters.contains(fromMeterPlane), abs(fromMeterPlane) > corridorPlaneMeters,
+                  corridorHeightMeters.contains(height) else { continue }
+            // The panel and its open door stand beside the meter by design; they are not in the way.
+            if let panel, let panelAlong, abs(along - panelAlong) <= 0.35, fromMeterPlane <= 0.6,
+               abs(sample.point.y - panel.y) <= 0.6 { continue }
+            corridor.append(along)
+        }
+
+        let scan = ScanIndex(snapshot.classifiedMesh)
+        let halfWidth = BatteryGeometry.widthMeters / 2
+        let halfPad = BatteryGeometry.footprintMeters / 2
+        let standOff = BatteryGeometry.depthMeters / 2 + wallGapMeters
+        let gas = snapshot.gasMeterPosition?.simd
+        var candidates: [Candidate] = []
+        for magnitude in offsetsMeters {
+            for sign: Float in [1, -1] {
+                let offset = magnitude * sign
+                var position = wall + outward * standOff + axis * offset
+                position.y = input.groundY
+                let low = Int(((offset - halfWidth) / binMeters).rounded(.down))
+                let high = Int(((offset + halfWidth) / binMeters).rounded(.up)) - 1
+                let strips = max(1, high - low + 1)
+                let onWall = (low...max(low, high)).filter { wallBins.contains($0) }.count
+                let seen = (low...max(low, high)).filter { seenBins.contains($0) }.count
+                func verdict() -> Verdict {
+                    if Float(onWall) < wallShare * Float(strips) {
+                        if Float(seen) < wallShare * Float(strips) {
+                            return input.final ? .rejected(notScanned) : .pending(notScanned)
+                        }
+                        return .rejected(wallEnds)
+                    }
+                    let near = meterHalfWidth
+                    let far = magnitude - halfPad
+                    if far > near {
+                        let between = corridor.filter { along in
+                            let reach = along * sign
+                            return reach > near && reach < far
+                        }.count
+                        if between >= corridorBlockingFaces { return .rejected("something between it and the meter") }
+                    }
+                    if let gas {
+                        let dx = Double(position.x - gas.x)
+                        let dz = Double(position.z - gas.z)
+                        if (dx * dx + dz * dz).squareRoot() / Double(BatteryGeometry.feetToMeters) < gasKeepAwayFeet {
+                            return .rejected("too close to the gas meter")
+                        }
+                    }
+                    var probe = snapshot
+                    probe.batteryPosition = PlacementAnchor(position)
+                    probe.batteryYawRadians = yaw
+                    let checks = measurer.padChecks(probe, scan: scan)
+                    let rules: [(Bool?, String)] = [
+                        (checks.footprintClear, "pad blocked"),
+                        (checks.withinWallDistance, "more than 1 ft from the wall"),
+                        (checks.clearOfWindows, "in front of a window"),
+                        (checks.keepsAccess, "in the meter or panel working space"),
+                        (checks.clearOfGas, "within 3 ft of the gas meter"),
+                        (checks.withinMeterDistance, "more than 20 ft from the meter")
+                    ]
+                    if let conflict = rules.first(where: { $0.0 == false }) { return .rejected(conflict.1) }
+                    let counted = gas == nil ? rules.filter { $0.1 != "within 3 ft of the gas meter" } : rules
+                    return .fits(unknowns: counted.filter { $0.0 == nil }.count)
+                }
+                candidates.append(Candidate(offsetMeters: offset, position: position, yaw: yaw, verdict: verdict()))
+            }
+        }
+
+        func rank(_ candidate: Candidate) -> (Int, Float, Int)? {
+            guard case .fits(let unknowns) = candidate.verdict else { return nil }
+            let panelSide = panelAlong.map { ($0 < 0) == (candidate.offsetMeters < 0) } ?? false
+            return (unknowns, abs(candidate.offsetMeters), panelSide ? 1 : 0)
+        }
+        let winner = candidates
+            .compactMap { candidate in rank(candidate).map { (candidate, $0) } }
+            .min { lhs, rhs in lhs.1 < rhs.1 }?.0
+        let status: BatterySpotSummary.Status
+        if winner != nil {
+            status = .placed
+        } else if candidates.allSatisfy({ $0.verdict == .rejected(wallEnds) || $0.verdict == .rejected(notScanned) || $0.verdict == .pending(notScanned) }) {
+            status = .noWall
+        } else {
+            status = .allRejected
+        }
+        return Plan(candidates: candidates, winner: winner, status: status, panelAlongMeters: panelAlong)
+    }
 }
 
 /// Which 10 cm cells of the scene hold any scanned face, so a check can tell "clear" from "never scanned".
@@ -721,6 +1143,18 @@ fileprivate struct ScanIndex {
             columns.insert(SIMD2(key.x, key.z))
             voxels.insert(key)
         }
+    }
+
+    private static let latest = OSAllocatedUnfairLock<(key: Int, index: ScanIndex)?>(initialState: nil)
+
+    /// The index for the snapshot's mesh, built once per `classifiedMeshKey`.
+    static func of(_ snapshot: PlacementSceneSnapshot) -> ScanIndex {
+        let key = snapshot.classifiedMeshKey
+        guard key != 0 else { return ScanIndex(snapshot.classifiedMesh) }
+        if let hit = latest.withLock({ $0?.key == key ? $0?.index : nil }) { return hit }
+        let index = ScanIndex(snapshot.classifiedMesh)
+        latest.withLock { $0 = (key, index) }
+        return index
     }
 
     private static func key(_ point: SIMD3<Float>) -> SIMD3<Int32> {
@@ -747,7 +1181,7 @@ fileprivate struct ScanIndex {
         while localX < halfWidth {
             var localZ = -halfDepth + Self.cell / 2
             while localZ < halfDepth {
-                let world = center + SIMD3(cosYaw * localX - sinYaw * localZ, 0, sinYaw * localX + cosYaw * localZ)
+                let world = center + SIMD3(cosYaw * localX + sinYaw * localZ, 0, -sinYaw * localX + cosYaw * localZ)
                 localZ += Self.cell
                 if let host, simd_dot(world - host.point, host.normal) * openSign < -0.05 { continue }
                 total += 1
@@ -932,7 +1366,7 @@ enum MeasurementOverlay {
         flag("keeps_meter_and_panel_access", measured.keepsEquipmentAccess)
         flag("front_working_space", measured.frontWorkingSpaceIsClear)
         flag("transfer_switch_space", measured.transferSwitchClearanceObserved)
-        if let same = measured.meterAndPanelSameWall {
+        if let same = measured.meterAndPanelShareWall {
             comments.append("check meter_and_panel_same_wall \(same ? "yes" : "no")")
         }
 

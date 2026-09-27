@@ -151,7 +151,63 @@ struct OnboardingNamePage: View {
     }
 }
 
-// MARK: - Screen 3: Address
+// MARK: - Screen 3: Email
+
+struct OnboardingEmailPage: View {
+    var store: SurveyStore
+    var onNext: () -> Void
+
+    @State private var email: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        OnboardingPageLayout(
+            illustration: OnboardingIllustration(assetName: "OnboardingEmail", fallbackSymbol: "envelope.fill"),
+            title: "What’s your email?",
+            subtitle: "So we can send your survey and follow up if a reviewer has questions.",
+            primaryTitle: "Next",
+            primaryEnabled: emailLooksValid,
+            onPrimary: {
+                store.setEmail(trimmed)
+                onNext()
+            },
+            onSkip: nil
+        ) {
+            TextField("you@example.com", text: $email)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($focused)
+                .submitLabel(.next)
+                .onSubmit {
+                    guard emailLooksValid else { return }
+                    store.setEmail(trimmed)
+                    onNext()
+                }
+                .padding(14)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .font(.title3)
+        }
+        .onAppear {
+            if email.isEmpty { email = store.session.email }
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingUI.focusDelay) { focused = true }
+        }
+    }
+
+    private var trimmed: String {
+        email.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var emailLooksValid: Bool {
+        // Local-part @ domain.tld with a 2+ character TLD. Case-insensitive; matches the setter's guard in SurveyStore.
+        guard !trimmed.isEmpty else { return false }
+        let pattern = #"^[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}$"#
+        return trimmed.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
+// MARK: - Screen 4: Address
 
 struct OnboardingAddressPage: View {
     var store: SurveyStore
@@ -231,7 +287,7 @@ struct OnboardingAddressPage: View {
     }
 }
 
-// MARK: - Screen 4: Ownership
+// MARK: - Screen 5: Ownership
 
 struct OnboardingOwnershipPage: View {
     var store: SurveyStore
@@ -262,7 +318,7 @@ struct OnboardingOwnershipPage: View {
     }
 }
 
-// MARK: - Screen 5: Battery count
+// MARK: - Screen 6: Battery count
 
 struct OnboardingBatteryCountPage: View {
     var store: SurveyStore
@@ -284,16 +340,8 @@ struct OnboardingBatteryCountPage: View {
             },
             onSkip: onSkip
         ) {
-            VStack(alignment: .leading, spacing: 14) {
-                RadioChoice(title: "", selection: $selection) { $0.title }
-                    .padding(.horizontal, 4)
-                BatteryCountDecisionCard(decision: BatteryCountDecision.make(
-                    plannedCount: selection?.value ?? store.session.electrical.plannedBatteryCount,
-                    hasSolar: store.session.electrical.hasSolar,
-                    panelBusRatingAmps: store.session.electrical.panelBusRatingAmps,
-                    propertyIdentifier: store.session.propertyIdentifier
-                ))
-            }
+            RadioChoice(title: "", selection: $selection) { $0.title }
+                .padding(.horizontal, 4)
         }
         .onAppear {
             if selection == nil { selection = BatteryCountChoice(count: store.session.electrical.plannedBatteryCount) }
@@ -301,7 +349,38 @@ struct OnboardingBatteryCountPage: View {
     }
 }
 
-// MARK: - Screen 6: Done
+// MARK: - Screen 7: Gas meter
+
+struct OnboardingGasMeterPage: View {
+    var store: SurveyStore
+    var onNext: () -> Void
+    var onSkip: () -> Void
+
+    @State private var selection: GasMeterAnswer?
+
+    var body: some View {
+        OnboardingPageLayout(
+            illustration: OnboardingIllustration(assetName: "OnboardingGasMeter", fallbackSymbol: "flame.fill"),
+            title: "Any gas meter outside?",
+            subtitle: "The battery has to stand at least 3 ft from a gas meter, so we look for one during the scan.",
+            primaryTitle: "Next",
+            primaryEnabled: selection != nil,
+            onPrimary: {
+                store.setGasMeterAnswer(selection)
+                onNext()
+            },
+            onSkip: onSkip
+        ) {
+            RadioChoice(title: "", selection: $selection) { $0.title }
+                .padding(.horizontal, 4)
+        }
+        .onAppear {
+            if selection == nil { selection = store.session.electrical.gasMeterAnswer }
+        }
+    }
+}
+
+// MARK: - Screen 8: Done
 
 struct OnboardingDonePage: View {
     var onContinue: () -> Void

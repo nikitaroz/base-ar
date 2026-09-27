@@ -12,9 +12,9 @@ Not an electrical inspection, code review, or installation approval.
 
 ## Demo
 
-https://github.com/nikitaroz/base-ar/raw/main/docs/media/demo.mp4
+![Base Site Survey demo](docs/media/demo.gif)
 
-> If your Markdown viewer does not render the video inline, open [`docs/media/demo.mp4`](docs/media/demo.mp4) directly.
+> Prefer the higher-quality clip? Grab [`docs/media/demo.mp4`](docs/media/demo.mp4).
 
 ## Contents
 
@@ -54,7 +54,7 @@ Splash → Welcome → **Home Info** → **Live Survey** → **Review & Export**
    - the **top** line is the current job, and it changes as each job completes;
    - the **bottom** line is live feedback with a small animated graphic ("Point at the meter", "Get closer", "Hold still", "Found the meter", …).
 
-   There is nothing to tap. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (only when Home Info said Yes or Not sure), a step back to look around, then the battery. The app suggests a spot beside the meter wall (slide it with one finger, including to the other side of the meter; turn it with two), accepts it once the phone holds still, and tints it with the live tone. Then the scan saves itself and opens Review. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, swipe right from the left edge; the scan so far is kept and you go back to the step you came from.
+   There is nothing to tap to capture. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (only when Home Info said Yes or Not sure), a step back to look around, then the battery. The app suggests a spot beside the meter wall (slide it with one finger, including to the other side of the meter; turn it with two), accepts it once the phone holds still, and tints it with the live tone. Then the scan saves itself and opens Review. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, tap the back chevron in the top-left corner or swipe right from the left edge; the scan so far is kept and you go back to the step you came from.
 3. **Review & Export.** "What's missing" rows take you to the fix (Home Info, the Live Survey, or the Electrical screen to retake a photo or type a number). Numbers read by scan are marked "read by scan" until you confirm them here. Then property, electrical, site-measurement, and eligibility details, a `survey.json` preview, and Share (see [Export packet](#export-packet)). Start over deletes the survey.
 
 ## Feature tour
@@ -119,13 +119,17 @@ Every capability is Apple-frameworks only: SwiftUI, ARKit, RealityKit, Vision / 
 
 Each teammate does this once per Mac. `git pull` never disturbs signing — those files are gitignored.
 
+> **Already set up before 27 September 2026?** Re-run `./scripts/bootstrap-signing.sh` once to turn on the git hooks (your `Local.xcconfig` is kept), and check that its `DEVELOPMENT_TEAM` matches your team in Xcode → Settings → Accounts. Older versions of the script could write the wrong ID.
+
 1. **Sign in to Xcode with your Apple ID.** Xcode → Settings → Accounts → **+** → Apple ID. Without this Xcode has no cert to sign with and every device build fails with *"No Account for Team … / No profiles for …"*.
 2. **Generate your local signing config.**
    ```sh
    ./scripts/bootstrap-signing.sh
    ```
-   Reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig` (gitignored). To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
+   Reads the Team ID from your certificate's team field, derives a bundle ID like `com.<your-username>.BaseAR`, and writes both to `Config/Local.xcconfig` (gitignored). If your certificates belong to several teams, pass one: `./scripts/bootstrap-signing.sh TEAM_ID`. It also turns on the repo's git hooks. To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`, fill in the two lines, and run `git config core.hooksPath .githooks`.
 3. **Open `BaseAR.xcodeproj`** and confirm *Automatically manage signing* is checked on the `BaseAR` target. The first build pulls down a provisioning profile.
+
+   **Don't pick a team in Signing & Capabilities.** Xcode writes that choice into `project.pbxproj`, where it overrides every teammate's `Local.xcconfig` and breaks their builds. The pre-commit hook blocks a committed `DEVELOPMENT_TEAM`.
 4. **On device, trust the developer profile** the first time: Settings → General → VPN & Device Management → tap your profile → **Trust**.
 
 ## Running the app
@@ -179,7 +183,6 @@ BaseSiteSurvey-2026-09-26-2041/
 ├─ meter.jpg            The meter photo from the scan capture or the Electrical
 │                       screen (upright JPEG)
 ├─ panel.jpg            The panel photo from the scan capture, when it locked one
-├─ placement.jpg        AR screenshot at the time of Save
 ├─ scene.ply            ASCII LiDAR mesh — per-vertex RGB from camera,
 │                       per-face ARKit label (wall / floor / window / door /
 │                       ceiling / …), and header `mark` lines for the meter,
@@ -263,7 +266,7 @@ See [`tools/viewer/README.md`](tools/viewer/README.md) for details.
 
 Base's public request is two steps (researched 2026-09-26). [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a separate [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. Full comparison: [`reports/Base battery form vs app.md`](reports/Base%20battery%20form%20vs%20app.md).
 
-This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), an AR screenshot, and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
+This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
 
 ## What's stubbed
 

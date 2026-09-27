@@ -29,7 +29,7 @@ enum BaseRuleSet {
         transferSwitchSpace,
         meterHeight,
         frontWorkingSpace,
-        meterAndPanelSameWall
+        meterAndPanelShareWall
     ]
 
     private static let austinBreaker = EligibilityRule(
@@ -168,7 +168,7 @@ enum BaseRuleSet {
                 return .unknown("The battery has not been placed.")
             }
             guard let clear = session.placement.keepsEquipmentAccess else {
-                return .unknown("Tap the meter and the panel on the wall to check the battery stays out of their working space.")
+                return .unknown("The meter and the panel both need to be found in the Live Survey to check the battery stays out of their working space.")
             }
             return clear
                 ? .pass("The battery stays out of the working space in front of the meter and the panel.")
@@ -186,13 +186,19 @@ enum BaseRuleSet {
                 // The user's answer, not a measurement, so the best this home can reach is "attested".
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
             }
-            return distanceOutcome(
-                feet: session.placement.distanceToGasMeterFeet,
-                missing: "The gas meter was not marked, so clearance was not measured.",
-                passes: { $0 >= minGasMeterDistanceFeet },
-                passText: { "Measured distance to the marked gas meter is \($0), at least 3 ft." },
-                conflictText: { "Measured distance to the marked gas meter is \($0), closer than 3 ft." }
-            )
+            guard let feet = session.placement.distanceToGasMeterFeet, feet.isFinite, feet >= 0 else {
+                return .unknown("The gas meter was not shown on the scan, so clearance was not measured.")
+            }
+            let formatted = String(format: "%.1f ft", feet)
+            guard feet >= minGasMeterDistanceFeet else {
+                return .conflict("Measured \(formatted) from the pad to the gas meter, closer than 3 ft.")
+            }
+            // The scan does not recognize gas meters yet: a spot the user showed (or an older file's tap) is their
+            // showing, so the distance passes as attested until the gas photo is checked.
+            if session.placement.gasMeterMarkSource == .recognized {
+                return .pass("Measured distance to the gas meter is \(formatted), at least 3 ft.")
+            }
+            return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "Measured \(formatted) from the pad to the spot you showed as the gas meter. The scan did not recognize it; check the gas photo.")
         }
     )
 
@@ -203,7 +209,7 @@ enum BaseRuleSet {
         isRequired: true,
         evaluate: { session in
             guard let height = session.placement.meterHeightFeet else {
-                return .unknown("Meter height was not measured. Tap the ground below the meter and then the meter on the wall to measure it.")
+                return .unknown("Meter height was not measured. In the Live Survey, find the meter and point down at the ground below it.")
             }
             guard height.isFinite else {
                 return .unknown("Meter height was not a valid measurement, so the height range was not checked.")
@@ -216,18 +222,18 @@ enum BaseRuleSet {
         }
     )
 
-    private static let meterAndPanelSameWall = EligibilityRule(
+    private static let meterAndPanelShareWall = EligibilityRule(
         id: "meter-panel-same-wall",
         title: "Meter and panel on the same wall",
-        requirement: "The meter and the main breaker panel should sit on the same wall.",
+        requirement: "The meter and the main breaker panel should sit on the same wall (either side counts).",
         isRequired: true,
         evaluate: { session in
-            guard let same = session.placement.meterAndPanelSameWall else {
-                return .unknown("Same-wall check needs a wall tap on both the meter and the panel.")
+            guard let same = session.placement.meterAndPanelShareWall else {
+                return .unknown("The meter and the panel both need to be found on the wall in the Live Survey.")
             }
             return same
-                ? .pass("The meter and panel wall taps face the same direction and lie on the same wall.")
-                : .conflict("The meter and panel wall taps are not on the same wall.")
+                ? .pass("The meter and panel marks lie on the same wall.")
+                : .conflict("The meter and panel marks are not on the same wall.")
         }
     )
 
@@ -274,7 +280,7 @@ private func distanceOutcome(
     passText: (String) -> String,
     conflictText: (String) -> String
 ) -> RuleOutcome {
-    guard let feet, feet.isFinite, feet >= 0 else { return .unknown(missing) }
+    guard let feet, feet.isFinite, feet > 0 else { return .unknown(missing) }
     let formatted = String(format: "%.1f ft", feet)
     return passes(feet) ? .pass(passText(formatted)) : .conflict(conflictText(formatted))
 }

@@ -47,7 +47,8 @@ enum BaseRuleSet {
             }
             if austinMainBreakerRange.contains(amps) {
                 // Typed, or a scan read the user confirmed: their reading of the label, not a measurement, the same
-                // as the panel bus rating. It passes as attested, so the tone can't read green on it alone.
+                // as the panel bus rating. It passes as attested, so with this rule required the best tone a survey
+                // can reach is teal (`.attested`), never green, until the app measures the breaker itself.
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "You confirmed the main breaker is \(amps)A, inside 150–200A. Your reading of the breaker, not a measurement.")
             }
             return .conflict("Confirmed main breaker is \(amps)A, outside the 150–200A Austin range.")
@@ -75,7 +76,8 @@ enum BaseRuleSet {
                 return .conflict("\(reason) and the panel label's bus rating is \(busRating)A. This case needs a 200A panel.")
             }
             if electrical.hasSolar == false, let count = electrical.plannedBatteryCount, count < 2 {
-                return .pass("Solar was reported as not present and fewer than two batteries are planned, so the 200A panel requirement is not triggered.")
+                // Decided from the homeowner's answers alone: attested, never a measurement.
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "You reported no solar and fewer than two batteries, so the 200A panel requirement is not triggered. Your answer, not a measurement.")
             }
             if let busRating, busRating >= panelAmpsForSolarOrTwoBatteries {
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The bus rating typed from the panel label is \(busRating)A, which meets the 200A requirement whether or not solar or two batteries apply.")

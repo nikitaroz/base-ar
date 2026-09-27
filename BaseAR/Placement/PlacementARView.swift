@@ -1,4 +1,5 @@
 import ARKit
+import AVFoundation
 import CoreImage
 import os
 import RealityKit
@@ -38,6 +39,28 @@ private struct LookAround: Equatable {
 /// scan captured by itself already carries its photo and read, so it skips that step. A find step that runs out of
 /// time moves on with the item unmarked (its checks stay unknown) and looks again on the next visit. The gas
 /// step is done once marked, answered "No" on Home Info, or not seen before its timeout.
+/// Why the Live Survey's camera cannot run. It stays on screen, unlike an error line that clears after 4 s.
+private enum CameraProblem: Equatable {
+    /// Camera access is off for the app (denied or restricted).
+    case accessOff
+    /// The AR session failed for another reason.
+    case failed
+
+    var task: String {
+        switch self {
+        case .accessOff: "Camera is off"
+        case .failed: "Camera stopped"
+        }
+    }
+
+    var guidance: String {
+        switch self {
+        case .accessOff: "Turn on Camera for Base in Settings. Swipe from the left edge to go back."
+        case .failed: "Swipe from the left edge to go back, then open the Live Survey again."
+        }
+    }
+}
+
 private enum LiveStep: Equatable {
     case findMeter
     case readMeter
@@ -116,6 +139,8 @@ private enum CoachTip: String {
     case gotBreaker = "Got the main breaker"
     case movingOn = "Not found. Review lists it"
     case cantRecognize = "This phone can’t spot it. Review lists it"
+    // Fixer: a finished scan opened again has nothing left to do but slide the battery or go back.
+    case swipeBack = "Slide the battery, or swipe from the left edge to go back"
 
     var symbol: String {
         switch self {
@@ -148,6 +173,7 @@ private enum CoachTip: String {
         case .gotBreaker: "checkmark.seal.fill"
         case .movingOn: "arrow.forward.circle.fill"
         case .cantRecognize: "exclamationmark.triangle.fill"
+        case .swipeBack: "hand.draw.fill"
         }
     }
 
@@ -155,7 +181,7 @@ private enum CoachTip: String {
     var pulses: Bool {
         switch self {
         case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned, .paused,
-             .gotBreaker, .movingOn: false
+             .gotBreaker, .movingOn, .swipeBack: false
         default: true
         }
     }
@@ -315,6 +341,8 @@ struct PlacementARView: View {
     /// Screenshot tries for this save. After a couple of misses Review opens without the scan photo.
     @State private var saveAttempts = 0
     @State private var lastSaveWithoutBattery = false
+    /// Camera access is off or the AR session failed. Holds the step clocks and keeps its message up.
+    @State private var cameraProblem: CameraProblem?
 
     private static let breakerChips = [100, 125, 150, 200]
     /// Touches that start inside this leading strip leave the scan; pans anywhere else reach the AR view.
@@ -360,6 +388,12 @@ struct PlacementARView: View {
     }
 
     private var isSaving: Bool { pendingSave != nil }
+
+    /// Denied or restricted. Not yet asked is fine: ARKit asks when the session first runs.
+    private static var cameraAccessOff: Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        return status == .denied || status == .restricted
+    }
 
     private var arSupported: Bool {
         ARWorldTrackingConfiguration.isSupported
@@ -476,7 +510,7 @@ struct PlacementARView: View {
 
     /// The step clocks stop while the user cannot see the two lines or the scan is not running.
     private var clockHeld: Bool {
-        !isVisible || coachingIsActive || pausedForCapture || isLeaving
+        !isVisible || coachingIsActive || pausedForCapture || isLeaving || cameraProblem != nil
     }
 
     private var stepClock: StepClock {
@@ -519,7 +553,14 @@ struct PlacementARView: View {
             autoFinishArmed = false
             saveAttempts = 0
             let controller = store.requirePlacementController()
-            controller.resume()
+            // A camera that cannot run must say so and stop the clocks, not time every step out over a dead feed.
+            cameraProblem = Self.cameraAccessOff ? .accessOff : nil
+            controller.onSessionFailure = { cameraDenied in
+                cameraProblem = cameraDenied ? .accessOff : .failed
+            }
+            if cameraProblem == nil {
+                controller.resume()
+            }
             scene = controller.scene
             lookAround = controller.lookAround
             yawRadians = controller.yawRadians
@@ -584,6 +625,9 @@ struct PlacementARView: View {
             // Under the number scanner or the Electrical sheet the session stays paused until that closes.
             guard isVisible, arSupported, !pausedForCapture, !isLeaving else { return }
             if phase == .active {
+                // Back from Settings with the camera turned on: run again.
+                if cameraProblem == .accessOff, !Self.cameraAccessOff { cameraProblem = nil }
+                guard cameraProblem == nil else { return }
                 store.placementController?.resume()
             } else if phase == .background {
                 store.placementController?.pauseIfIdle()
@@ -719,9 +763,9 @@ struct PlacementARView: View {
             }
             // The coaching overlay has the camera to itself. The two lines come back when it finishes. A lens that
             // sees nothing keeps the coaching up, so the blind-camera line shows over it: "move the phone" won't help.
-            if !coachingIsActive || (cameraSeesNothing && trackingLooksBlind) {
+            if !coachingIsActive || (cameraSeesNothing && trackingLooksBlind) || cameraProblem != nil {
                 VStack(spacing: 0) {
-                    if !coachingIsActive {
+                    if !coachingIsActive || cameraProblem != nil {
                         taskLineView
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
@@ -739,6 +783,7 @@ struct PlacementARView: View {
 
     /// The top line: the one job now. A finished scan opened again says so instead of "Saving".
     private var taskText: String {
+        if let cameraProblem { return cameraProblem.task }
         if step == .confirm, !autoFinishArmed, !isSaving { return "Scan done" }
         // A finish without a battery saves from the battery step.
         if isSaving { return LiveStep.confirm.task }
@@ -790,6 +835,14 @@ struct PlacementARView: View {
     /// One bottom line at a time: an error, then tracking, then a fresh confirmation, then capture feedback, then the
     /// detector, then the step.
     private func feedback(_ assessment: SurveyAssessment?) -> Feedback? {
+        if let cameraProblem {
+            return Feedback(
+                text: cameraProblem.guidance,
+                symbol: "video.slash.fill",
+                tint: ToneStyle.color(.conflict),
+                isError: true
+            )
+        }
         if let statusMessage {
             return Feedback(
                 text: statusMessage,
@@ -850,6 +903,8 @@ struct PlacementARView: View {
             if !lookAround.lookedRight { return Feedback(.lookRight) }
             return Feedback(.stepBack)
         case .placeBattery, .confirm:
+            // A finished scan opened again ("Scan done") does not save by itself until the battery moves.
+            if step == .confirm, !autoFinishArmed, !isSaving { return Feedback(.swipeBack) }
             // No ghost yet means no ground beside the meter.
             guard let assessment else { return Feedback(.pointDown) }
             return toneFeedback(assessment)
@@ -1821,6 +1876,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var onYawChange: ((Float) -> Void)?
     private var onScreenshot: ((UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
+    /// The AR session itself failed. True when camera access is off. Set by the Live Survey, which keeps a message up
+    /// and stops its clocks; without it the failure goes to `onFailure`.
+    var onSessionFailure: ((_ cameraDenied: Bool) -> Void)?
     private var onTrackingStatus: ((String?) -> Void)?
     private var onCoachingActiveChange: ((Bool) -> Void)?
     private var onLiveFeet: ((Double?) -> Void)?
@@ -2051,7 +2109,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onCoachingActiveChange = onCoachingActiveChange
             if startedScanning, !reportedScanLoadError, let loadError = equipmentBridge.detector.loadError {
                 reportedScanLoadError = true
-                self.onFailure?("Equipment scan isn’t available (\(loadError)). Mark the meter and panel yourself.")
+                // The Live Survey has nothing to tap, so say what happens instead: the steps move on and Review lists them.
+                var message = "This phone can’t spot the meter or panel. Review lists them."
+                #if DEBUG
+                message += " (\(loadError))"
+                #endif
+                self.onFailure?(message)
             }
             if !aimEnabled && holdLockKind() == nil {
                 reticle?.isEnabled = false
@@ -2107,6 +2170,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onTrackingStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
+            onSessionFailure = nil
             onMeterCrop = nil
             screenshotInFlight = false
             pauseRequested = false
@@ -2351,8 +2415,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
             let message = error.localizedDescription
+            let cameraDenied = (error as? ARError)?.code == .cameraUnauthorized
             Task { @MainActor in
-                self.onFailure?(message)
+                if let onSessionFailure = self.onSessionFailure {
+                    onSessionFailure(cameraDenied)
+                } else {
+                    self.onFailure?(message)
+                }
             }
         }
 
@@ -3073,15 +3142,26 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 releaseRelockBanIfUnseen(Set(best.keys))
             }
             // Only the object this step is asking for can lock. Both kinds still draw.
-            let target = holdLockKind()
+            let asked = holdLockKind()
+            var streakTarget = asked
             if Self.scanCaptureEnabled {
                 scanHint = settledCaptureHint(evaluateCapture(packet))
-                return
+                // Late fallback, meter only. Glare, a dirty cover, a short number, or a barcode-only plate can keep
+                // the label from ever reading twice, and with no meter there is no battery spot. After
+                // `lateDetectorLockSeconds` of searching, the detector-streak lock below (main's rule: five agreeing
+                // wall hits at the lock score, height and separation guards) may lock it too, on a sharp, exposed box.
+                // Its source is `.detector`, so no number is suggested; Review asks for it. Not the panel: on its own
+                // that lock took any wall for the panel.
+                streakTarget = holdLockKind()
+                guard streakTarget == .electricMeter, let searchStartedAt,
+                      CACurrentMediaTime() - searchStartedAt >= Self.lateDetectorLockSeconds else { return }
+            } else {
+                scanHint = hint(for: asked, best: best)
             }
-            scanHint = hint(for: target, best: best)
-            guard let target else { return }
+            guard let target = streakTarget else { return }
             // A lock needs an unbroken run: a frame without a usable box for the target starts the count over.
             guard let detection = best[target], detection.confidence >= EquipmentDetection.lockConfidence,
+                  !Self.scanCaptureEnabled || detection.quality.map({ CaptureQuality.problem($0) == nil }) ?? true,
                   let landing = pendingLandings[target],
                   relockAllowed(target, point: landing.position),
                   lockRejection(target, at: landing.position, normal: landing.normal, checkHeight: true) == nil else {
@@ -3439,10 +3519,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     let rect = Self.viewRect(for: detection.boundingBox, in: packet)
                     guard rect.width > 2, rect.height > 2, rect.origin.x.isFinite, rect.origin.y.isFinite else { continue }
                     let onWall = pendingLandings[detection.kind] != nil
-                    var title = onWall ? detection.kind.title : "\(detection.kind.title) · not on a wall"
+                    // The Live Survey's camera carries only its two lines, so release boxes have no text; the bottom
+                    // line already says "aim at the wall". DEBUG keeps the label and the true score for tuning.
                     #if DEBUG
-                    // True detector score, for tuning the draw and lock thresholds on a device.
-                    title += String(format: " %.2f", detection.confidence)
+                    let title = (onWall ? detection.kind.title : "\(detection.kind.title) · not on a wall")
+                        + String(format: " %.2f", detection.confidence)
+                    #else
+                    let title = ""
                     #endif
                     items.append(EquipmentBoxOverlay.Item(
                         rect: rect,
@@ -3670,6 +3753,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private static let hintSettleEvaluations = 2
         /// Text-first search for the meter too, when the detector gives no box. A meter word must be on the label.
         private static let textFirstMeterEnabled = true
+        /// Seconds of searching for the meter before the late detector lock may happen, so the label read gets its
+        /// chance first. Well inside the Live Survey's 60 s find wait. Tune on device.
+        private static let lateDetectorLockSeconds: CFTimeInterval = 20
 
         /// One detector packet through the gate. Returns the bottom-line cue for the current target.
         private func evaluateCapture(_ packet: EquipmentScanFrame) -> CoachTip? {

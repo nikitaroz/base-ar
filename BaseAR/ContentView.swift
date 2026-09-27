@@ -52,6 +52,8 @@ struct ContentView: View {
     @State private var phase: RootPhase = .splash
     @State private var store: SurveyStore?
     @State private var step: SurveyStep = .home
+    /// Where the Live Survey's left-edge swipe goes back to: Review when it was opened from Review, else Home Info.
+    @State private var scanReturnStep: SurveyStep = .home
     @State private var path = NavigationPath()
     @State private var startError: String?
     @Namespace private var brandNamespace
@@ -130,7 +132,7 @@ struct ContentView: View {
         case .scan:
             PlacementARView(
                 store: store,
-                // The left-edge swipe (and VoiceOver's escape) leaves the Live Survey for Home Info.
+                // The left-edge swipe (and VoiceOver's escape) goes back to the step the Live Survey was opened from.
                 onExit: { leaveLiveSurvey() },
                 onContinue: { go(to: .review) },
                 onReturnToSurvey: { leaveLiveSurvey() }
@@ -160,12 +162,14 @@ struct ContentView: View {
     private func go(to target: SurveyStep) {
         path = NavigationPath()
         guard target != step else { return }
+        if target == .scan { scanReturnStep = step == .review ? .review : .home }
         step = target
     }
 
-    /// Leaving the Live Survey returns to Home Info. The Live Survey's exit gesture calls this.
+    /// Leaving the Live Survey goes back where it was opened from: Review (a finished scan opened again) or Home
+    /// Info. The Live Survey's exit gesture calls this.
     private func leaveLiveSurvey() {
-        go(to: .home)
+        go(to: scanReturnStep)
     }
 
     /// Review's rows: Home Info and the Live Survey are steps; Electrical is pushed over Review.

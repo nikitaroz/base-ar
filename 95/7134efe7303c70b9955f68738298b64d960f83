@@ -1,0 +1,125 @@
+tools/viewer/src/lib/scene.ts
+  s_535a502178fe4f::t_150c4cc4bd2348 1-385
+tools/viewer/tsconfig.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-18
+tools/viewer/components.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-25
+tools/viewer/src/components/ui/scroll-area.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-54
+tools/viewer/src/components/ui/alert.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-75
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1861-1862,2039-2040,2126,2134-2135,2299,2473,2490,2496,2500-2515,3005,3013,3050-3052,3054-3055,3377
+README.md
+  s_535a502178fe4f::t_150c4cc4bd2348 1-4,7-87,89,91-120,122-129,131,133,135,137,145,148-163,167,171,173,175-195,197,199,201,203-204,208-225,237,239,241,243-247,249,251,253,255-258,260,262-274,281,285
+  s_535a502178fe4f::t_75c130ae105eb7 282-284,286-288
+tools/viewer/src/components/ui/label.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-21
+BaseAR/Assets.xcassets/OnboardingBatteries.imageset/OnboardingBatteries.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-5
+AGENTS.md
+  s_535a502178fe4f::t_150c4cc4bd2348 109,111
+BaseAR/Grid/LoadZoneLookup.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-41
+BaseAR/Grid/GridService.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-18
+BaseAR/Placement/KeyframeRecorder.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-286
+tools/viewer/index.html
+  s_535a502178fe4f::t_150c4cc4bd2348 1-12
+tools/viewer/package.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-37
+tools/viewer/src/App.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-379
+tools/viewer/src/components/ui/button.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-66
+BaseAR/Assets.xcassets/OnboardingDone.imageset/OnboardingDone.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-5
+tools/viewer/src/components/ui/separator.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-25
+tools/viewer/src/components/ui/table.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-113
+BaseAR/Assets.xcassets/OnboardingName.imageset/OnboardingName.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-4
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_150c4cc4bd2348 38,40,44-50,95,103-109,154,214,273-286,369,393,397,410-415,492,527
+BaseAR/Assets.xcassets/OnboardingAddress.imageset/OnboardingAddress.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-14
+tools/viewer/README.md
+  s_535a502178fe4f::t_150c4cc4bd2348 1-116
+BaseAR/Grid/BatteryCountDecision.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-205
+BaseAR/Grid/ERCOTPricesSample.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-35
+tools/viewer/src/components/ui/card.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-102
+tools/viewer/src/components/ui/tooltip.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-56
+BaseAR/Grid/BatteryCountDecisionCard.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-125
+tools/viewer/src/lib/utils.ts
+  s_535a502178fe4f::t_150c4cc4bd2348 1
+tools/viewer/src/lib/zip.ts
+  s_535a502178fe4f::t_150c4cc4bd2348 1-98
+BaseAR/Assets.xcassets/OnboardingOwnership.imageset/OnboardingOwnership.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-4
+tools/viewer/.gitignore
+  s_535a502178fe4f::t_150c4cc4bd2348 1-24
+tools/viewer/src/components/ui/switch.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-30
+BaseAR/Assets.xcassets/OnboardingIntro.imageset/OnboardingIntro.svg
+  s_535a502178fe4f::t_150c4cc4bd2348 1-5
+tools/viewer/src/main.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-19
+tools/viewer/tsconfig.app.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-28
+tools/viewer/.oxlintrc.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-8
+tools/viewer/src/components/ui/badge.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-48
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 7-8,21-22,51,106-124,290-292
+tools/viewer/src/index.css
+  s_535a502178fe4f::t_150c4cc4bd2348 1-133
+tools/viewer/tsconfig.node.json
+  s_535a502178fe4f::t_150c4cc4bd2348 1-23
+tools/viewer/vite.config.ts
+  s_535a502178fe4f::t_150c4cc4bd2348 1-11
+BaseAR/Grid/ERCOTPriceSample.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-82
+BaseAR/Onboarding/OnboardingPages.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 287-296
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 367-372,402-406,466,489-490
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 11,13-14,100,385,390-396,399-401,409-441,443,450-459
+  s_535a502178fe4f::t_1a3fe5e7a3fd3d 460-461
+tools/viewer/src/lib/checker.d.ts
+  s_535a502178fe4f::t_150c4cc4bd2348 1-126
+tools/viewer/src/components/ui/tabs.tsx
+  s_535a502178fe4f::t_150c4cc4bd2348 1-89
+tools/viewer/src/lib/checker.js
+  s_535a502178fe4f::t_150c4cc4bd2348 1-687
+BaseAR/ContentView.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 927-932
+BaseAR/Grid/ERCOTLoadZone.swift
+  s_535a502178fe4f::t_150c4cc4bd2348 1-23
+tools/viewer/package-lock.json
+  s_535a502178fe4f::t_be606c03115480 1-7682
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "957134efe7303c70b9955f68738298b64d960f83",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

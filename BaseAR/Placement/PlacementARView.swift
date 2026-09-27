@@ -2998,7 +2998,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// the result lands back here on the main actor as the scene's `batterySpot`. Nothing is drawn or placed.
         /// A check already run or running for this scene is left alone; `invalidateSiteCheck` starts over.
         func startSiteCheck() {
-            guard siteCheckTask == nil, scene.batterySpot == nil else { return }
+            guard siteCheckTask == nil, scene.batterySpot == nil || scene.batterySpot?.status == .noMeter else { return }
             siteCheckGeneration += 1
             let generation = siteCheckGeneration
             guard let input = siteCheckInput() else {
@@ -3940,6 +3940,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             // mesh's wall behind the lock decides when enough of it agrees. Height and same-wall are measured from here.
             let snap = CorePlacementMeasurer.snappedWallNormal(meshSamples.values.joined(), at: sample.point, patchNormal: sample.normal)
             let normal = snap?.normal ?? sample.normal
+            let hadMeter = meterWallHit != nil
             placeWallMarker(kind: target, hit: (position: sample.point, normal: normal))
             let ground = groundUnder(sample.point, normal: normal)
             switch kind {
@@ -3950,6 +3951,15 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterNormalSnapped = snap != nil
                 meterHalfWidth = halfWidth
                 sendMeterCrop(source: source)
+                // A meter found on a later visit: the look-around skipped (nothing to measure from) and the site
+                // check's "no meter" answer are stale, so both start over from this meter.
+                let skippedLookAround = lookAround.timedOut && !lookAround.groundCovered
+                    && !lookAround.leftWallCovered && !lookAround.rightWallCovered
+                if !hadMeter, scene.batterySpot?.status == .noMeter || skippedLookAround {
+                    lookAround = LookAround()
+                    onLookAround?(lookAround)
+                    invalidateSiteCheck()
+                }
             case .breakerPanel:
                 panelGroundPosition = ground
                 panelLockSource = source

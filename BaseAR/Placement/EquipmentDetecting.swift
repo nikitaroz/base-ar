@@ -313,6 +313,31 @@ final class EquipmentScanBridge: @unchecked Sendable {
         inference.async { [self] in
             var packet = geometry
             let result = detector.detectResult(in: copied.buffer, orientation: visionOrientation)
+            #if DEBUG
+            // The frame recorder's periodic sample: exactly the image the model saw, with its boxes.
+            let recording = FrameRecorder.shared.isRecording
+            if recording, FrameRecorder.shared.wants(FrameRecorder.Reason.periodic) {
+                FrameRecorder.shared.recordPixels(
+                    copied.buffer,
+                    camera: FrameRecorder.Camera(
+                        intrinsics: geometry.intrinsics,
+                        transform: geometry.cameraTransform,
+                        imageSize: geometry.imageSize,
+                        timestamp: geometry.capturedAt,
+                        imageOrientation: visionOrientation
+                    ),
+                    reason: FrameRecorder.Reason.periodic,
+                    metadata: [
+                        "status": "\(result.status)",
+                        "detections": result.detections.map {
+                            FrameRecorder.detection(label: $0.kind.rawValue, confidence: $0.confidence, visionBox: $0.boundingBox)
+                        }
+                    ]
+                )
+            }
+            #else
+            let recording = false
+            #endif
             var detections = result.detections.sorted { $0.confidence > $1.confidence }
             for index in detections.indices.prefix(Self.measuredBoxes) {
                 detections[index].quality = CaptureQuality.measure(
@@ -323,6 +348,8 @@ final class EquipmentScanBridge: @unchecked Sendable {
             }
             packet.detections = detections
             packet.status = result.status
+            // While the frame recorder runs, every packet carries its image so gate decisions can be saved with it.
+            if recording { packet.pixels = copied }
             if result.status == .ok {
                 packet.pixels = copied
                 let center = CaptureQuality.centerVisionRect(
@@ -339,7 +366,8 @@ final class EquipmentScanBridge: @unchecked Sendable {
         }
     }
 
-    private static func visionOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
+    /// The orientation Vision is given for camera frames in this interface orientation.
+    static func visionOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
         switch interface {
         case .portrait: .right
         case .portraitUpsideDown: .left

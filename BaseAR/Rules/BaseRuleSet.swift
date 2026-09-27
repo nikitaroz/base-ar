@@ -186,13 +186,19 @@ enum BaseRuleSet {
                 // The user's answer, not a measurement, so the best this home can reach is "attested".
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
             }
-            return distanceOutcome(
-                feet: session.placement.distanceToGasMeterFeet,
-                missing: "The gas meter was not marked, so clearance was not measured.",
-                passes: { $0 >= minGasMeterDistanceFeet },
-                passText: { "Measured distance to the marked gas meter is \($0), at least 3 ft." },
-                conflictText: { "Measured distance to the marked gas meter is \($0), closer than 3 ft." }
-            )
+            guard let feet = session.placement.distanceToGasMeterFeet, feet.isFinite, feet >= 0 else {
+                return .unknown("The gas meter was not shown on the scan, so clearance was not measured.")
+            }
+            let formatted = String(format: "%.1f ft", feet)
+            guard feet >= minGasMeterDistanceFeet else {
+                return .conflict("Measured \(formatted) from the pad to the gas meter, closer than 3 ft.")
+            }
+            // The scan does not recognize gas meters yet: a spot the user showed (or an older file's tap) is their
+            // showing, so the distance passes as attested until the gas photo is checked.
+            if session.placement.gasMeterMarkSource == .recognized {
+                return .pass("Measured distance to the gas meter is \(formatted), at least 3 ft.")
+            }
+            return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "Measured \(formatted) from the pad to the spot you showed as the gas meter. The scan did not recognize it; check the gas photo.")
         }
     )
 

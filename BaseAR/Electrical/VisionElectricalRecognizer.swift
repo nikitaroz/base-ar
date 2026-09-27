@@ -8,18 +8,24 @@ struct VisionElectricalRecognizer: MeterNumberRecognizing {
         return ElectricalLabelParser.meterNumber(in: lines)
     }
 
+    /// The same MAIN rules as the Live Survey's capture gate, on the photo's boxed lines, so a table row
+    /// ("Maximum per stab" | "125A") reads as one row. No largest-handle guess from a photo.
     func recognizeMainBreakerAmperage(in imageJPEG: Data) async -> Int? {
-        let lines = await Self.lines(in: imageJPEG)
-        return ElectricalLabelParser.mainBreakerAmperage(in: lines)
+        let lines = await Task.detached(priority: .userInitiated) {
+            Self.recognizeBoxedLines(in: imageJPEG)
+        }.value
+        return ScanTextParser.panelRead(in: lines, detectorPanelBox: false)?.amps
     }
 
     private static func lines(in imageJPEG: Data) async -> [String] {
         await Task.detached(priority: .userInitiated) {
-            recognizeLines(in: imageJPEG)
+            recognizeBoxedLines(in: imageJPEG)
+                .sorted { $0.box.midY > $1.box.midY }
+                .map(\.text)
         }.value
     }
 
-    private nonisolated static func recognizeLines(in imageJPEG: Data) -> [String] {
+    private nonisolated static func recognizeBoxedLines(in imageJPEG: Data) -> [ScanTextLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -30,17 +36,15 @@ struct VisionElectricalRecognizer: MeterNumberRecognizing {
         } catch {
             return []
         }
-        return (request.results ?? [])
-            .sorted { $0.boundingBox.midY > $1.boundingBox.midY }
-            .compactMap { $0.topCandidates(1).first?.string }
-            .filter { !$0.isEmpty }
+        return (request.results ?? []).compactMap { observation in
+            guard let top = observation.topCandidates(1).first, !top.string.isEmpty else { return nil }
+            return ScanTextLine(text: top.string, box: observation.boundingBox, confidence: top.confidence)
+        }
     }
 }
 
 /// Pulls a meter number or a main-breaker rating out of recognized text.
 enum ElectricalLabelParser {
-    private static let ratings: Set<Int> = [100, 125, 150, 175, 200, 225]
-
     /// Meter numbers run 7–12 digits; the kWh register is 5–6. A shorter run counts only right beside a "METER" label.
     static let meterDigitRange = 7...12
 
@@ -72,24 +76,11 @@ enum ElectricalLabelParser {
         return singles.max(by: { $0.count < $1.count })
     }
 
-    /// Only a rating with MAIN on its line or the line right above or below counts, and never one on a line of the
-    /// panel's own ratings ("Maximum per stab 125A", bus, AIC, torque, volts): those are not the main breaker.
+    /// Lines without boxes (the live number scanner's transcripts): MAIN and the rating on one line, or the rating
+    /// alone on the line right above or below MAIN, and never on a row of the panel's own ratings ("Maximum per stab
+    /// 125A", bus, max, AIC, torque, volts). Same rules as the capture gate, with no largest-handle path.
     static func mainBreakerAmperage(in lines: [String]) -> Int? {
-        let matches = lines.indices.flatMap { index -> [AmperageMatch] in
-            let line = lines[index]
-            guard !ScanTextParser.isPanelRatingLabel(line) else { return [] }
-            let besideMain = [index - 1, index + 1].contains { neighbor in
-                lines.indices.contains(neighbor) && ScanTextParser.hasMainWord(lines[neighbor])
-                    && !ScanTextParser.isPanelRatingLabel(lines[neighbor])
-            }
-            let found = amperageMatches(in: line)
-            return found.first?.isMainLine == true || besideMain ? found : []
-        }
-        return matches.max { lhs, rhs in
-            if lhs.isMainLine != rhs.isMainLine { return rhs.isMainLine }
-            if lhs.hasSuffix != rhs.hasSuffix { return rhs.hasSuffix }
-            return lhs.amps < rhs.amps
-        }?.amps
+        ScanTextParser.mainBreakerAmps(inLines: lines)
     }
 
     private static func labeledMeterNumber(in lines: [String]) -> String? {
@@ -159,80 +150,5 @@ enum ElectricalLabelParser {
     /// numbers, and joining them gave an 11-digit meter number that is not on the meter.
     private static func isSeparator(_ character: Character) -> Bool {
         character == "-" || character == "–" || character == "—"
-    }
-
-    private struct AmperageMatch {
-        var amps: Int
-        var hasSuffix: Bool
-        var isMainLine: Bool
-    }
-
-    private static func amperageMatches(in line: String) -> [AmperageMatch] {
-        let chars = Array(line)
-        let lower = line.lowercased()
-        let isMain = ScanTextParser.hasMainWord(lower)
-        var matches: [AmperageMatch] = []
-        var index = 0
-        while index < chars.count {
-            guard chars[index].isNumber else {
-                index += 1
-                continue
-            }
-            var end = index
-            while end < chars.count, chars[end].isNumber {
-                end += 1
-            }
-            let token = String(chars[index..<end])
-            if let amps = Int(token),
-               ratings.contains(amps),
-               !isClassRating(chars, numberStart: index) {
-                matches.append(AmperageMatch(
-                    amps: amps,
-                    hasSuffix: hasAmpSuffix(chars, from: end),
-                    isMainLine: isMain
-                ))
-            }
-            index = end
-        }
-        return matches
-    }
-
-    private static func isClassRating(_ chars: [Character], numberStart: Int) -> Bool {
-        let word = precedingWord(chars, before: numberStart)
-        return word == "cl" || word == "class"
-    }
-
-    private static func precedingWord(_ chars: [Character], before index: Int) -> String {
-        var cursor = index - 1
-        while cursor >= 0, chars[cursor].isWhitespace {
-            cursor -= 1
-        }
-        var letters: [Character] = []
-        while cursor >= 0, chars[cursor].isLetter {
-            letters.append(chars[cursor])
-            cursor -= 1
-        }
-        return String(letters.reversed()).lowercased()
-    }
-
-    private static func hasAmpSuffix(_ chars: [Character], from index: Int) -> Bool {
-        var cursor = index
-        while cursor < chars.count, chars[cursor].isWhitespace {
-            cursor += 1
-        }
-        let rest = String(chars[cursor...]).lowercased()
-        if rest.hasPrefix("amps") { return endsToken(rest, after: 4) }
-        if rest.hasPrefix("amp") { return endsToken(rest, after: 3) }
-        if rest.hasPrefix("a") { return endsToken(rest, after: 1) }
-        return false
-    }
-
-    private static func endsToken(_ text: String, after offset: Int) -> Bool {
-        guard let index = text.index(text.startIndex, offsetBy: offset, limitedBy: text.endIndex) else {
-            return false
-        }
-        guard index < text.endIndex else { return true }
-        let next = text[index]
-        return !next.isLetter && !next.isNumber
     }
 }

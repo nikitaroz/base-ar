@@ -1877,6 +1877,22 @@ private struct BatterySlide {
     var along: Float
 }
 
+/// What the background battery-spot plan was made from. A new plan is worth it when a mark or the look-around moved,
+/// or the mesh grew or shrank by 2%.
+private struct BatteryPlanKey: Equatable {
+    var meshSamples: Int
+    var meter: SIMD3<Float>?
+    var panel: SIMD3<Float>?
+    var gas: SIMD3<Float>?
+    var lookAround: LookAround
+
+    func needsReplan(since old: BatteryPlanKey?) -> Bool {
+        guard let old else { return true }
+        if meter != old.meter || panel != old.panel || gas != old.gas || lookAround != old.lookAround { return true }
+        return abs(meshSamples - old.meshSamples) * 50 >= max(old.meshSamples, 1)
+    }
+}
+
 private final class EquipmentBoxOverlay: UIView {
     struct Item {
         var rect: CGRect
@@ -2094,16 +2110,29 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var shownCaptureHint: CoachTip?
         private var proposedCaptureHint: CoachTip?
         private var proposedCaptureHintCount = 0
-        private var gasHoldAnchor: SIMD3<Float>?
-        private var gasHoldSince: CFTimeInterval?
         /// When the gas step's ring appeared, so a hold only counts once the user has had a moment to aim.
-        private var gasAimSince: CFTimeInterval?
         private var gasHint: CoachTip?
         private static let captureLog = Logger(subsystem: "BaseAR", category: "ScanCapture")
         /// Renders the fallback meter photo off the main thread. Core Image contexts are thread-safe.
         private nonisolated static let cropContext = CIContext()
         private var batterySlide: BatterySlide?
         private var batteryConfirmed = false
+        /// The background battery-spot search: its latest plan, what that plan was made from, and a generation that
+        /// drops a plan finishing after the scene moved on.
+        private var batteryPlan: BatterySpotPlanner.Plan?
+        private var batteryPlanKey: BatteryPlanKey?
+        private var batteryPlanGeneration = 0
+        private var batteryPlanInFlight = false
+        private var batteryPlanAt: CFTimeInterval = 0
+        /// How far the siding sits behind the meter's lock point, from the mesh at the lock. 0 when it did not say.
+        private var meterWallBehind: Float = 0
+        /// The lock normal came from the mesh's wall, not the lock's own patch.
+        private var meterNormalSnapped = false
+        private var panelNormalSnapped = false
+        /// Half the meter enclosure's width along its wall, from the lock box. Nil for a lock without one.
+        private var meterHalfWidth: Float?
+        /// How the gas mark was made. Nil with no mark.
+        private var gasMarkSource: GasMarkSource?
         private var gasResolved = false
         private let holdReticle: UIView = {
             let ring = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
@@ -2276,6 +2305,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func resume() {
+            #if DEBUG
+            if let surveyID { FrameRecorder.shared.begin(surveyID: surveyID) }
+            #endif
             pauseRequested = false
             // A view coming back starts from an empty ScanFeedback, so the next tick publishes again.
             lastScanFeedback = nil
@@ -2296,6 +2328,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             rotationStartYaw = appliedYaw
             stopAiming()
             arView.session.pause()
+            #if DEBUG
+            FrameRecorder.shared.end(summary: [
+                "meterLocked": meterLock.locked,
+                "panelLocked": panelLock.locked,
+                "walkStep": "\(walkStep)",
+                "meterLockSource": meterLockSource?.rawValue ?? "none",
+                "panelLockSource": panelLockSource?.rawValue ?? "none",
+                "gasMarked": gasPoint != nil,
+                "batterySpot": scene.batterySpot?.status.rawValue ?? "none"
+            ])
+            #endif
         }
 
         func stop() {
@@ -2589,7 +2632,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         private func emitPlanesIfNeeded() {
-            guard batteryRig != nil else { return }
+            // From the meter or panel lock on, the working space and the transfer switch are measured from the mesh
+            // as it grows, with or without a battery.
+            guard batteryRig != nil || meterWallHit != nil || panelWallHit != nil else { return }
             let now = Date()
             guard now.timeIntervalSince(lastPlaneEmit) > 0.4 else { return }
             lastPlaneEmit = now
@@ -2709,7 +2754,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// A home has one meter and one panel. Once the asked-for item is locked there is nothing left to find,
         /// so the detector stops instead of boxing random objects for the rest of the session. A redo turns it back on.
         private func updateDetectorGate() {
-            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && searchableTarget() != nil)
+            // It also runs for a few seconds after the panel lock when a wider panel photo is wanted.
+            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && (searchableTarget() != nil || widePanelPhoto != nil))
         }
 
         /// Scan photos start at the panel lock. Frames from the search before it are mostly ground and sky,
@@ -2809,21 +2855,151 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func clearGasMarker() {
+            let hadMark = gasPoint != nil || gasMarker != nil
             gasMarker?.removeFromParent()
             gasMarker = nil
             gasPoint = nil
+            gasMarkSource = nil
             scene.gasMeterPosition = nil
+            scene.gasMarkSource = nil
             scene.confirmedMeasurements.removeAll { $0.kind == .batteryToGasMeter }
-            emit()
+            // The battery kept 3 ft from that mark; without it the best spot may be elsewhere.
+            if hadMark, batteryConfirmed {
+                resuggestBattery()
+            } else {
+                emit()
+            }
         }
 
-        /// Contract stub (C0). Places the best background battery candidate at the end of the scan and returns true,
-        /// or records why there is none and returns false.
-        @discardableResult
-        func finalizeBatterySuggestion() -> Bool { false }
+        // MARK: - Battery spot, chosen in the background
 
-        /// Contract stub (C0). Drops a finalized battery back to the background suggestion and recomputes it.
-        func resuggestBattery() {}
+        /// The background search replans at most this often while the Live Survey runs. Tune on device.
+        private static let batteryPlanInterval: CFTimeInterval = 1
+
+        /// Places the best battery spot along the meter wall and shows it with its transfer-switch box, at the end of
+        /// the scan. Planned again here on the current scene, so the pick sees every face the look-around added.
+        /// False, with nothing placed, when there is no meter, no wall beside it, or no candidate clears; the reason is
+        /// in the snapshot's `batterySpot` and the battery checks stay unknown. A battery already placed stays.
+        @discardableResult
+        func finalizeBatterySuggestion() -> Bool {
+            if batteryConfirmed, batteryRig != nil { return true }
+            // A background plan still running is stale now.
+            batteryPlanGeneration += 1
+            guard let input = batteryPlanInput(final: true) else {
+                scene.batterySpot = BatterySpotSummary(status: .noMeter)
+                emit()
+                return false
+            }
+            let plan = BatterySpotPlanner.plan(input, measurer: placementMeasurer)
+            batteryPlan = plan
+            logBatteryPlan(plan, final: true)
+            guard let winner = plan.winner,
+                  let axis = unitVector(simd_cross(SIMD3<Float>(0, 1, 0), input.outward)) else {
+                scene.batterySpot = plan.summary
+                emit()
+                return false
+            }
+            let wall = input.meterPoint - input.outward * input.wallBehindMeters
+            batterySlide = BatterySlide(
+                origin: SIMD3(wall.x, input.groundY, wall.z),
+                outward: input.outward,
+                axis: axis,
+                groundY: input.groundY,
+                along: winner.offsetMeters
+            )
+            applyBatterySlide(resetYaw: true)
+            batteryConfirmed = true
+            applyTone()
+            // The transfer switch goes on the meter's other side from the battery (viewer-right is +along).
+            scene.transferSwitchOnLeft = winner.offsetMeters > 0
+            scene.batterySpot = plan.summary
+            emitGestureEnded()
+            return true
+        }
+
+        /// A meter lock cleared or a gas mark removed: the battery chosen from them goes, and the search starts over.
+        /// A battery that was already placed at the finish is placed again right away from the new scene, so Review
+        /// keeps a spot; otherwise the next finish chooses.
+        func resuggestBattery() {
+            let wasPlaced = batteryConfirmed && batteryRig != nil
+            batteryConfirmed = false
+            clearUnconfirmedBattery()
+            scene.batterySpot = nil
+            batteryPlan = nil
+            batteryPlanKey = nil
+            batteryPlanGeneration += 1
+            if wasPlaced, meterWallHit != nil {
+                finalizeBatterySuggestion()
+            } else {
+                emit()
+            }
+        }
+
+        /// The search's input: the scene now, the meter wall, and the ground in front of the meter. Nil without a meter
+        /// lock or a ground estimate.
+        private func batteryPlanInput(final: Bool) -> BatterySpotPlanner.Input? {
+            guard let wall = meterWallHit, let outward = horizontalUnit(wall.normal),
+                  let groundY = meterGroundPosition?.y ?? groundUnder(wall.position, normal: wall.normal)?.y else { return nil }
+            return BatterySpotPlanner.Input(
+                snapshot: makeSnapshot(),
+                meterPoint: wall.position,
+                outward: outward,
+                wallBehindMeters: meterWallBehind,
+                groundY: groundY,
+                final: final
+            )
+        }
+
+        private var meshSampleCount: Int {
+            meshSamples.values.reduce(0) { $0 + $1.count }
+        }
+
+        /// From the meter lock on, on the display tick: replans off the main thread when the mesh grew by 2% or a mark
+        /// or the look-around changed, at most once a second. Nothing is drawn; the finish places the pick.
+        private func updateBatterySuggestion() {
+            guard !batteryConfirmed, meterWallHit != nil, !batteryPlanInFlight else { return }
+            let now = CACurrentMediaTime()
+            guard now - batteryPlanAt >= Self.batteryPlanInterval else { return }
+            let key = BatteryPlanKey(
+                meshSamples: meshSampleCount,
+                meter: meterWallHit?.position,
+                panel: panelWallHit?.position,
+                gas: gasPoint,
+                lookAround: lookAround
+            )
+            guard key.needsReplan(since: batteryPlanKey), let input = batteryPlanInput(final: false) else { return }
+            batteryPlanKey = key
+            batteryPlanAt = now
+            batteryPlanInFlight = true
+            let generation = batteryPlanGeneration
+            let measurer = placementMeasurer
+            Task.detached(priority: .utility) { [weak self] in
+                let plan = BatterySpotPlanner.plan(input, measurer: measurer)
+                await self?.acceptBatteryPlan(plan, generation: generation)
+            }
+        }
+
+        private func acceptBatteryPlan(_ plan: BatterySpotPlanner.Plan, generation: Int) {
+            batteryPlanInFlight = false
+            guard generation == batteryPlanGeneration, !batteryConfirmed else { return }
+            batteryPlan = plan
+            logBatteryPlan(plan, final: false)
+        }
+
+        private func logBatteryPlan(_ plan: BatterySpotPlanner.Plan, final: Bool) {
+            #if DEBUG
+            let rows = plan.candidates.map { candidate -> String in
+                let verdict: String
+                switch candidate.verdict {
+                case .fits(let unknowns): verdict = "fits(\(unknowns) unknown)"
+                case .pending(let reason): verdict = "pending(\(reason))"
+                case .rejected(let reason): verdict = reason
+                }
+                return String(format: "%+.1f=%@", candidate.offsetMeters, verdict)
+            }
+            Self.captureLog.debug("battery plan \(final ? "final" : "background", privacy: .public) status=\(plan.status.rawValue, privacy: .public) pick=\(plan.winner.map { String(format: "%+.1f", $0.offsetMeters) } ?? "-", privacy: .public) [\(rows.joined(separator: " "), privacy: .public)]")
+            #endif
+        }
 
         func startAiming() {
             guard aimLink == nil else { return }
@@ -2851,18 +3027,15 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             refreshEquipmentBoxes()
             publishScanFeedback()
             noteLookAround()
-            if walkStep == .battery {
-                suggestBatterySpotIfNeeded()
-            }
+            updateBatterySuggestion()
             if holdLockKind() != nil {
                 updateHoldAim()
                 return
             }
             holdReticle.isHidden = true
-            if mode != .gasMeter || !aimEnabled || coachingActive, gasAimSince != nil || gasHint != nil {
-                gasAimSince = nil
+            if mode != .gasMeter || !aimEnabled || coachingActive, gasShow != nil || gasHint != nil {
+                gasShow = nil
                 gasHint = nil
-                resetGasHold()
             }
             let showDot = aimEnabled && !coachingActive && arView.bounds.width > 1
             guard showDot else {
@@ -2872,16 +3045,18 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 publishLiveFeet(nil)
                 return
             }
-            let point = CGPoint(x: arView.bounds.midX, y: arView.bounds.height * 0.42)
-            aimDot.center = point
-            aimDot.isHidden = false
             if mode == .gasMeter {
+                // The gas meter is shown, not aimed at: no dot and no ring on the camera.
+                aimDot.isHidden = true
                 reticle?.isEnabled = false
                 hideLiveLine()
                 publishLiveFeet(nil)
-                updateGasHold(at: point)
+                updateGasShow()
                 return
             }
+            let point = CGPoint(x: arView.bounds.midX, y: arView.bounds.height * 0.42)
+            aimDot.center = point
+            aimDot.isHidden = false
             if measurementMode, measurementKind == .batteryToWall {
                 aimDot.isHidden = true
                 updateAutomaticWallAim()
@@ -3136,7 +3311,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             measurementLine?.model?.materials = [material]
         }
 
-        private func placeWorkingSpace(at position: SIMD3<Float>) {
+        private func placeWorkingSpace(at position: SIMD3<Float>, visible: Bool = true) {
             if workingSpaceOverlay == nil {
                 let mesh = MeshResource.generateBox(
                     width: BatteryGeometry.workingSpaceWidthMeters,
@@ -3147,6 +3322,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 root?.addChild(overlay)
                 workingSpaceOverlay = overlay
             }
+            workingSpaceOverlay?.isEnabled = visible
             workingSpaceOverlay?.position = SIMD3(position.x, position.y + 0.005, position.z)
             scene.workingSpacePosition = PlacementAnchor(position)
             applyWorkingSpaceYaw()
@@ -3195,6 +3371,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .meter:
                 meterLock = EquipmentLock()
                 meterLockSource = nil
+                meterWallBehind = 0
+                meterNormalSnapped = false
+                meterHalfWidth = nil
                 meterWallHit = nil
                 meterGroundPosition = nil
                 meterMarker?.removeFromParent()
@@ -3205,8 +3384,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.meterWallPosition = nil
                 scene.meterWallNormal = nil
             case .panel:
+                widePanelPhoto = nil
                 panelLock = EquipmentLock()
                 panelLockSource = nil
+                panelNormalSnapped = false
                 panelWallHit = nil
                 panelGroundPosition = nil
                 panelMarker?.removeFromParent()
@@ -3259,6 +3440,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 capture.breakStreak()
                 return
             }
+            considerWidePanelPhoto(packet)
             var best: [EquipmentKind: EquipmentDetection] = [:]
             // Weak boxes still draw. Only boxes at the lock score count toward a lock or a hold.
             // A kind that is already locked has been found; there is only one per home. Its boxes elsewhere are
@@ -3320,7 +3502,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .breakerPanel: settled = panelLock.absorb(sample)
             }
             guard let settled else { return }
-            lockEquipment(target, at: settled, source: .detector)
+            let halfWidth = target == .electricMeter ? Self.halfWidth(of: detection.boundingBox, in: packet, at: settled.point) : nil
+            lockEquipment(target, at: settled, source: .detector, halfWidth: halfWidth)
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             emit()
         }
@@ -3384,7 +3567,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             if let hit { banRelock(kind, point: hit.position) }
             resetHold()
             if kind == .electricMeter {
-                clearBattery()
+                resuggestBattery()
                 lookAround = LookAround()
                 onLookAround?(lookAround)
             }
@@ -3430,11 +3613,25 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     manualMarkOffered = true
                 }
             }
+            if let wide = widePanelPhoto, now >= wide.until {
+                // Past its few seconds the close-up stays as the panel photo.
+                widePanelPhoto = nil
+                updateDetectorGate()
+            }
             let live = target != nil && !coachingActive && trackingBlockedMessage == nil && freshScan != nil
+            let hint: CoachTip?
+            if target != nil {
+                hint = live && status == .ok ? scanHint : nil
+            } else if widePanelPhoto != nil {
+                hint = .stepBackWholePanel
+            } else {
+                hint = mode == .gasMeter ? gasHint : nil
+            }
             let feedback = ScanFeedback(
-                hint: live && status == .ok ? scanHint : (target == nil && mode == .gasMeter ? gasHint : nil),
+                hint: hint,
                 manualTarget: manualMarkOffered ? target : nil,
-                detector: status
+                detector: status,
+                widePanelPhotoPending: widePanelPhoto != nil
             )
             guard feedback != lastScanFeedback else { return }
             lastScanFeedback = feedback
@@ -3585,21 +3782,60 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return (world, flat)
         }
 
-        private func lockEquipment(_ kind: EquipmentKind, at sample: EquipmentLock.Sample, source: EquipmentLockSource) {
+        /// `halfWidth` is half the meter enclosure's width from its lock box, when the lock had one.
+        private func lockEquipment(
+            _ kind: EquipmentKind,
+            at sample: EquipmentLock.Sample,
+            source: EquipmentLockSource,
+            halfWidth: Float? = nil
+        ) {
             let target: PlacementTarget = kind == .electricMeter ? .meter : .panel
-            placeWallMarker(kind: target, hit: (position: sample.point, normal: sample.normal))
-            let ground = groundUnder(sample.point, normal: sample.normal)
+            // The lock's patch normal can sit tens of degrees off the siding (an open panel door, a meter collar); the
+            // mesh's wall behind the lock decides when enough of it agrees. Height and same-wall are measured from here.
+            let snap = CorePlacementMeasurer.snappedWallNormal(meshSamples.values.joined(), at: sample.point, patchNormal: sample.normal)
+            let normal = snap?.normal ?? sample.normal
+            placeWallMarker(kind: target, hit: (position: sample.point, normal: normal))
+            let ground = groundUnder(sample.point, normal: normal)
             switch kind {
             case .electricMeter:
                 meterGroundPosition = ground
                 meterLockSource = source
+                meterWallBehind = snap?.behind ?? 0
+                meterNormalSnapped = snap != nil
+                meterHalfWidth = halfWidth
                 sendMeterCrop(source: source)
             case .breakerPanel:
                 panelGroundPosition = ground
                 panelLockSource = source
+                panelNormalSnapped = snap != nil
+                refineLockGeometry()
             }
             resetHold()
             updateDetectorGate()
+            recordLockFrame(kind: kind.rawValue, source: source.rawValue, point: sample.point, reason: FrameRecorder.Reason.lock)
+        }
+
+        /// The mesh has grown since the locks, at the panel lock and at the end of the look-around: a lock normal the
+        /// mesh could not snap yet gets another try, and the meter's ground is read again from the floor faces (it
+        /// moves only on 20+ of them and a change over 2 cm).
+        private func refineLockGeometry() {
+            let faces = meshSamples.values.joined()
+            if !meterNormalSnapped, let wall = meterWallHit,
+               let snap = CorePlacementMeasurer.snappedWallNormal(faces, at: wall.position, patchNormal: wall.normal) {
+                meterWallHit = (wall.position, snap.normal)
+                meterWallBehind = snap.behind
+                meterNormalSnapped = true
+            }
+            if !panelNormalSnapped, let wall = panelWallHit,
+               let snap = CorePlacementMeasurer.snappedWallNormal(faces, at: wall.position, patchNormal: wall.normal) {
+                panelWallHit = (wall.position, snap.normal)
+                panelNormalSnapped = true
+            }
+            guard let wall = meterWallHit,
+                  let y = CorePlacementMeasurer.floorMedianY(faces, near: wall.position, outward: wall.normal, minSamples: 20) else { return }
+            let current = meterGroundPosition ?? SIMD3(wall.position.x, y, wall.position.z)
+            guard meterGroundPosition == nil || abs(current.y - y) > 0.02 else { return }
+            meterGroundPosition = SIMD3(current.x, y, current.z)
         }
 
         /// The locked meter cut from the same frame as its box, for a fallback meter photo. From 1–3 m the number is
@@ -3693,6 +3929,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         func restartScan() {
             passedLiveSteps = []
             clearBattery()
+            scene.batterySpot = nil
+            batteryPlan = nil
+            batteryPlanKey = nil
+            batteryPlanGeneration += 1
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
             relockBan = nil
@@ -3703,10 +3943,18 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         fileprivate func skipLookAround() {
+            let wasDone = lookAround.done
             lookAround.movedFarther = true
             lookAround.lookedLeft = true
             lookAround.lookedRight = true
             onLookAround?(lookAround)
+            if !wasDone { lookAroundFinished() }
+        }
+
+        /// The look-around added floor in front of the meter: its height is measured again before the finish.
+        private func lookAroundFinished() {
+            refineLockGeometry()
+            emit()
         }
 
         /// After the equipment is locked, one step back and a pan left and right finish the scan. Measured from the
@@ -3743,8 +3991,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 }
             }
             guard next != lookAround else { return }
+            let wasDone = lookAround.done
             lookAround = next
             onLookAround?(next)
+            if next.done, !wasDone { lookAroundFinished() }
         }
 
         func commitHoldSample() {
@@ -3884,8 +4134,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// OCR at most twice a second while a candidate passes, and once a second while searching by text alone.
         private static let captureReadInterval: CFTimeInterval = 0.5
         private static let textSearchReadInterval: CFTimeInterval = 1
-        /// Two agreeing reads must fall inside this window. Tune on device.
+        /// Agreeing reads must fall inside this window, from frames this far apart. Tune on device.
         private static let captureReadWindow: CFTimeInterval = 4
+        private static let captureFrameSpacing: CFTimeInterval = 0.4
+        /// Reads kept per target: a largest-handle or bare-panel capture needs three.
+        private static let captureMaxRecords = 6
+        /// Candidate sources, as `CaptureCandidate.source` names them.
+        private static let panelBoxSource = "breakerPanel-box"
+        private static let meterBoxAsPanelSource = "meter-box-as-panel"
         /// A text-first candidate stands this long after the read that found it.
         private static let textCandidateSeconds: CFTimeInterval = 1.2
         /// The candidate's wall spot moved this far between evaluations: the streak starts over. Tune on device.
@@ -3916,7 +4172,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             // (1) Tracking. The bridge only runs on normal tracking; a packet can still land after tracking dropped.
             guard packet.status == .ok, trackingBlockedMessage == nil else {
                 capture.breakStreak()
-                logCapture(target, "blocked", "status=\(packet.status)")
+                logCapture(target, "blocked", "status=\(packet.status)", packet: packet)
                 return nil
             }
             guard let candidate = captureCandidate(for: target, in: packet, now: now) else {
@@ -3924,9 +4180,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 // Text first: with no box, read the middle of the screen for the label itself.
                 if allowsTextFirst(target), let region = packet.centerRegion, let quality = packet.centerQuality,
                    CaptureQuality.problem(quality) == nil {
-                    requestRead(target, packet: packet, region: region, textFirst: true, landing: nil, now: now)
+                    requestRead(target, packet: packet, region: region, textFirst: true, landing: nil, landingNormal: nil,
+                                candidateBox: nil, source: "text-search", now: now)
                 }
-                logCapture(target, "no-candidate", Self.describe(packet.centerQuality))
+                logCapture(target, "no-candidate", Self.describe(packet.centerQuality), packet: packet)
                 return nil
             }
             // (2) Same place as the last evaluation.
@@ -3938,7 +4195,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let probe = EquipmentDetection(kind: target, confidence: 1, boundingBox: candidate.box)
             guard let landing = project(probe, in: packet) else {
                 capture.breakStreak()
-                logCapture(target, "not-on-wall", candidate.source)
+                logCapture(target, "not-on-wall", candidate.source, packet: packet)
                 return .aimAtWall
             }
             if let lastLanding = capture.lastLanding, simd_distance(lastLanding, landing.position) > Self.captureMaxDriftMeters {
@@ -3950,12 +4207,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             // Height above ground (0.3–2.5 m), separation from the other lock, and the "Not the …" ban.
             guard relockAllowed(target, point: landing.position) else {
                 capture.breakStreak()
-                logCapture(target, "banned", candidate.source)
+                logCapture(target, "banned", candidate.source, packet: packet)
                 return nil
             }
             if let reason = lockRejection(target, at: landing.position, normal: landing.normal, checkHeight: true) {
                 capture.breakStreak()
-                logCapture(target, "rejected", "\(candidate.source) \(reason)")
+                logCapture(target, "rejected", "\(candidate.source) \(reason)", packet: packet)
                 return nil
             }
             // (3) Big enough to read, and in the middle of the screen.
@@ -3997,7 +4254,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             ) + debugHeight(landing.position, normal: landing.normal)
             if let problem {
                 capture.breakStreak()
-                logCapture(target, "fail:\(problem)", measured)
+                logCapture(target, "fail:\(problem)", measured, packet: packet)
                 return problem
             }
             capture.streak += 1
@@ -4011,13 +4268,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let region = candidate.textFirst
                 ? (packet.centerRegion ?? CaptureQuality.padded(candidate.box, by: 1))
                 : CaptureQuality.padded(candidate.box, by: 0.125)
-            requestRead(target, packet: packet, region: region, textFirst: candidate.textFirst, landing: landing.position, now: now)
-            logCapture(target, "pass streak=\(capture.streak) reads=\(capture.records.count)", measured)
+            if target == .electricMeter, !candidate.textFirst {
+                capture.meterHalfWidth = Self.halfWidth(of: candidate.box, in: packet, at: landing.position)
+            }
+            requestRead(target, packet: packet, region: region, textFirst: candidate.textFirst, landing: landing.position,
+                        landingNormal: landing.normal, candidateBox: candidate.textFirst ? nil : candidate.box,
+                        source: candidate.source, now: now)
+            logCapture(target, "pass streak=\(capture.streak) reads=\(capture.records.count)", measured, packet: packet)
             if tryCapture() { return nil }
-            if capture.records.isEmpty, capture.emptyReads >= Self.captureEmptyReadsForHint {
-                switch target {
-                case .electricMeter: return area < Self.captureCloseArea ? .closerToLabel : .faceLabel
-                case .breakerPanel: return .openPanelDoor
+            switch target {
+            case .electricMeter:
+                if capture.records.isEmpty, capture.emptyReads >= Self.captureEmptyReadsForHint {
+                    return area < Self.captureCloseArea ? .closerToLabel : .faceLabel
+                }
+            case .breakerPanel:
+                // No main-breaker read yet: a printed label wants the whole panel in view, a closed door wants opening.
+                let hasMainRead = capture.records.contains { $0.read.value?.hasPrefix(ScanTextRead.mainPrefix) == true }
+                if !hasMainRead, capture.readsWithoutMain >= Self.captureEmptyReadsForHint {
+                    return capture.lastReadLabelMode ? .stepBackWholePanel : .openPanelDoor
                 }
             }
             return target == .electricMeter ? .readingNumber : .readingBreaker
@@ -4040,7 +4308,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                         return simd_distance(landing.position, meter.position) >= Self.lockSeparationMeters
                     }
                 if let stand {
-                    return CaptureCandidate(box: stand.boundingBox, quality: stand.quality, textFirst: false, source: "meter-box-as-panel")
+                    return CaptureCandidate(box: stand.boundingBox, quality: stand.quality, textFirst: false, source: Self.meterBoxAsPanelSource)
                 }
             }
             if allowsTextFirst(target), let text = capture.textCandidate, now - text.at <= Self.textCandidateSeconds {
@@ -4060,6 +4328,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             region: CGRect,
             textFirst: Bool,
             landing: SIMD3<Float>?,
+            landingNormal: SIMD3<Float>?,
+            candidateBox: CGRect?,
+            source: String,
             now: CFTimeInterval
         ) {
             let interval = textFirst && capture.textCandidate == nil ? Self.textSearchReadInterval : Self.captureReadInterval
@@ -4067,13 +4338,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                   region.width > 0.01, region.height > 0.01 else { return }
             capture.ocrInFlight = true
             capture.lastOCRAt = now
-            capture.pendingLanding = landing
+            let camera = packet.cameraTransform.columns.3
+            capture.pendingContext = CaptureReadContext(
+                frameTime: packet.capturedAt,
+                landing: landing,
+                landingNormal: landingNormal,
+                cameraPosition: SIMD3(camera.x, camera.y, camera.z),
+                candidateBox: candidateBox,
+                source: source,
+                pixels: target == .breakerPanel ? pixels : nil,
+                orientation: packet.visionOrientation
+            )
             textReader.read(
                 pixels,
                 region: region,
                 orientation: packet.visionOrientation,
                 kind: target,
                 textFirst: textFirst,
+                detectorPanelBox: source == Self.panelBoxSource,
                 generation: capture.generation
             ) { [weak self] read in
                 Task { @MainActor in
@@ -4086,13 +4368,26 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard read.generation == capture.generation, read.kind == capture.target else { return }
             capture.ocrInFlight = false
             let now = CACurrentMediaTime()
+            let context = capture.pendingContext ?? CaptureReadContext(
+                frameTime: now, cameraPosition: .zero, source: read.textFirst ? "text" : "", orientation: .right
+            )
+            capture.pendingContext = nil
             var value = read.value
             // Read by text alone, a long number is a meter number only on a label with a meter word.
             if read.textFirst, read.kind == .electricMeter, read.meter?.hasMeterCue != true { value = nil }
+            // A meter box standing in for the panel becomes the panel only on a MAIN read: a bare "panel" there could
+            // be an AC unit's "breaker" label.
+            if read.kind == .breakerPanel, value == ScanTextRead.panelEvidence, context.source == Self.meterBoxAsPanelSource {
+                value = nil
+            }
             #if DEBUG
             let preview = read.lines.prefix(6).joined(separator: " | ")
-            Self.captureLog.debug("\(read.kind.rawValue, privacy: .public) read value=\(value ?? "-", privacy: .public) textFirst=\(read.textFirst) lines=\(read.lines.count) [\(preview, privacy: .public)]")
+            Self.captureLog.debug("\(read.kind.rawValue, privacy: .public) read value=\(value ?? "-", privacy: .public) basis=\(read.panel?.basis?.rawValue ?? "-", privacy: .public) label=\(read.panel?.labelMode == true) textFirst=\(read.textFirst) lines=\(read.lines.count) [\(preview, privacy: .public)]")
             #endif
+            if read.kind == .breakerPanel, value?.hasPrefix(ScanTextRead.mainPrefix) != true {
+                capture.readsWithoutMain += 1
+                capture.lastReadLabelMode = read.panel?.labelMode ?? false
+            }
             guard let value else {
                 if !read.textFirst || capture.textCandidate != nil { capture.emptyReads += 1 }
                 return
@@ -4107,42 +4402,245 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 }
                 capture.textCandidate = (box, now)
             }
-            capture.records.append(CaptureReadRecord(read: read, landing: capture.pendingLanding, at: now))
+            // Only the newest record keeps its copied frame (for the panel photo).
+            for index in capture.records.indices { capture.records[index].context.pixels = nil }
+            capture.records.append(CaptureReadRecord(read: read, landing: context.landing, context: context, at: now))
             capture.records.removeAll { now - $0.at > Self.captureReadWindow }
-            if capture.records.count > 4 { capture.records.removeFirst(capture.records.count - 4) }
+            if capture.records.count > Self.captureMaxRecords {
+                capture.records.removeFirst(capture.records.count - Self.captureMaxRecords)
+            }
             #if DEBUG
             Self.captureLog.debug("\(read.kind.rawValue, privacy: .public) kept \(value, privacy: .public) records=\(self.capture.records.compactMap(\.read.value).joined(separator: ","), privacy: .public)")
             #endif
             _ = tryCapture()
         }
 
-        /// Locks and hands over the photo once the image checks held for the whole streak and the last read agrees
-        /// with an earlier one. Same guards as every other lock path.
+        /// Reads needed for a capture, from frames 0.4 s or more apart inside the 4 s window: a meter number twice; a
+        /// main-breaker value twice by the same rule (three times from the largest handle); a panel with no main read
+        /// three times, and only while no MAIN read is waiting for its match. A different MAIN value in the window
+        /// blocks the capture until it ages out.
+        private func readsNeeded(for target: EquipmentKind, latest: CaptureReadRecord, value: String) -> Int? {
+            switch target {
+            case .electricMeter:
+                return 2
+            case .breakerPanel:
+                let mains = capture.records.compactMap { $0.read.value }.filter { $0.hasPrefix(ScanTextRead.mainPrefix) }
+                if value == ScanTextRead.panelEvidence {
+                    return mains.isEmpty ? 3 : nil
+                }
+                guard mains.allSatisfy({ $0 == value }) else { return nil }
+                return latest.read.panel?.basis == .largestHandle ? 3 : 2
+            }
+        }
+
+        /// Frames at least `captureFrameSpacing` apart among these capture times.
+        private static func distinctFrames(_ times: [CFTimeInterval]) -> Int {
+            var count = 0
+            var last = -CFTimeInterval.infinity
+            for time in times.sorted() where time - last >= captureFrameSpacing {
+                count += 1
+                last = time
+            }
+            return count
+        }
+
+        /// Locks and hands over the photo once the image checks held for the whole streak and enough reads agree (see
+        /// `readsNeeded`). Same guards as every other lock path.
         @discardableResult
         private func tryCapture() -> Bool {
             guard let target = capture.target, capture.streak >= Self.captureStreakRequired,
                   let latest = capture.records.last, let value = latest.read.value, let image = latest.read.image,
-                  capture.records.dropLast().contains(where: { $0.read.value == value }),
+                  let needed = readsNeeded(for: target, latest: latest, value: value),
                   let lastLanding = capture.landings.last else { return false }
+            let agreeing = capture.records.filter { $0.read.value == value && $0.read.panel?.basis == latest.read.panel?.basis }
+            guard Self.distinctFrames(agreeing.map(\.context.frameTime)) >= needed else { return false }
             let count = Float(capture.landings.count)
             let point = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.point } / count
             let normalSum = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.normal }
             let normal = simd_length(normalSum) > 0.001 ? simd_normalize(normalSum) : lastLanding.normal
             guard trackingBlockedMessage == nil, relockAllowed(target, point: point),
                   lockRejection(target, at: point, normal: normal, checkHeight: true) == nil else { return false }
-            lockEquipment(target, at: EquipmentLock.Sample(point: point, normal: normal), source: .scanCapture)
-            let result = ScanCapture(
-                kind: target,
-                image: UIImage(cgImage: image),
-                meterNumber: target == .electricMeter ? latest.read.meter?.number : nil,
-                mainBreakerAmps: target == .breakerPanel ? latest.read.breaker?.amps : nil
-            )
-            logCapture(target, "CAPTURED", "value=\(value) reads=\(capture.records.count) image=\(image.width)x\(image.height)")
+            let halfWidth = target == .electricMeter ? capture.meterHalfWidth : nil
+            lockEquipment(target, at: EquipmentLock.Sample(point: point, normal: normal), source: .scanCapture, halfWidth: halfWidth)
+            logCapture(target, "CAPTURED", "value=\(value) basis=\(latest.read.panel?.basis?.rawValue ?? "-") reads=\(capture.records.count) image=\(image.width)x\(image.height)")
+            let read = latest.read
+            let context = latest.context
             resetCapture()
-            onScanCapture?(result)
+            switch target {
+            case .electricMeter:
+                onScanCapture?(ScanCapture(kind: .electricMeter, image: UIImage(cgImage: image), meterNumber: read.meter?.number))
+            case .breakerPanel:
+                deliverPanelCapture(read: read, context: context, closeUp: image, lockPoint: point)
+            }
+            recordLockFrame(kind: target.rawValue, source: "scan-capture", point: point, reason: FrameRecorder.Reason.capture)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            // The view's step machine reads `widePanelPhotoPending` before it sees the lock.
+            publishScanFeedback()
             emit()
             return true
+        }
+
+        // MARK: - Panel photo
+
+        /// The panel photo is the whole panel, not the label the OCR read: the detector's panel box grown 20% when it
+        /// sits 3% or more inside every frame edge and covers 10–70% of the frame, otherwise the whole upright frame.
+        /// It must be sharp and exposed, seen at most 45° off the panel.
+        private static let panelPhotoPadding: CGFloat = 0.2
+        private static let panelPhotoEdgeMargin: CGFloat = 0.03
+        private static let panelPhotoArea: ClosedRange<CGFloat> = 0.10...0.70
+        private static let panelPhotoMaxObliqueDegrees: Float = 45
+        /// Closer than this, or a read of a printed label, and the scan waits a few seconds for a wider photo.
+        private static let panelPhotoMinDistanceMeters: Float = 0.5
+        private static let widePanelPhotoSeconds: CFTimeInterval = 4
+
+        private struct WidePanelPhoto {
+            var until: CFTimeInterval
+            var point: SIMD3<Float>
+            var normal: SIMD3<Float>
+        }
+
+        private var widePanelPhoto: WidePanelPhoto?
+        private var widePanelPhotoRendering = false
+
+        /// The region of the upright frame to keep as the panel photo, or nil when a panel box is too big to frame.
+        private static func panelPhotoRegion(box: CGRect?) -> CGRect? {
+            guard let box else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
+            let area = box.width * box.height
+            if area > panelPhotoArea.upperBound { return nil }
+            let inside = box.minX >= panelPhotoEdgeMargin && box.minY >= panelPhotoEdgeMargin
+                && box.maxX <= 1 - panelPhotoEdgeMargin && box.maxY <= 1 - panelPhotoEdgeMargin
+            guard inside, area >= panelPhotoArea.lowerBound else { return CGRect(x: 0, y: 0, width: 1, height: 1) }
+            return CaptureQuality.padded(box, by: panelPhotoPadding)
+        }
+
+        /// Hands over the panel capture. The photo comes from the winning read's own frame; a close-up of a label, a
+        /// box filling the frame, or a camera under 0.5 m keeps the scan on the panel for a few seconds for a wider one.
+        private func deliverPanelCapture(read: ScanTextRead, context: CaptureReadContext, closeUp: CGImage, lockPoint: SIMD3<Float>) {
+            let result = ScanCapture(
+                kind: .breakerPanel,
+                image: UIImage(cgImage: closeUp),
+                mainBreakerAmps: read.panel?.amps,
+                mainBreakerBasis: read.panel?.amps == nil ? nil : read.panel?.basis
+            )
+            let box = context.source == Self.panelBoxSource ? context.candidateBox : nil
+            let area = box.map { $0.width * $0.height } ?? 0
+            let tooClose = simd_distance(context.cameraPosition, lockPoint) < Self.panelPhotoMinDistanceMeters
+            let oblique = context.landingNormal.map { Self.obliqueDegrees(normal: $0, from: lockPoint, to: context.cameraPosition) } ?? 0
+            let region = Self.panelPhotoRegion(box: box)
+            var photoPasses = false
+            if let pixels = context.pixels, let region, oblique <= Self.panelPhotoMaxObliqueDegrees,
+               let reading = CaptureQuality.measure(pixels.buffer, visionRect: region, orientation: context.orientation) {
+                photoPasses = CaptureQuality.problem(reading) == nil
+            }
+            if read.panel?.labelMode == true || area > Self.panelPhotoArea.upperBound || tooClose || !photoPasses {
+                beginWidePanelPhoto(at: lockPoint)
+            }
+            guard photoPasses, let pixels = context.pixels, let region else {
+                onScanCapture?(result)
+                return
+            }
+            let orientation = context.orientation
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let photo = PlacementSceneController.renderPhoto(pixels, region: region, orientation: orientation)
+                await self?.finishPanelCapture(result, photo: photo)
+            }
+        }
+
+        private func finishPanelCapture(_ capture: ScanCapture, photo: CGImage?) {
+            var result = capture
+            if let photo { result.image = UIImage(cgImage: photo) }
+            onScanCapture?(result)
+        }
+
+        private func beginWidePanelPhoto(at point: SIMD3<Float>) {
+            let normal = panelWallHit?.normal ?? SIMD3(0, 0, 1)
+            widePanelPhoto = WidePanelPhoto(until: CACurrentMediaTime() + Self.widePanelPhotoSeconds, point: point, normal: normal)
+            updateDetectorGate()
+        }
+
+        private func endWidePanelPhoto() {
+            guard widePanelPhoto != nil else { return }
+            widePanelPhoto = nil
+            updateDetectorGate()
+            publishScanFeedback()
+        }
+
+        /// While a wider panel photo is wanted: the first frame that frames the whole panel, sharp and exposed, from
+        /// 0.5 m or more and at most 45° off, replaces panel.jpg. The lock and the amps stay as they are.
+        private func considerWidePanelPhoto(_ packet: EquipmentScanFrame) {
+            guard let wide = widePanelPhoto else { return }
+            guard CACurrentMediaTime() < wide.until else {
+                endWidePanelPhoto()
+                return
+            }
+            guard packet.status == .ok, trackingBlockedMessage == nil, !widePanelPhotoRendering, let pixels = packet.pixels else { return }
+            let column = packet.cameraTransform.columns.3
+            let camera = SIMD3<Float>(column.x, column.y, column.z)
+            guard simd_distance(camera, wide.point) >= Self.panelPhotoMinDistanceMeters,
+                  Self.obliqueDegrees(normal: wide.normal, from: wide.point, to: camera) <= Self.panelPhotoMaxObliqueDegrees,
+                  Self.projects(wide.point, into: packet, margin: 0.05) else { return }
+            let box = packet.detections
+                .filter { $0.kind == .breakerPanel && $0.confidence >= Self.captureMinConfidence }
+                .max { $0.confidence < $1.confidence }?.boundingBox
+            guard let region = Self.panelPhotoRegion(box: box),
+                  let reading = CaptureQuality.measure(pixels.buffer, visionRect: region, orientation: packet.visionOrientation),
+                  CaptureQuality.problem(reading) == nil else { return }
+            widePanelPhotoRendering = true
+            let orientation = packet.visionOrientation
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let photo = PlacementSceneController.renderPhoto(pixels, region: region, orientation: orientation)
+                await self?.finishWidePanelPhoto(photo)
+            }
+        }
+
+        private func finishWidePanelPhoto(_ photo: CGImage?) {
+            widePanelPhotoRendering = false
+            guard widePanelPhoto != nil, let photo else { return }
+            onScanCapture?(ScanCapture(kind: .breakerPanel, image: UIImage(cgImage: photo), photoOnly: true))
+            logCapture(.breakerPanel, "WIDE-PHOTO", "\(photo.width)x\(photo.height)")
+            endWidePanelPhoto()
+        }
+
+        /// True when the world point lands inside the packet's camera image, `margin` in from every edge.
+        private static func projects(_ point: SIMD3<Float>, into packet: EquipmentScanFrame, margin: Float) -> Bool {
+            let camera = packet.cameraTransform.inverse * SIMD4(point.x, point.y, point.z, 1)
+            let depth = -camera.z
+            guard depth > 0.1 else { return false }
+            let k = packet.intrinsics
+            let u = k[0][0] * camera.x / depth + k[2][0]
+            let v = k[2][1] - k[1][1] * camera.y / depth
+            let width = Float(packet.imageSize.width)
+            let height = Float(packet.imageSize.height)
+            return u >= width * margin && u <= width * (1 - margin) && v >= height * margin && v <= height * (1 - margin)
+        }
+
+        /// A region of a copied frame, upright, as a photo. Off the main thread.
+        private nonisolated static func renderPhoto(_ pixels: CopiedPixels, region: CGRect, orientation: CGImagePropertyOrientation) -> CGImage? {
+            let upright = CIImage(cvPixelBuffer: pixels.buffer).oriented(orientation)
+            let extent = upright.extent
+            let rect = CGRect(
+                x: extent.minX + region.minX * extent.width,
+                y: extent.minY + region.minY * extent.height,
+                width: region.width * extent.width,
+                height: region.height * extent.height
+            ).integral.intersection(extent)
+            guard !rect.isNull, rect.width >= 64, rect.height >= 64 else { return nil }
+            return cropContext.createCGImage(upright, from: rect)
+        }
+
+        /// Half the enclosure's width along the wall, from its box: the box's width in pixels at the lock's distance.
+        /// Nil when the numbers are not usable; clamped to 0.10–0.35 m.
+        private static func halfWidth(of box: CGRect, in packet: EquipmentScanFrame, at point: SIMD3<Float>) -> Float? {
+            let rotated = packet.visionOrientation == .right || packet.visionOrientation == .left
+            // The upright image's horizontal axis is the sensor's vertical one in portrait.
+            let uprightWidth = rotated ? packet.imageSize.height : packet.imageSize.width
+            let focal = rotated ? packet.intrinsics.columns.1.y : packet.intrinsics.columns.0.x
+            let column = packet.cameraTransform.columns.3
+            let distance = simd_distance(SIMD3(column.x, column.y, column.z), point)
+            guard focal > 1, distance > 0.1 else { return nil }
+            let meters = Float(box.width * uprightWidth) * distance / focal
+            guard meters.isFinite, meters > 0 else { return nil }
+            return min(max(meters / 2, 0.10), 0.35)
         }
 
         private func resetCapture() {
@@ -4200,88 +4698,263 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             #endif
         }
 
-        private func logCapture(_ target: EquipmentKind, _ decision: String, _ detail: String) {
+        /// The capture gate's DEBUG line. With the frame recorder on, a decision on a detector packet also saves that
+        /// packet's frame, labeled with the boxes, the decision, and the gate's readings.
+        private func logCapture(_ target: EquipmentKind, _ decision: String, _ detail: String, packet: EquipmentScanFrame? = nil) {
             #if DEBUG
             Self.captureLog.debug("\(target.rawValue, privacy: .public) \(decision, privacy: .public) \(detail, privacy: .public)")
+            guard let packet, let pixels = packet.pixels, FrameRecorder.shared.isRecording else { return }
+            let passed = decision.hasPrefix("pass")
+            let reason = passed ? FrameRecorder.Reason.gatePass : FrameRecorder.Reason.gateReject
+            guard FrameRecorder.shared.wants(reason) else { return }
+            FrameRecorder.shared.recordPixels(
+                pixels.buffer,
+                camera: FrameRecorder.Camera(
+                    intrinsics: packet.intrinsics,
+                    transform: packet.cameraTransform,
+                    imageSize: packet.imageSize,
+                    timestamp: packet.capturedAt,
+                    imageOrientation: packet.visionOrientation
+                ),
+                reason: reason,
+                metadata: [
+                    "target": target.rawValue,
+                    "step": "\(walkStep)",
+                    "detections": packet.detections.map {
+                        FrameRecorder.detection(label: $0.kind.rawValue, confidence: $0.confidence, visionBox: $0.boundingBox)
+                    },
+                    "gate": [
+                        "detail": detail,
+                        "streak": capture.streak,
+                        "reads": capture.records.compactMap(\.read.value)
+                    ] as [String: any Sendable],
+                    "decision": decision
+                ]
+            )
             #endif
         }
 
-        // MARK: - Gas meter hold
+        /// A lock or capture from the live session, for the frame recorder. The frame stays a local.
+        private func recordLockFrame(kind: String, source: String, point: SIMD3<Float>, reason: String) {
+            #if DEBUG
+            guard FrameRecorder.shared.isRecording, let frame = arView.session.currentFrame else { return }
+            let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
+            FrameRecorder.shared.recordFrame(
+                frame,
+                reason: reason,
+                metadata: ["kind": kind, "source": source, "point": [Double(point.x), Double(point.y), Double(point.z)], "step": "\(walkStep)"],
+                interfaceOrientation: interface
+            )
+            #endif
+        }
 
-        /// Gas step: the ring held on the gas meter marks it, no tap. Tune every number on device.
-        private static let gasHoldEnabled = true
-        private static let gasHoldSeconds: CFTimeInterval = 1
-        /// On the ground itself, or with no ground estimate, the hold is longer, so a phone pointed at the feet
-        /// while walking does not mark the gas meter.
-        private static let gasGroundHoldSeconds: CFTimeInterval = 2
-        /// Below this height the spot counts as the ground itself.
-        private static let gasGroundBandMeters: Float = 0.08
-        /// Gas meters sit low on their riser.
-        private static let gasMaxHeightMeters: Float = 1.2
-        private static let gasMaxRangeMeters: Float = 4
+        // MARK: - Gas meter: shown on the scan
+
+        /// Gas step: the user walks to the gas meter and keeps the camera on it. No tap, no dot, no ring. The spot is
+        /// marked once it is plausibly a gas meter (low, by a wall, away from the electric meter and panel, after the
+        /// user moved to it) and the view holds steady. The scan does not recognize gas meters, so the clearance from
+        /// this mark is the user's showing, checked against the gas photo in Review. Tune every number on device.
+        private static let gasSettleSeconds: CFTimeInterval = 2
+        /// The camera moved this far since the step began, or the spot is this far from the first one, so the mark is
+        /// not whatever the camera happened to face when the step began.
+        private static let gasMoveMeters: Float = 0.75
+        private static let gasMinRangeMeters: Float = 0.3
+        private static let gasMaxRangeMeters: Float = 2.5
+        /// Above the ground: a gas meter's body, never the ground itself.
+        private static let gasMinHeightMeters: Float = 0.10
+        private static let gasMaxHeightMeters: Float = 1.5
         /// A gas meter is its own object, not the electric meter or the panel.
         private static let gasClearanceFromEquipmentMeters: Float = 0.6
-        /// Time into the gas step before a hold counts, so the ring does not mark whatever it rested on as the step began.
-        private static let gasAimSettleSeconds: CFTimeInterval = 1.5
-        private static let gasHoldDriftMeters: Float = 0.15
-        /// A spot on the ground counts only this close to a detected wall: gas meters stand against the house.
-        private static let gasGroundWallMeters: Float = 1
+        /// Gas meters stand against the house.
+        private static let gasWallMeters: Float = 1
+        private static let gasSteadySeconds: CFTimeInterval = 1.5
+        private static let gasDriftMeters: Float = 0.12
+        private static let gasMaxTurnDegreesPerSecond: Float = 10
+        /// The spot is the median of a 9 × 9 depth grid over the middle 15% of the view, when 60% of it is confident.
+        private static let gasSampleFraction: CGFloat = 0.15
+        private static let gasSampleGrid = 9
+        private static let gasConfidentShare: Float = 0.6
+        /// The gas photo is the middle half of the frame the mark was made in.
+        private static let gasPhotoFraction: CGFloat = 0.5
 
-        private func updateGasHold(at point: CGPoint) {
-            guard Self.gasHoldEnabled, gasPoint == nil else {
+        /// Where the gas step began, the spot being held, and the recent camera headings for the turn rate.
+        private struct GasShow {
+            var startedAt: CFTimeInterval
+            var startCamera: SIMD3<Float>
+            var firstSpot: SIMD3<Float>?
+            var anchor: SIMD3<Float>?
+            var since: CFTimeInterval?
+            var headings: [(at: CFTimeInterval, forward: SIMD3<Float>)] = []
+        }
+
+        private var gasShow: GasShow?
+
+        private func updateGasShow() {
+            guard gasPoint == nil else {
                 gasHint = nil
-                resetGasHold()
+                gasShow = nil
                 return
             }
             let now = CACurrentMediaTime()
-            if gasAimSince == nil { gasAimSince = now }
-            guard now - (gasAimSince ?? now) >= Self.gasAimSettleSeconds else { return }
-            guard trackingBlockedMessage == nil, let position = raycastPoint(at: point, alignment: .any)?.position.simd,
-                  simd_distance(arView.cameraTransform.translation, position) <= Self.gasMaxRangeMeters,
-                  ![meterWallHit?.position, panelWallHit?.position].contains(where: { other in
-                      other.map { simd_distance($0, position) < Self.gasClearanceFromEquipmentMeters } ?? false
-                  }) else {
-                gasHint = .holdOnGas
-                resetGasHold()
+            let matrix = arView.cameraTransform.matrix
+            let camera = SIMD3<Float>(matrix.columns.3.x, matrix.columns.3.y, matrix.columns.3.z)
+            let forward = -SIMD3<Float>(matrix.columns.2.x, matrix.columns.2.y, matrix.columns.2.z)
+            var show = gasShow ?? GasShow(startedAt: now, startCamera: camera)
+            show.headings.append((now, forward))
+            show.headings.removeAll { now - $0.at > 0.5 }
+            guard trackingBlockedMessage == nil, let frame = arView.session.currentFrame, let spot = gasSample(in: frame) else {
+                show.anchor = nil
+                show.since = nil
+                gasShow = show
+                gasHint = .pointAtIt
                 return
             }
-            let height = gasGroundY(under: position).map { position.y - $0 }
-            if let height, height > Self.gasMaxHeightMeters {
-                gasHint = .holdOnGas
-                resetGasHold()
+            if show.firstSpot == nil { show.firstSpot = spot }
+            let range = simd_distance(camera, spot)
+            let height = gasGroundY(under: spot).map { spot.y - $0 }
+            let nearEquipment = [meterWallHit?.position, panelWallHit?.position].contains { other in
+                other.map { simd_distance($0, spot) <= Self.gasClearanceFromEquipmentMeters } ?? false
+            }
+            let hint: CoachTip
+            if range > Self.gasMaxRangeMeters {
+                hint = .zoomIn
+            } else if range < Self.gasMinRangeMeters {
+                hint = .backUpLittle
+            } else if let height, height > Self.gasMaxHeightMeters {
+                hint = .pointDown
+            } else if nearEquipment {
+                hint = .notTheElectricMeter
+            } else {
+                let settled = now - show.startedAt >= Self.gasSettleSeconds
+                let moved = simd_distance(camera, show.startCamera) >= Self.gasMoveMeters
+                    || simd_distance(spot, show.firstSpot ?? spot) >= Self.gasMoveMeters
+                let offGround = height.map { $0 >= Self.gasMinHeightMeters } ?? false
+                let byWall = isNearWall(spot, within: Self.gasWallMeters)
+                hint = settled && moved && offGround && byWall ? .holdStill : .pointAtIt
+            }
+            gasHint = hint
+            guard hint == .holdStill, Self.turnRate(show.headings) < Self.gasMaxTurnDegreesPerSecond else {
+                show.anchor = nil
+                show.since = nil
+                gasShow = show
                 return
             }
-            let onGround = height.map { $0 < Self.gasGroundBandMeters } ?? true
-            if onGround, !isNearWall(position, within: Self.gasGroundWallMeters) {
-                gasHint = .holdOnGas
-                resetGasHold()
+            guard let anchor = show.anchor, let since = show.since, simd_distance(anchor, spot) <= Self.gasDriftMeters else {
+                show.anchor = spot
+                show.since = now
+                gasShow = show
                 return
             }
-            let needed = onGround ? Self.gasGroundHoldSeconds : Self.gasHoldSeconds
-            holdReticle.center = point
-            holdReticle.isHidden = false
-            gasHint = .holdStill
-            guard let anchor = gasHoldAnchor, let since = gasHoldSince,
-                  simd_distance(anchor, position) <= Self.gasHoldDriftMeters else {
-                gasHoldAnchor = position
-                gasHoldSince = now
-                return
-            }
-            guard now - since >= needed else { return }
-            placeMarker(kind: .gasMeter, at: anchor)
+            gasShow = show
+            guard now - since >= Self.gasSteadySeconds else { return }
             #if DEBUG
-            Self.captureLog.debug("gas marked height=\(height ?? -1, format: .fixed(precision: 2)) held=\(now - since, format: .fixed(precision: 2))")
+            Self.captureLog.debug("gas shown height=\(height ?? -1, format: .fixed(precision: 2)) range=\(range, format: .fixed(precision: 2)) held=\(now - since, format: .fixed(precision: 2))")
             #endif
+            markGasMeter(at: (anchor + spot) / 2, frame: frame)
+        }
+
+        private func markGasMeter(at point: SIMD3<Float>, frame: ARFrame) {
+            placeMarker(kind: .gasMeter, at: point)
+            gasMarkSource = .shownOnScan
+            gasShow = nil
             gasHint = nil
-            resetGasHold()
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            sendGasPhoto(from: frame)
+            recordLockFrame(kind: "gasMeter", source: GasMarkSource.shownOnScan.rawValue, point: point, reason: FrameRecorder.Reason.lock)
+            // The pad keeps 3 ft from this mark: the background search replans on the next tick.
+            batteryPlanKey = nil
+            batteryPlanAt = 0
             emit()
         }
 
-        private func resetGasHold() {
-            gasHoldAnchor = nil
-            gasHoldSince = nil
-            holdReticle.isHidden = true
+        /// The middle half of the frame the gas mark was made in, for gas.jpg. The copy is made here; the frame is not kept.
+        private func sendGasPhoto(from frame: ARFrame) {
+            guard onGasShown != nil, arView.bounds.width > 1, let copy = EquipmentPixelBuffer.copy(frame.capturedImage) else {
+                onGasShown?(nil)
+                return
+            }
+            let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
+            let orientation = EquipmentScanBridge.visionOrientation(for: interface)
+            let region = CaptureQuality.centerVisionRect(
+                fraction: Self.gasPhotoFraction,
+                displayTransform: frame.displayTransform(for: interface, viewportSize: arView.bounds.size),
+                orientation: orientation
+            )
+            let pixels = CopiedPixels(buffer: copy)
+            Task.detached(priority: .utility) { [weak self] in
+                let photo = PlacementSceneController.renderPhoto(pixels, region: region, orientation: orientation)
+                await self?.deliverGasPhoto(photo.map { UIImage(cgImage: $0) })
+            }
+        }
+
+        private func deliverGasPhoto(_ image: UIImage?) {
+            onGasShown?(image)
+        }
+
+        /// Degrees per second the camera turned over the last half second.
+        private static func turnRate(_ headings: [(at: CFTimeInterval, forward: SIMD3<Float>)]) -> Float {
+            guard let first = headings.first, let last = headings.last, last.at - first.at >= 0.2 else { return 0 }
+            let cosine = simd_dot(simd_normalize(first.forward), simd_normalize(last.forward))
+            let degrees = acos(min(1, max(-1, cosine))) * 180 / .pi
+            return degrees / Float(last.at - first.at)
+        }
+
+        /// The spot in the middle of the view: the median world point of a 9 × 9 grid of LiDAR depth over the middle
+        /// 15% of the view, unprojected the way `depthPatch` does. Nil when under 60% of the grid is medium or high
+        /// confidence, or the phone has no scene depth.
+        private func gasSample(in frame: ARFrame) -> SIMD3<Float>? {
+            guard let depthData = frame.smoothedSceneDepth ?? frame.sceneDepth,
+                  arView.bounds.width > 1, arView.bounds.height > 1 else { return nil }
+            let depthMap = depthData.depthMap
+            let confidenceMap = depthData.confidenceMap
+            CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+            if let confidenceMap { CVPixelBufferLockBaseAddress(confidenceMap, .readOnly) }
+            defer { if let confidenceMap { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly) } }
+            guard let depthBase = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+            let depthWidth = CVPixelBufferGetWidth(depthMap)
+            let depthHeight = CVPixelBufferGetHeight(depthMap)
+            let depthRow = CVPixelBufferGetBytesPerRow(depthMap)
+            let confidenceBase = confidenceMap.flatMap { CVPixelBufferGetBaseAddress($0) }?.assumingMemoryBound(to: UInt8.self)
+            let confidenceRow = confidenceMap.map { CVPixelBufferGetBytesPerRow($0) } ?? 0
+            let interface = arView.window?.windowScene?.interfaceOrientation ?? .portrait
+            let toImage = frame.displayTransform(for: interface, viewportSize: arView.bounds.size).inverted()
+            let imageWidth = Float(CVPixelBufferGetWidth(frame.capturedImage))
+            let imageHeight = Float(CVPixelBufferGetHeight(frame.capturedImage))
+            let intrinsics = frame.camera.intrinsics
+            let fx = intrinsics.columns.0.x
+            let fy = intrinsics.columns.1.y
+            let cx = intrinsics.columns.2.x
+            let cy = intrinsics.columns.2.y
+            let transform = frame.camera.transform
+            let grid = Self.gasSampleGrid
+            var points: [SIMD3<Float>] = []
+            for row in 0..<grid {
+                for column in 0..<grid {
+                    let view = CGPoint(
+                        x: 0.5 + (CGFloat(column) / CGFloat(grid - 1) - 0.5) * Self.gasSampleFraction,
+                        y: 0.5 + (CGFloat(row) / CGFloat(grid - 1) - 0.5) * Self.gasSampleFraction
+                    )
+                    let image = view.applying(toImage)
+                    guard image.x >= 0, image.x < 1, image.y >= 0, image.y < 1 else { continue }
+                    let dx = min(depthWidth - 1, Int(image.x * CGFloat(depthWidth)))
+                    let dy = min(depthHeight - 1, Int(image.y * CGFloat(depthHeight)))
+                    if let confidenceBase, confidenceBase[dy * confidenceRow + dx] < 1 { continue }
+                    let meters = depthBase.advanced(by: dy * depthRow).assumingMemoryBound(to: Float32.self)[dx]
+                    guard meters.isFinite, meters >= 0.1, meters <= 5 else { continue }
+                    let pixelX = Float(image.x) * imageWidth
+                    let pixelY = Float(image.y) * imageHeight
+                    let world = transform * SIMD4<Float>((pixelX - cx) * meters / fx, -((pixelY - cy) * meters / fy), -meters, 1)
+                    points.append(SIMD3(world.x, world.y, world.z))
+                }
+            }
+            guard Float(points.count) >= Self.gasConfidentShare * Float(grid * grid) else { return nil }
+            let mid = points.count / 2
+            return SIMD3(
+                points.map(\.x).sorted()[mid],
+                points.map(\.y).sorted()[mid],
+                points.map(\.z).sorted()[mid]
+            )
         }
 
         /// True when a detected vertical plane (a wall) stands within `meters` of the spot, measured across the floor.
@@ -4295,8 +4968,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
         }
 
-        /// The ground straight under a spot, from a plane; else the ground found under the meter or panel.
+        /// The ground under a spot: the mesh's floor faces around it, else a plane straight down, else the ground found
+        /// under the meter or panel.
         private func gasGroundY(under point: SIMD3<Float>) -> Float? {
+            if let y = CorePlacementMeasurer.floorMedianY(meshSamples.values.joined(), near: point, outward: .zero, below: 0) {
+                return y
+            }
             let origin = point + SIMD3<Float>(0, 0.05, 0)
             for allowing: ARRaycastQuery.Target in [.existingPlaneGeometry, .estimatedPlane] {
                 let query = ARRaycastQuery(origin: origin, direction: SIMD3(0, -1, 0), allowing: allowing, alignment: .horizontal)
@@ -4318,11 +4995,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         fileprivate func syncGuide(step: WalkStep, gasResolved: Bool) {
             walkStep = step
             self.gasResolved = gasResolved
-            guard !batteryConfirmed else { return }
-            if step == .battery, gasResolved {
-                suggestBatterySpotIfNeeded()
-            } else if step != .battery {
-                clearUnconfirmedBattery()
+            // The battery is never a ghost any more: the background search places it once, at the finish. A view that
+            // still has a battery step gets that placement as soon as it asks.
+            if step == .battery, !batteryConfirmed {
+                finalizeBatterySuggestion()
             }
         }
 
@@ -4392,33 +5068,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             emitGestureEnded()
         }
 
-        private func suggestBatterySpotIfNeeded() {
-            guard walkStep == .battery, gasResolved, !batteryConfirmed, batteryRig == nil else { return }
-            guard let wall = meterWallHit, let outward = horizontalUnit(wall.normal) else { return }
-            guard let groundY = meterGroundPosition?.y ?? groundUnder(wall.position, normal: wall.normal)?.y else { return }
-            let up = SIMD3<Float>(0, 1, 0)
-            guard let axis = unitVector(simd_cross(up, outward)) else { return }
-            var along = batteryAlongOffset
-            if let panel = panelWallHit?.position, simd_dot(panel - wall.position, axis) > 0.05 {
-                along = -batteryAlongOffset
-            }
-            var slide = BatterySlide(
-                origin: SIMD3(wall.position.x, groundY, wall.position.z),
-                outward: outward,
-                axis: axis,
-                groundY: groundY,
-                along: along
-            )
-            // The gas mark is a point now (`gasPoint`); `gasMarker` is only left over from older scenes.
-            if let gas = gasPoint ?? gasMarker?.position(relativeTo: nil),
-               horizontalFeet(batteryWorldPosition(slide), gas) < BaseRuleSet.minGasMeterDistanceFeet {
-                slide.along = -slide.along
-            }
-            batterySlide = slide
-            applyBatterySlide(resetYaw: true)
-            emit()
-        }
-
         private func clearUnconfirmedBattery() {
             guard !batteryConfirmed, batteryRig != nil || batterySlide != nil else { return }
             batteryRig?.removeFromParent()
@@ -4466,8 +5115,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return vector / length
         }
 
-        /// Horizontal plane directly under the wall hit. X and Z stay on the hit so meter distance uses that face.
+        /// The ground directly under the wall hit. X and Z stay on the hit so meter distance uses that face. The mesh's
+        /// floor faces in front of the lock win; a horizontal plane is the fallback (it sat 8 cm high on the demo wall).
         private func groundUnder(_ point: SIMD3<Float>, normal: SIMD3<Float>) -> SIMD3<Float>? {
+            if let y = CorePlacementMeasurer.floorMedianY(meshSamples.values.joined(), near: point, outward: normal) {
+                return SIMD3(point.x, y, point.z)
+            }
             let flat = SIMD3<Float>(normal.x, 0, normal.z)
             let length = simd_length(flat)
             let outward = length > 0.001 ? flat / length : SIMD3<Float>(0, 0, 1)
@@ -4481,9 +5134,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return nil
         }
 
-        /// The 30 × 36 in slab sits in front of the locked meter (or panel) once the battery exists, so the mesh check has a volume.
+        /// The 30 × 36 in slab sits in front of the locked meter (or panel) from the lock on, battery or not, so the mesh
+        /// check has a volume. It is never drawn on the camera.
         private func placeDerivedWorkingSpace() {
-            guard batteryRig != nil else { return }
             let sample: (position: SIMD3<Float>, normal: SIMD3<Float>)?
             let groundY: Float
             if let meterWallHit {
@@ -4507,7 +5160,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let center = SIMD3<Float>(sample.position.x, groundY, sample.position.z)
                 + normal * (BatteryGeometry.workingSpaceDepthMeters / 2)
             scene.workingSpaceYawRadians = atan2(normal.x, normal.z)
-            placeWorkingSpace(at: center)
+            placeWorkingSpace(at: center, visible: false)
         }
 
         private static func viewRect(for box: CGRect, in packet: EquipmentScanFrame) -> CGRect {
@@ -4646,6 +5299,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             } else if let gasMarker {
                 snapshot.gasMeterPosition = PlacementAnchor(gasMarker.position(relativeTo: nil))
             }
+            snapshot.gasMarkSource = snapshot.gasMeterPosition == nil ? nil : gasMarkSource
+            snapshot.meterHalfWidthMeters = meterWallHit == nil ? nil : meterHalfWidth
             snapshot.draftMeasurementStart = measurementEndpoints.first
             snapshot.draftMeasurementEnd = measurementEndpoints.count > 1 ? measurementEndpoints[1] : nil
             if let workingSpaceOverlay {

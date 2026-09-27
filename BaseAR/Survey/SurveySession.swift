@@ -122,6 +122,15 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     var hasExistingWholeHomeBattery: Bool?
     /// Nil until the home form asks. 1 or 2. Two batteries require a 200A panel.
     var plannedBatteryCount: Int?
+    /// Home Info answer that decides whether the Live Survey looks for a gas meter. Nil means not answered.
+    var gasMeterAnswer: GasMeterAnswer?
+}
+
+/// "No" is the homeowner's statement, not a measurement: it skips the gas step and records the gas check as their answer.
+enum GasMeterAnswer: String, Codable, Sendable, CaseIterable {
+    case yes
+    case no
+    case notSure
 }
 
 struct PlacementAnchor: Codable, Sendable, Equatable {

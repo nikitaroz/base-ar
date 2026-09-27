@@ -239,7 +239,8 @@ private struct SurveyHubView: View {
             electrical.hasPortableGenerator != nil,
             electrical.hasStandbyGenerator != nil,
             electrical.hasExistingWholeHomeBattery != nil,
-            electrical.plannedBatteryCount != nil
+            electrical.plannedBatteryCount != nil,
+            electrical.gasMeterAnswer != nil
         ])
     }
 
@@ -374,6 +375,18 @@ private enum AnswerChoice: String, CaseIterable, Identifiable {
         case false: self = .no
         case true: self = .yes
         case nil: return nil
+        }
+    }
+}
+
+extension GasMeterAnswer: Identifiable {
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .yes: "Yes"
+        case .no: "No"
+        case .notSure: "Not sure"
         }
     }
 }
@@ -539,6 +552,13 @@ struct HomeInformationView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Gas") {
+                RadioChoice(title: "Gas meter outside", selection: gasMeterBinding) { $0.title }
+                Text("The battery must sit at least 3 ft from a gas meter. If you have one, the Live Survey asks you to find it.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Location") {
                 if let fix = store.session.propertyLocation {
                     PropertyLocationMap(fix: fix)
@@ -629,6 +649,13 @@ struct HomeInformationView: View {
         Binding(
             get: { OwnershipChoice(value: store.session.homeownership) },
             set: { store.setHomeownership($0?.value) }
+        )
+    }
+
+    private var gasMeterBinding: Binding<GasMeterAnswer?> {
+        Binding(
+            get: { store.session.electrical.gasMeterAnswer },
+            set: { store.setGasMeterAnswer($0) }
         )
     }
 

@@ -44,6 +44,7 @@ private enum CoachTip: String {
     case tapNext = "Tap Next"
     case tapMeter = "Tap the meter to mark it"
     case tapPanel = "Tap the panel to mark it"
+    case tapGas = "Tap the ground under the gas meter"
     case cantSee = "Can't see anything. Point the back camera at the wall"
     case located = "Located"
     case scanned = "Scanned"
@@ -67,7 +68,7 @@ private enum CoachTip: String {
         case .slideToWall: "hand.draw.fill"
         case .dragBattery: "hand.draw.fill"
         case .tapNext: "checkmark.circle.fill"
-        case .tapMeter, .tapPanel: "hand.tap.fill"
+        case .tapMeter, .tapPanel, .tapGas: "hand.tap.fill"
         case .cantSee: "eye.slash.fill"
         case .located, .scanned: "checkmark.seal.fill"
         }
@@ -239,7 +240,7 @@ struct PlacementARView: View {
             case .ready: return .tapNext
             }
         case .gas:
-            return scene.gasMeterPosition == nil ? .aimDot : .tapNext
+            return scene.gasMeterPosition == nil ? .tapGas : .located
         case .battery:
             guard scene.batteryPosition != nil else { return .pointDown }
             if let wallFeet = scene.automaticWallClearanceFeet, wallFeet > BaseRuleSet.maxWallDistanceFeet {
@@ -416,6 +417,17 @@ struct PlacementARView: View {
                   step == .scan, cue == .ready else { return }
             goForward()
         }
+        // Gas: move on by itself once it is marked; a "No" on Home Info skips the step even on resume.
+        .task(id: gasKey) {
+            if step == .gas, skipsGasStep {
+                step = .battery
+                return
+            }
+            guard step == .gas, scene.gasMeterPosition != nil,
+                  (try? await Task.sleep(for: .seconds(1.2))) != nil,
+                  step == .gas, scene.gasMeterPosition != nil else { return }
+            goForward()
+        }
         // Initializing for this long with frames arriving means the lens sees nothing to track.
         .task(id: trackingMessage) {
             cameraSeesNothing = false
@@ -426,6 +438,7 @@ struct PlacementARView: View {
     }
 
     private var scanKey: String { "\(step)-\(cue)" }
+    private var gasKey: String { "\(step)-\(scene.gasMeterPosition != nil)-\(skipsGasStep)" }
 
     private var arScreen: some View {
         let tone = liveAssessment.placementTone
@@ -642,6 +655,12 @@ struct PlacementARView: View {
             scanControls
         case .finish:
             finishControls
+        case .gas:
+            if let secondaryTitle {
+                Button(secondaryTitle, action: secondaryAction)
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+            }
         default:
             aimControls
         }
@@ -975,7 +994,7 @@ struct PlacementARView: View {
             case .panel: !panelIsMarked
             case nil, .battery, .gasMeter: false
             }
-        case .gas: scene.gasMeterPosition == nil
+        case .gas: false
         case .battery: scene.batteryPosition == nil
         case .finish: false
         }
@@ -997,9 +1016,15 @@ struct PlacementARView: View {
 
     private var canUndoPoint: Bool { false }
 
+    /// Only an unsure (or unanswered) Home Info gets an answer button; "Yes" is tap-only.
     private var secondaryTitle: String? {
-        step == .gas ? "No gas meter" : nil
+        step == .gas && gasAnswer != .yes ? "No gas meter here" : nil
     }
+
+    private var gasAnswer: GasMeterAnswer? { store.session.electrical.gasMeterAnswer }
+
+    /// Home Info said there is no gas meter, so the scan never asks for one.
+    private var skipsGasStep: Bool { gasAnswer == .no }
 
     /// Ignore queued snapshots superseded by a newer controller revision.
     private func acceptScene(_ snapshot: PlacementSceneSnapshot) {
@@ -1055,7 +1080,7 @@ struct PlacementARView: View {
                 manualMark = nil
                 return
             }
-            step = .gas
+            step = skipsGasStep ? .battery : .gas
         case .gas:
             if scene.gasMeterPosition != nil {
                 store.setGasMeterNotVisible(false)
@@ -1073,7 +1098,7 @@ struct PlacementARView: View {
         case .scan:
             manualMark = nil
         case .gas: step = .scan
-        case .battery: step = .gas
+        case .battery: step = skipsGasStep ? .scan : .gas
         case .finish: step = .battery
         }
     }

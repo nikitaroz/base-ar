@@ -21,19 +21,49 @@ enum EquipmentKind: String, Sendable {
 
 /// One box from the EquipmentScan detector. The rect is Vision-normalized, origin at the lower left of the upright image.
 struct EquipmentDetection: Sendable {
+    /// Provisional cutoffs on the true detector score. On 18 Commons photos real meters scored 0.25–0.95 and
+    /// AC condensers reached 0.93, so neither number separates them. Tune both from the DEBUG `EquipmentScan` log on a device.
+    static let drawConfidence: Float = 0.30
+    static let lockConfidence: Float = 0.45
+
     var kind: EquipmentKind
+    /// The detector's own score for this box (`VNRecognizedObjectObservation.confidence`), not the label share.
     var confidence: Float
     var boundingBox: CGRect
 }
 
+/// Why a frame came back with the boxes it has. A model that failed to load or run must not look like an empty wall.
+enum EquipmentObservationStatus: Sendable, Equatable {
+    /// The model ran. No boxes means it saw nothing it knows, not that the scene has no meter.
+    case ok
+    /// EquipmentScan did not load, so no frame will ever have boxes.
+    case modelMissing
+    /// Vision threw on this frame.
+    case inferenceFailed
+}
+
+struct EquipmentDetectionResult: Sendable {
+    var detections: [EquipmentDetection]
+    var status: EquipmentObservationStatus
+    var errorMessage: String?
+}
+
 /// The AR session asks for boxes. It does not own the Core ML model.
 protocol EquipmentDetecting: AnyObject {
-    func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection]
+    func detectResult(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> EquipmentDetectionResult
+}
+
+extension EquipmentDetecting {
+    /// Boxes only. Callers that need to tell a failure from an empty frame use `detectResult`.
+    func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection] {
+        detectResult(in: pixelBuffer, orientation: orientation).detections
+    }
 }
 
 /// EquipmentScan is a YOLO detector fine-tuned on meter and panel photos (scripts/train_equipment.py).
 /// The recognizer only reads that package.
 final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
+    private static let log = Logger(subsystem: "BaseAR", category: "EquipmentScan")
     private let request: VNCoreMLRequest?
     private let lock = NSLock()
     let loadError: String?
@@ -48,19 +78,26 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
         }
     }
 
-    func detect(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [EquipmentDetection] {
-        guard let request else { return [] }
+    func detectResult(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> EquipmentDetectionResult {
+        guard let request else {
+            return EquipmentDetectionResult(detections: [], status: .modelMissing, errorMessage: loadError)
+        }
         lock.lock()
         defer { lock.unlock() }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
             try handler.perform([request])
         } catch {
-            return []
+            #if DEBUG
+            Self.log.debug("inference failed: \(error.localizedDescription, privacy: .public)")
+            #endif
+            return EquipmentDetectionResult(detections: [], status: .inferenceFailed, errorMessage: error.localizedDescription)
         }
-        let recognized = Self.recognizedObjects(in: request.results)
-        if !recognized.isEmpty { return recognized }
-        return Self.featureBoxes(in: request.results)
+        var found = Self.recognizedObjects(in: request.results)
+        if found.isEmpty {
+            found = Self.featureBoxes(in: request.results)
+        }
+        return EquipmentDetectionResult(detections: found, status: .ok, errorMessage: nil)
     }
 
     private static func makeRequest() throws -> VNCoreMLRequest {
@@ -82,7 +119,13 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
             guard let object = result as? VNRecognizedObjectObservation,
                   let label = object.labels.first,
                   let kind = kind(for: label.identifier) else { return nil }
-            return EquipmentDetection(kind: kind, confidence: label.confidence, boundingBox: object.boundingBox)
+            // The label's confidence is only this class's share of meter vs panel (about 0.99 on every box that
+            // survives NMS). The observation's confidence is the detector score the thresholds are meant for.
+            #if DEBUG
+            let box = object.boundingBox
+            log.debug("\(kind.rawValue, privacy: .public) score=\(object.confidence, format: .fixed(precision: 3)) share=\(label.confidence, format: .fixed(precision: 3)) area=\(Double(box.width * box.height), format: .fixed(precision: 3)) x=\(Double(box.midX), format: .fixed(precision: 2)) y=\(Double(box.midY), format: .fixed(precision: 2))")
+            #endif
+            return EquipmentDetection(kind: kind, confidence: object.confidence, boundingBox: object.boundingBox)
         }
     }
 
@@ -171,6 +214,9 @@ struct EquipmentScanFrame: Sendable {
     var displayTX: CGFloat
     var displayTY: CGFloat
     var depth: DepthSample?
+    /// Media time when the frame was captured, so a packet held past a stalled inference is not read as current.
+    var capturedAt: CFTimeInterval = 0
+    var status: EquipmentObservationStatus = .ok
 
     var displayTransform: CGAffineTransform {
         CGAffineTransform(a: displayA, b: displayB, c: displayC, d: displayD, tx: displayTX, ty: displayTY)
@@ -212,8 +258,9 @@ final class EquipmentScanBridge: @unchecked Sendable {
     }
 
     /// Schedules at most one Vision request every quarter second, and only while tracking is normal.
+    /// Without a model there is nothing to run, so frames are not copied; the controller reads `loadError`.
     func consider(_ frame: ARFrame) {
-        guard case .normal = frame.camera.trackingState else { return }
+        guard detector.loadError == nil, case .normal = frame.camera.trackingState else { return }
         let now = CACurrentMediaTime()
         let snapshot: (CGSize, UIInterfaceOrientation)? = gate.withLock { gate in
             guard gate.enabled, !gate.busy, gate.viewSize.width > 1, now - gate.lastFire >= 0.25 else { return nil }
@@ -244,13 +291,16 @@ final class EquipmentScanBridge: @unchecked Sendable {
             displayD: transform.d,
             displayTX: transform.tx,
             displayTY: transform.ty,
-            depth: EquipmentPixelBuffer.depthSample(from: frame.smoothedSceneDepth ?? frame.sceneDepth)
+            depth: EquipmentPixelBuffer.depthSample(from: frame.smoothedSceneDepth ?? frame.sceneDepth),
+            capturedAt: now
         )
         // The session delegate runs on the main queue. Only the copies above touch the frame; inference runs here.
         let copied = CopiedPixels(buffer: pixels)
         inference.async { [self] in
             var packet = geometry
-            packet.detections = detector.detect(in: copied.buffer, orientation: visionOrientation)
+            let result = detector.detectResult(in: copied.buffer, orientation: visionOrientation)
+            packet.detections = result.detections
+            packet.status = result.status
             let finished = packet
             latest.withLock { $0 = finished }
             gate.withLock { $0.busy = false }

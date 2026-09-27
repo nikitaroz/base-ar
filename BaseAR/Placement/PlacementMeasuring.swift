@@ -72,6 +72,9 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var panelPosition: PlacementAnchor?
     var panelWallPosition: PlacementAnchor?
     var panelWallNormal: PlacementAnchor?
+    /// Which path locked the meter and panel. Nil while that item is not marked.
+    var meterLockSource: EquipmentLockSource?
+    var panelLockSource: EquipmentLockSource?
     var gasMeterPosition: PlacementAnchor?
     var verticalPlanes: [PlaneSample] = []
     var lidarMeshAvailable: Bool = false
@@ -157,6 +160,9 @@ extension PlacementMeasuring {
         updated.meterPosition = measured.meterPosition
         updated.panelPosition = measured.panelPosition
         updated.gasMeterPosition = measured.gasMeterPosition
+        // Provenance, not a measurement: copied from the scene so survey.json says how each spot was chosen.
+        updated.meterLockSource = snapshot.meterPosition == nil ? nil : snapshot.meterLockSource
+        updated.panelLockSource = snapshot.panelPosition == nil ? nil : snapshot.panelLockSource
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
         let keepWorkingSpace = !measured.lidarMeshAvailable

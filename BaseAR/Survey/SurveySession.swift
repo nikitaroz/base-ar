@@ -4,7 +4,7 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    /// 6: adds `electrical.panelBusRatingAmps`.
+    /// 6: adds `electrical.panelBusRatingAmps` and `placement.meterLockSource` / `placement.panelLockSource`.
     var schemaVersion: Int = 6
     var id: UUID
     var createdAt: Date
@@ -190,6 +190,16 @@ struct ConfirmedPlacementMeasurement: Codable, Sendable, Equatable, Identifiable
     var id: String { kind.rawValue }
 }
 
+/// Who chose a meter or panel spot. Every source is an ARKit wall or depth hit; none of them is a user statement.
+enum EquipmentLockSource: String, Codable, Sendable {
+    /// Detector boxes on consecutive frames landed on the same wall spot.
+    case detector
+    /// The center dot held still on a wall spot while the detector's box covered it.
+    case hold
+    /// The user put the dot on it and tapped "Mark it myself". No detector agreement.
+    case tap
+}
+
 struct PlacementEvidence: Codable, Sendable, Equatable {
     var screenshotFilename: String?
     var batteryPlaced: Bool = false
@@ -223,6 +233,9 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var meterPosition: PlacementAnchor?
     var panelPosition: PlacementAnchor?
     var gasMeterPosition: PlacementAnchor?
+    /// How the meter and panel positions were locked. Nil while that item is not marked.
+    var meterLockSource: EquipmentLockSource?
+    var panelLockSource: EquipmentLockSource?
     var batteryYawRadians: Float?
     /// When the placement snapshot was committed. Nil until a save happens.
     var snapshotTimestamp: Date?

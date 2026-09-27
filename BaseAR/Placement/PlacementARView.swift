@@ -38,6 +38,41 @@ private enum ScanCue: Equatable {
     case ready
 }
 
+/// One phone-motion cue for the meter or panel search, drawn as an SF Symbol plus short copy.
+/// Raw values match the ux branch's CoachTip so its other cues can be added here.
+private enum CoachTip: String {
+    case lookUp = "Look up at it"
+    case pointDown = "Point your phone down"
+    case stepBack = "Take a few steps back"
+    case scootLeft = "Scoot left"
+    case scootRight = "Scoot right"
+    case zoomIn = "Get closer"
+    case aimAtWall = "Aim at the wall"
+    case holdStill = "Hold still"
+
+    var symbol: String {
+        switch self {
+        case .lookUp: "arrow.up.circle.fill"
+        case .pointDown: "arrow.down.circle.fill"
+        case .stepBack: "figure.walk.motion"
+        case .scootLeft: "arrow.left.circle.fill"
+        case .scootRight: "arrow.right.circle.fill"
+        case .zoomIn: "plus.magnifyingglass"
+        case .aimAtWall: "viewfinder"
+        case .holdStill: "hand.raised.fill"
+        }
+    }
+}
+
+/// What the scan screen can say about the current meter or panel search. The controller publishes it only on change.
+private struct ScanFeedback: Equatable {
+    /// Cue from the target's detector box. Nil with no box, nothing to find, or no working detector.
+    var hint: CoachTip?
+    /// Set when "Mark it myself" should show for this target: about 12 s without a lock, or the detector is down.
+    var manualTarget: EquipmentKind?
+    var detector: EquipmentObservationStatus = .ok
+}
+
 /// Kept so older placement code can stay idle. This screen does not walk these steps.
 private enum WalkStep: Equatable {
     case scan
@@ -85,6 +120,7 @@ struct PlacementARView: View {
     @State private var trackingMessage: String?
     @State private var isVisible = false
     @State private var coachingIsActive = false
+    @State private var scanFeedback = ScanFeedback()
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -190,7 +226,8 @@ struct PlacementARView: View {
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
                         onCoachingActiveChange: { coachingIsActive = $0 },
-                        onLookAround: { lookAround = $0 }
+                        onLookAround: { lookAround = $0 },
+                        onScanFeedback: { scanFeedback = $0 }
                     )
                 }
             }
@@ -208,8 +245,19 @@ struct PlacementARView: View {
             Text(instruction)
                 .font(.body)
                 .multilineTextAlignment(.center)
+            if let hint = activeHint {
+                Label(hint.rawValue, systemImage: hint.symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .symbolEffect(.pulse)
+            }
             if let trackingMessage {
                 Text(trackingMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            }
+            if lockTarget != nil, scanFeedback.detector == .inferenceFailed {
+                Text("The equipment detector stopped responding.")
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -219,6 +267,28 @@ struct PlacementARView: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
+            }
+            if manualTargetForCue != nil || rejectableLock != nil {
+                HStack(spacing: 12) {
+                    if manualTargetForCue != nil {
+                        Button {
+                            store.placementController?.markTargetAtDot()
+                        } label: {
+                            Text("Mark it myself")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    if let wrong = rejectableLock {
+                        Button {
+                            store.placementController?.rejectLock(wrong)
+                        } label: {
+                            Text("Not the \(wrong.title.lowercased())")
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
             if cue == .gas {
                 Button("No gas meter") {
@@ -282,12 +352,36 @@ struct PlacementARView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    /// Detector cue for the meter or panel search only.
+    private var activeHint: CoachTip? {
+        lockTarget == nil ? nil : scanFeedback.hint
+    }
+
+    /// "Mark it myself" for the object this step is asking for, once the controller offers it.
+    private var manualTargetForCue: EquipmentKind? {
+        guard let lockTarget, scanFeedback.manualTarget == lockTarget else { return nil }
+        return lockTarget
+    }
+
+    /// The lock the previous step just made. "Not the …" clears it and keeps it from relocking on the same spot.
+    private var rejectableLock: EquipmentKind? {
+        switch cue {
+        case .findMeter: panelMarked ? .breakerPanel : nil
+        case .gas: meterMarked ? .electricMeter : nil
+        case .findPanel, .lookAround, .ready: nil
+        }
+    }
+
     private var instruction: String {
         switch cue {
         case .findPanel:
-            return "Looking for the panel."
+            return manualTargetForCue == nil
+                ? "Looking for the panel."
+                : "Put the dot on the panel, then tap Mark it myself."
         case .findMeter:
-            return "Looking for the meter."
+            return manualTargetForCue == nil
+                ? "Looking for the meter."
+                : "Put the dot on the meter, then tap Mark it myself."
         case .gas:
             return scene.gasMeterPosition == nil
                 ? "Gas meter? Tap it, or say there isn’t one."
@@ -463,6 +557,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onTrackingStatus: (String?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
     var onLookAround: (LookAround) -> Void
+    var onScanFeedback: (ScanFeedback) -> Void
 
     func makeUIView(context: Context) -> ARView {
         controller.prepareIfNeeded()
@@ -490,7 +585,8 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             onFailure: onFailure,
             onTrackingStatus: onTrackingStatus,
             onCoachingActiveChange: onCoachingActiveChange,
-            onLookAround: onLookAround
+            onLookAround: onLookAround,
+            onScanFeedback: onScanFeedback
         )
     }
 }
@@ -571,9 +667,28 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var meterLock = EquipmentLock()
         private var panelLock = EquipmentLock()
         private var pendingDetections: [EquipmentDetection] = []
+        /// Wall or depth landing for each box in `pendingDetections`, worked out once per packet. No key means not on a wall.
+        private var pendingLandings: [EquipmentKind: (position: SIMD3<Float>, normal: SIMD3<Float>)] = [:]
         private var pendingScan: EquipmentScanFrame?
         private var holdAnchor: SIMD3<Float>?
         private var holdSince: CFTimeInterval?
+        /// The center-dot hold counts its own samples. Sharing the detector's buffer let a box-center landing
+        /// more than 15 cm from the dot reset the hold on every packet, so a large panel could lock on neither path.
+        private var holdStreak = EquipmentLock()
+        /// After "Not the …", the same spot cannot lock again until the phone looks away or aims somewhere else.
+        private var relockBan: (kind: EquipmentKind, point: SIMD3<Float>)?
+        private var meterLockSource: EquipmentLockSource?
+        private var panelLockSource: EquipmentLockSource?
+        /// Status of the last detector packet. `modelMissing` is read from the detector itself, since no packets arrive then.
+        private var detectorStatus: EquipmentObservationStatus = .ok
+        private var scanHint: CoachTip?
+        /// The meter or panel being searched for, when that search began, and whether "Mark it myself" is on for it.
+        /// Once offered, the button stays until that target locks, so a flaky detector cannot make it flicker.
+        private var searchTarget: EquipmentKind?
+        private var searchStartedAt: CFTimeInterval?
+        private var manualMarkOffered = false
+        private var onScanFeedback: ((ScanFeedback) -> Void)?
+        private var lastScanFeedback: ScanFeedback?
         private var batterySlide: BatterySlide?
         private var batteryConfirmed = false
         private var gasResolved = false
@@ -682,7 +797,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void,
-            onLookAround: @escaping (LookAround) -> Void
+            onLookAround: @escaping (LookAround) -> Void,
+            onScanFeedback: @escaping (ScanFeedback) -> Void
         ) {
             self.mode = mode
             if self.measurementKind != measurementKind {
@@ -696,13 +812,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.tapEnabled = tapEnabled
             self.requestedLock = lockTarget
             self.onLookAround = onLookAround
+            self.onScanFeedback = onScanFeedback
             hideWorldBoxesIfNeeded()
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
             equipmentBridge.setEnabled(scanning && !coachingActive)
             if !scanning {
-                pendingDetections = []
-                pendingScan = nil
+                clearPendingScan()
                 refreshEquipmentBoxes()
             }
             self.onSceneChange = onSceneChange
@@ -740,6 +856,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         func resume() {
             pauseRequested = false
+            // A view coming back starts from an empty ScanFeedback, so the next tick publishes again.
+            lastScanFeedback = nil
             prepareIfNeeded()
             guard let configuration else { return }
             arView.session.run(configuration, options: [])
@@ -1266,6 +1384,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 applyScan(packet)
             }
             refreshEquipmentBoxes()
+            publishScanFeedback()
             noteLookAround()
             if walkStep == .battery {
                 suggestBatterySpotIfNeeded()
@@ -1599,6 +1718,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             switch kind {
             case .meter:
                 meterLock = EquipmentLock()
+                meterLockSource = nil
                 meterWallHit = nil
                 meterGroundPosition = nil
                 meterMarker?.removeFromParent()
@@ -1610,6 +1730,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.meterWallNormal = nil
             case .panel:
                 panelLock = EquipmentLock()
+                panelLockSource = nil
                 panelWallHit = nil
                 panelGroundPosition = nil
                 panelMarker?.removeFromParent()
@@ -1625,16 +1746,39 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             emit()
         }
 
+        /// A meter or panel lock this close to the other one is a mislabel: they are separate boxes.
+        private static let lockSeparationMeters: Float = 0.3
+        /// Height above the detected ground where a detected meter or panel may lock. Wider than Base's 6 ft meter
+        /// limit on purpose, so a meter mounted too high still locks and the height check shows red.
+        private static let equipmentHeightMeters: ClosedRange<Float> = 0.3...2.5
+        /// Seconds of searching for one target without a lock before "Mark it myself" shows.
+        private static let manualMarkDelaySeconds: CFTimeInterval = 12
+        /// A packet older than this (a stalled inference) no longer counts as what the camera sees.
+        private static let freshScanSeconds: CFTimeInterval = 1
+
+        private func clearPendingScan() {
+            pendingDetections = []
+            pendingLandings = [:]
+            pendingScan = nil
+            scanHint = nil
+        }
+
+        /// The latest packet, while it is recent enough to stand for the current view.
+        private var freshScan: EquipmentScanFrame? {
+            guard let pendingScan, CACurrentMediaTime() - pendingScan.capturedAt < Self.freshScanSeconds else { return nil }
+            return pendingScan
+        }
+
         /// YOLO boxes are only the latest frame. A lock stores the wall position and does not leave a square behind.
         private func applyScan(_ packet: EquipmentScanFrame) {
+            detectorStatus = packet.status
             guard scanningEquipment, !coachingActive, trackingBlockedMessage == nil else {
-                pendingDetections = []
-                pendingScan = nil
+                clearPendingScan()
                 return
             }
             var best: [EquipmentKind: EquipmentDetection] = [:]
-            // The model is trained with disconnects and batteries as negatives; far meters score about 0.5-0.65.
-            for detection in packet.detections where detection.confidence >= 0.5 {
+            // Weak boxes still draw. Only boxes at the lock score count toward a lock or a hold.
+            for detection in packet.detections where detection.confidence >= EquipmentDetection.drawConfidence {
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
@@ -1644,32 +1788,175 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 best[meter.confidence >= panel.confidence ? .breakerPanel : .electricMeter] = nil
             }
             pendingScan = packet
-            pendingDetections = best.values.filter { $0.kind == .breakerPanel }
-            var lockedSomething = false
-            // Only the object this step is asking for can lock. Panel boxes still draw.
-            if let target = holdLockKind() {
-                for detection in best.values where detection.kind == target {
-                    let alreadyLocked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
-                    guard !alreadyLocked, let landing = project(detection, in: packet) else { continue }
-                    // The meter and panel are separate boxes, so a lock on top of the other one is a mislabel.
-                    let other = detection.kind == .electricMeter ? panelWallHit : meterWallHit
-                    if let other, simd_distance(other.position, landing.position) < 0.3 { continue }
-                    let sample = EquipmentLock.Sample(point: landing.position, normal: landing.normal)
-                    let settled: EquipmentLock.Sample?
-                    switch detection.kind {
-                    case .electricMeter: settled = meterLock.absorb(sample)
-                    case .breakerPanel: settled = panelLock.absorb(sample)
-                    }
-                    if let settled {
-                        lockEquipment(detection.kind, at: settled)
-                        lockedSomething = true
-                    }
+            pendingDetections = Array(best.values)
+            pendingLandings = [:]
+            for (kind, detection) in best {
+                if let landing = project(detection, in: packet) {
+                    pendingLandings[kind] = landing
                 }
             }
-            if lockedSomething {
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                emit()
+            if packet.status == .ok {
+                releaseRelockBanIfUnseen(Set(best.keys))
             }
+            // Only the object this step is asking for can lock. Both kinds still draw.
+            let target = holdLockKind()
+            scanHint = hint(for: target, best: best)
+            guard let target else { return }
+            // A lock needs an unbroken run: a frame without a usable box for the target starts the count over.
+            guard let detection = best[target], detection.confidence >= EquipmentDetection.lockConfidence,
+                  let landing = pendingLandings[target],
+                  relockAllowed(target, point: landing.position),
+                  lockRejection(target, at: landing.position, normal: landing.normal, checkHeight: true) == nil else {
+                resetStreak(target)
+                return
+            }
+            let sample = EquipmentLock.Sample(point: landing.position, normal: landing.normal)
+            let settled: EquipmentLock.Sample?
+            switch target {
+            case .electricMeter: settled = meterLock.absorb(sample)
+            case .breakerPanel: settled = panelLock.absorb(sample)
+            }
+            guard let settled else { return }
+            lockEquipment(target, at: settled, source: .detector)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            emit()
+        }
+
+        private func resetStreak(_ kind: EquipmentKind) {
+            switch kind {
+            case .electricMeter where !meterLock.locked: meterLock = EquipmentLock()
+            case .breakerPanel where !panelLock.locked: panelLock = EquipmentLock()
+            default: break
+            }
+        }
+
+        /// Guards every lock path shares (detector, hold, and "Mark it myself"). Nil when the spot may lock.
+        /// The height gate is skipped without a ground estimate, and for the user's own mark, so a bad ground
+        /// estimate cannot block the only fallback.
+        private func lockRejection(
+            _ kind: EquipmentKind,
+            at point: SIMD3<Float>,
+            normal: SIMD3<Float>,
+            checkHeight: Bool
+        ) -> String? {
+            let other = kind == .electricMeter ? panelWallHit : meterWallHit
+            let otherTitle = kind == .electricMeter ? "panel" : "meter"
+            if let other, simd_distance(other.position, point) < Self.lockSeparationMeters {
+                return "That spot is where the \(otherTitle) is marked. Put the dot on the \(kind.title.lowercased())."
+            }
+            if checkHeight, let ground = groundUnder(point, normal: normal),
+               !Self.equipmentHeightMeters.contains(point.y - ground.y) {
+                return "That spot isn’t at \(kind.title.lowercased()) height."
+            }
+            return nil
+        }
+
+        private func banRelock(_ kind: EquipmentKind, point: SIMD3<Float>) {
+            relockBan = (kind, point)
+        }
+
+        /// The cleared object stays banned while its box is still in frame. Aiming 45 cm or more away lifts the ban.
+        private func relockAllowed(_ kind: EquipmentKind, point: SIMD3<Float>) -> Bool {
+            guard let ban = relockBan, ban.kind == kind else { return true }
+            guard simd_distance(ban.point, point) < 0.45 else {
+                relockBan = nil
+                return true
+            }
+            return false
+        }
+
+        private func releaseRelockBanIfUnseen(_ kinds: Set<EquipmentKind>) {
+            guard equipmentBridge.detector.loadError == nil else { return }
+            guard let ban = relockBan, !kinds.contains(ban.kind) else { return }
+            relockBan = nil
+        }
+
+        /// "Not the meter" / "Not the panel": drops that lock and bans the same spot from relocking right away.
+        fileprivate func rejectLock(_ kind: EquipmentKind) {
+            guard let hit = kind == .electricMeter ? meterWallHit : panelWallHit else { return }
+            clearEquipmentLock(kind == .electricMeter ? .meter : .panel)
+            banRelock(kind, point: hit.position)
+            resetHold()
+        }
+
+        /// One short phone-motion cue for the target, from its best box this frame.
+        /// No low-score rule: this model scores a meter higher when it is smaller in frame, so "Get closer"
+        /// on a low score would push the score down.
+        private func hint(for target: EquipmentKind?, best: [EquipmentKind: EquipmentDetection]) -> CoachTip? {
+            guard let target, let packet = pendingScan, let detection = best[target] else { return nil }
+            let rect = Self.viewRect(for: detection.boundingBox, in: packet)
+            let viewArea = max(arView.bounds.width * arView.bounds.height, 1)
+            let boxArea = rect.width * rect.height
+            if boxArea < viewArea * 0.02 { return .zoomIn }
+            if boxArea > viewArea * 0.6 { return .stepBack }
+            // Same 32 pt slack as the center-dot hold. A weak box that is centered still gets "Hold still":
+            // the hold waits for a lock-score box, and holding still gives the detector more frames.
+            let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+            if !rect.insetBy(dx: -32, dy: -32).contains(center) {
+                let dx = rect.midX - center.x
+                let dy = rect.midY - center.y
+                if abs(dy) > abs(dx) { return dy < 0 ? .lookUp : .pointDown }
+                return dx < 0 ? .scootLeft : .scootRight
+            }
+            if pendingLandings[target] == nil { return .aimAtWall }
+            return .holdStill
+        }
+
+        /// Tells the view about hints, "Mark it myself", and detector trouble. Runs on the display tick, not in a view update.
+        private func publishScanFeedback() {
+            let now = CACurrentMediaTime()
+            let target = searchableTarget()
+            if target != searchTarget {
+                searchTarget = target
+                searchStartedAt = target == nil ? nil : now
+                manualMarkOffered = false
+            }
+            let status: EquipmentObservationStatus = equipmentBridge.detector.loadError != nil ? .modelMissing : detectorStatus
+            if target != nil {
+                if status != .ok {
+                    manualMarkOffered = true
+                } else if let searchStartedAt, now - searchStartedAt >= Self.manualMarkDelaySeconds {
+                    manualMarkOffered = true
+                }
+            }
+            let live = target != nil && !coachingActive && trackingBlockedMessage == nil && freshScan != nil
+            let feedback = ScanFeedback(
+                hint: live && status == .ok ? scanHint : nil,
+                manualTarget: manualMarkOffered ? target : nil,
+                detector: status
+            )
+            guard feedback != lastScanFeedback else { return }
+            lastScanFeedback = feedback
+            onScanFeedback?(feedback)
+        }
+
+        /// The meter or panel this step asks for while it is still unlocked. Unlike `holdLockKind`, the coaching
+        /// overlay does not clear it, so the "Mark it myself" clock keeps running through a tracking hiccup.
+        private func searchableTarget() -> EquipmentKind? {
+            guard scanningEquipment, let requestedLock else { return nil }
+            let locked = requestedLock == .electricMeter ? meterLock.locked : panelLock.locked
+            return locked ? nil : requestedLock
+        }
+
+        /// "Mark it myself": locks the current target where the center dot sits, with no detector agreement.
+        /// Same wall or depth hit as the hold and the same separation guard, then `lockEquipment`, so ground and meter height work.
+        func markTargetAtDot() {
+            guard let kind = holdLockKind(), kind == searchTarget, manualMarkOffered else { return }
+            guard trackingAllowsConfirmation(report: true) else { return }
+            let point = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+            guard let sample = holdSample(at: point) else {
+                onFailure?("Put the dot on the \(kind.title.lowercased()) on the wall and try again.")
+                return
+            }
+            if let reason = lockRejection(kind, at: sample.point, normal: sample.normal, checkHeight: false) {
+                onFailure?(reason)
+                return
+            }
+            // The user's own mark overrides an earlier "Not the …" for this kind.
+            if relockBan?.kind == kind { relockBan = nil }
+            lockEquipment(kind, at: sample, source: .tap)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            emit()
         }
 
         /// Intersection over the smaller box, so a box nested inside another counts as the same object.
@@ -1787,29 +2074,41 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return (world, flat)
         }
 
-        private func lockEquipment(_ kind: EquipmentKind, at sample: EquipmentLock.Sample) {
+        private func lockEquipment(_ kind: EquipmentKind, at sample: EquipmentLock.Sample, source: EquipmentLockSource) {
             let target: PlacementTarget = kind == .electricMeter ? .meter : .panel
             placeWallMarker(kind: target, hit: (position: sample.point, normal: sample.normal))
             let ground = groundUnder(sample.point, normal: sample.normal)
             switch kind {
-            case .electricMeter: meterGroundPosition = ground
-            case .breakerPanel: panelGroundPosition = ground
+            case .electricMeter:
+                meterGroundPosition = ground
+                meterLockSource = source
+            case .breakerPanel:
+                panelGroundPosition = ground
+                panelLockSource = source
             }
+            resetHold()
         }
 
-        /// Live panel boxes only. Meter locks still happen, but they do not draw a second box.
+        /// Live boxes for both kinds, until that kind locks. A lock is a position, not a box left on the camera.
         private func refreshEquipmentBoxes() {
             guard arView.bounds.width > 1 else { return }
             var items: [EquipmentBoxOverlay.Item] = []
-            if scanningEquipment, !coachingActive, trackingBlockedMessage == nil, let packet = pendingScan {
-                for detection in pendingDetections where detection.kind == .breakerPanel {
+            if scanningEquipment, !coachingActive, trackingBlockedMessage == nil, let packet = freshScan {
+                for detection in pendingDetections {
+                    let locked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
+                    if locked { continue }
                     let rect = Self.viewRect(for: detection.boundingBox, in: packet)
                     guard rect.width > 2, rect.height > 2, rect.origin.x.isFinite, rect.origin.y.isFinite else { continue }
-                    let onWall = project(detection, in: packet) != nil
+                    let onWall = pendingLandings[detection.kind] != nil
+                    var title = onWall ? detection.kind.title : "\(detection.kind.title) · not on a wall"
+                    #if DEBUG
+                    // True detector score, for tuning the draw and lock thresholds on a device.
+                    title += String(format: " %.2f", detection.confidence)
+                    #endif
                     items.append(EquipmentBoxOverlay.Item(
                         rect: rect,
-                        color: onWall ? .systemIndigo : .white,
-                        title: onWall ? detection.kind.title : "\(detection.kind.title) · not on a wall"
+                        color: onWall ? (detection.kind == .electricMeter ? .systemBlue : .systemIndigo) : .white,
+                        title: title
                     ))
                 }
             }
@@ -1825,6 +2124,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         fileprivate func restartScan() {
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
+            relockBan = nil
+            resetHold()
             clearGasMarker()
             lookAround = LookAround()
             onLookAround?(lookAround)
@@ -1882,6 +2183,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 onFailure?("Hold the dot on the wall and try again.")
                 return
             }
+            guard centerAgreesWithDetection(kind), relockAllowed(kind, point: sample.point) else {
+                onFailure?("Hold the dot on the \(kind.title.lowercased()).")
+                return
+            }
             absorbHold(sample, kind: kind)
         }
 
@@ -1898,7 +2203,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             aimDot.isHidden = false
             reticle?.isEnabled = false
             hideLiveLine()
-            guard trackingBlockedMessage == nil, let sample = holdSample(at: point) else {
+            // The dot only confirms a detector box under it. Checked first, so no box means no depth copy this tick.
+            // Without a working detector the hold never locks; "Mark it myself" is the path then.
+            guard trackingBlockedMessage == nil, centerAgreesWithDetection(kind),
+                  let sample = holdSample(at: point), relockAllowed(kind, point: sample.point) else {
                 resetHold()
                 return
             }
@@ -1944,21 +2252,34 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         private func absorbHold(_ sample: EquipmentLock.Sample, kind: EquipmentKind) {
-            let settled: EquipmentLock.Sample?
-            switch kind {
-            case .electricMeter: settled = meterLock.absorb(sample)
-            case .breakerPanel: settled = panelLock.absorb(sample)
+            guard lockRejection(kind, at: sample.point, normal: sample.normal, checkHeight: true) == nil else {
+                resetHold()
+                return
             }
-            guard let settled else { return }
-            lockEquipment(kind, at: settled)
-            resetHold()
+            guard let settled = holdStreak.absorb(sample) else { return }
+            lockEquipment(kind, at: settled, source: .hold)
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             emit()
+        }
+
+        /// The center dot counts toward a lock only while a lock-score box for this target covers it (32 pt slack).
+        private func centerAgreesWithDetection(_ kind: EquipmentKind) -> Bool {
+            guard let packet = freshScan else { return false }
+            let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+            for detection in pendingDetections
+            where detection.kind == kind && detection.confidence >= EquipmentDetection.lockConfidence {
+                let rect = Self.viewRect(for: detection.boundingBox, in: packet)
+                if rect.insetBy(dx: -32, dy: -32).contains(center) {
+                    return true
+                }
+            }
+            return false
         }
 
         private func resetHold() {
             holdAnchor = nil
             holdSince = nil
+            holdStreak = EquipmentLock()
         }
 
         /// 3 ft transfer-switch reserve plus half the 3 ft pad.
@@ -2245,6 +2566,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     snapshot.panelPosition = PlacementAnchor(SIMD3(panelWallHit.position.x, panelWallHit.position.y, panelWallHit.position.z))
                 }
             }
+            // A position no lock recorded came from the older tap-to-mark paths, which are the user's own mark.
+            snapshot.meterLockSource = snapshot.meterPosition == nil ? nil : (meterLockSource ?? .tap)
+            snapshot.panelLockSource = snapshot.panelPosition == nil ? nil : (panelLockSource ?? .tap)
             if let gasPoint {
                 snapshot.gasMeterPosition = PlacementAnchor(gasPoint)
             } else if let gasMarker {

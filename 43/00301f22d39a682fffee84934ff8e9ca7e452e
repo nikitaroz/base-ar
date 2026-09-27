@@ -1,0 +1,59 @@
+.githooks/pre-commit
+  s_535a502178fe4f::t_c2079302151a5f 1-14
+AGENTS.md
+  s_535a502178fe4f::t_aece8a33ba6a66 32,34
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_42dcb38163f5ce 49,110,285,421,562,570,580,588
+BaseAR/Grid/GridService.swift
+  s_535a502178fe4f::t_6f258ee08269d9 3-9,11-21,27-29,31,35-41
+BaseAR/Grid/PricingSource.swift
+  s_535a502178fe4f::t_83f91ed7de1daf 1-47
+BaseAR/Onboarding/OnboardingPages.swift
+  s_535a502178fe4f::t_ff82eed2e5d3c5 203-206
+BaseAR/Placement/EquipmentDetecting.swift
+  s_535a502178fe4f::t_6b6f3a38d2d9e6 24-27
+BaseAR/Placement/EquipmentScan.mlpackage/Manifest.json
+  s_535a502178fe4f::t_5486ee44414ab0 4,9-14,17
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_aa7fc078d76ec0 323,489-490,493,1000-1001,1013-1025,1641,2156-2158,2657,2686-2691,2693,2703,5403,5504-5505,5511-5521
+BaseAR/Placement/PlacementMeasuring.swift
+  s_535a502178fe4f::t_6eccbefc991066 2,62-73,96-98,234,278,564-566,569,577,1144-1155,1365
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_4ba085d2f2f940 62,390,452-455,457-463,466
+BaseAR/Review/TypeSafeJevClient.swift
+  s_535a502178fe4f::t_94b3a5ba24f291 263
+BaseAR/Rules/BaseRuleSet.swift
+  s_535a502178fe4f::t_8e85ad354c1445 32,171,212,225,228,231-232,235-236,283
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_d5111d8f43e8f8 331-332
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_78a8d0229aad7c 13,16-18,136,141,152,160-161,163,165,168-169,214-215,217,405-406,408-411,455-466,468-475,477-488,491,496-528,530,582-598,601-603
+README.md
+  s_535a502178fe4f::t_8d194666217991 57,122-123,129,131-132
+docs/context/electrical-equipment-guide.md
+  s_535a502178fe4f::t_b6edf3d5e67c90 31,119
+scripts/bootstrap-signing.sh
+  s_535a502178fe4f::t_97f76d8af06545 2-9,13-17,20,25-32,34-36,38,41-45,48-54,57-58,62,64,67,75
+tools/viewer/src/App.tsx
+  s_535a502178fe4f::t_2ddeaffdbd7d84 38-40,44-45,72,95,104-151,187-204,212-213,217-219,277-281,292-293,324-327,329,340,346-347,395,400,410,412,414,419
+tools/viewer/src/lib/checker.js
+  s_535a502178fe4f::t_f2976835b42870 287,290,293-296,298-299,301-305
+tools/viewer/src/lib/scene.ts
+  s_535a502178fe4f::t_2b8c1580bf5cea 109,343-350,352,378-380,384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4300301f22d39a682fffee84934ff8e9ca7e452e",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Fine-tune a small YOLO detector on training/dataset and replace EquipmentScan.mlpackage.
 
-Run scripts/autolabel.py first and review training/review/ before training.
-Run with training/.venv/bin/python. Pass --no-export to train without touching the app.
+Run scripts/autolabel.py (training/review/) or scripts/photoset/autolabel.py (contact sheets)
+first and review its drafts before training.
+Run with the training venv. Pass --no-export to train without touching the app.
 
 Class 0 is electric_meter and class 1 is breaker_panel, which is what
-YOLOEEquipmentDetector.kind(for:) and kind(at:) already expect.
+EquipmentDetecting's kind(for:) and kind(at:) already expect. Class 2 (gas_meter)
+is ignored by the app until kind(at:) maps it.
+
+Example: python scripts/train_equipment.py --data ~/base-ar-data/open-images/dataset/data.yaml --no-export
 """
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import sys
 from pathlib import Path
@@ -17,19 +22,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "training" / "dataset" / "data.yaml"
 RUNS = ROOT / "training" / "runs"
-BASE = "yolo26s.pt"
+BASE = "yolo26s.pt"  # about 3x yolo26n's compute, still far inside the app's 250 ms budget
 IMGSZ = 640
 DESTINATION = ROOT / "BaseAR" / "Placement" / "EquipmentScan.mlpackage"
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", default=str(DATA))
+    parser.add_argument("--model", default=BASE)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--no-export", action="store_true")
+    args = parser.parse_args()
     from ultralytics import YOLO
 
-    model = YOLO(BASE)
+    model = YOLO(args.model)
     model.train(
-        data=str(DATA),
+        data=args.data,
         imgsz=IMGSZ,
-        epochs=80,
+        epochs=args.epochs,
         patience=20,
         batch=16,
         device="mps",
@@ -46,10 +57,12 @@ def main() -> None:
     )
     best = RUNS / "equipment" / "weights" / "best.pt"
     trained = YOLO(str(best))
-    metrics = trained.val(data=str(DATA), imgsz=IMGSZ, device="mps")
+    metrics = trained.val(data=args.data, imgsz=IMGSZ, device="mps")
     print(f"mAP50 {metrics.box.map50:.3f}  mAP50-95 {metrics.box.map:.3f}")
+    for row, index in enumerate(metrics.box.ap_class_index):
+        print(f"  {trained.names[int(index)]}: AP50 {metrics.box.ap50[row]:.3f}")
 
-    if "--no-export" in sys.argv:
+    if args.no_export:
         return
     sys.path.insert(0, str(Path(__file__).parent))
     from export_yoloe import _patch_coreml_scalar_cast

@@ -90,6 +90,7 @@
 		B20000000000000000000010 /* AddressCompleter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressCompleter.swift; sourceTree = "<group>"; };
 		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
 		B20000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F1C000000000000000000001 /* Info-Debug.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-Debug.plist"; sourceTree = "<group>"; };
 		B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionMeterNumberRecognizer.swift; sourceTree = "<group>"; };
 		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
 		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
@@ -158,6 +159,7 @@
 				F70000000000000000000001 /* Grid */,
 				A20000000000000000000003 /* Assets.xcassets */,
 				B20000000000000000000012 /* Info.plist */,
+				F1C000000000000000000001 /* Info-Debug.plist */,
 			);
 			path = BaseAR;
 			sourceTree = "<group>";
@@ -499,7 +501,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = BaseAR/Info.plist;
+				INFOPLIST_FILE = "BaseAR/Info-Debug.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Base Site Survey";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Base Site Survey uses the camera to read and photograph the electric meter number, find the meter and electrical panel during the site scan, and preview battery placement.";

@@ -1,0 +1,9 @@
+# Training and data tooling only; nothing here ships in the app.
+# uv venv --python 3.12 ~/base-ar-data/.venv && uv pip install --python ~/base-ar-data/.venv/bin/python -r scripts/requirements-training.txt
+# ultralytics is AGPL-3.0: fine as tooling, and it is why EquipmentScan.mlpackage carries an AGPL license field.
+ultralytics
+coremltools
+pillow
+imagehash
+transformers  # OWLv2 labeler for photoset/autolabel.py (Apache-2.0)
+clip @ git+https://github.com/ultralytics/CLIP.git  # only for --labeler yoloe

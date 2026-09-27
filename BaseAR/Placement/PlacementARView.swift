@@ -2593,8 +2593,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// ASCII PLY of every current mesh anchor plus the measurement overlay: battery, marks, distance bars,
         /// and each check as a header comment. Offline tools read the marks from here. Nil when the scan has no vertices.
         func pointCloudPLYData() -> Data? {
+            let parts = pointCloudParts()
+            return PointCloudPLY.data(from: parts.chunks, comments: parts.comments)
+        }
+
+        /// The mesh and overlay for `scene.ply`, copied off the scene so the slow ASCII write can run off the main actor.
+        func pointCloudParts() -> (chunks: [MeshPointCloudChunk], comments: [String]) {
             let overlay = MeasurementOverlay.build(makeSnapshot(), measurer: placementMeasurer)
-            return PointCloudPLY.data(from: Array(meshClouds.values) + [overlay.chunk], comments: overlay.comments)
+            return (Array(meshClouds.values) + [overlay.chunk], overlay.comments)
         }
 
         var hasExportableMesh: Bool {

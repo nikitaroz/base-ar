@@ -24,13 +24,20 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
-/// One look-around after the meter, panel, and gas question. Farther is about 8 ft from the meter, where the
-/// battery, pad, and transfer switch go, so the mesh covers that stretch of wall.
+/// One look-around after the meter, panel, and gas question, guided by what the mesh holds: the ground in front of the
+/// meter wall and the wall on both sides of the meter (the site check's area, within LiDAR range), then about 10 steps
+/// back for the wide view Base asks for. The site check runs on the finished mesh when it is done. A yard too tight to
+/// step back in, or a wall that never fills in, ends it on the step clock (`timedOut`); a site check without full
+/// coverage never reads as a conflict.
 private struct LookAround: Equatable {
     var movedFarther = false
-    var lookedLeft = false
-    var lookedRight = false
-    var done: Bool { movedFarther && lookedLeft && lookedRight }
+    var groundCovered = false
+    var leftWallCovered = false
+    var rightWallCovered = false
+    /// The step clock ended it before it was done.
+    var timedOut = false
+    var covered: Bool { groundCovered && leftWallCovered && rightWallCovered }
+    var done: Bool { timedOut || (covered && movedFarther) }
 }
 
 /// Why the Live Survey's camera cannot run. It stays on screen, unlike an error line that clears after 4 s.
@@ -60,8 +67,9 @@ private enum CameraProblem: Equatable {
 /// after each lock: done once the photo of the locked item arrives, or after a short grace. A lock the scan captured
 /// by itself already carries its photo and read, so it skips that step. A find step that runs out of time moves on
 /// with the item unmarked (its checks stay unknown) and looks again on the next visit. The gas step is done once
-/// shown, answered "No" on Home Info, or not shown before its timeout. There is no battery step: the controller
-/// suggests the spot in the background, and `finish` places it, saves the scan, and opens Review.
+/// shown, answered "No" on Home Info, or not shown before its timeout. There is no battery step and no battery on the
+/// camera: the look-around's end starts the site check (off the main thread), and `finish` waits a moment for it,
+/// saves the scan, and opens Review.
 private enum LiveStep: Equatable {
     case findMeter
     case readMeter
@@ -69,7 +77,7 @@ private enum LiveStep: Equatable {
     case readBreaker
     case gas
     case lookAround
-    /// The scan is over: the look-around is done and the battery spot is chosen in the background.
+    /// The scan is over: the look-around is done and the site check runs in the background.
     case finish
 
     /// The top line: the one job for this step. The gas line also depends on the Home Info answer (`taskText`).
@@ -80,7 +88,7 @@ private enum LiveStep: Equatable {
         case .findPanel: "Find the breaker panel"
         case .readBreaker: "Keep the panel in view"
         case .gas: "Show the gas meter"
-        case .lookAround: "Step back and look around"
+        case .lookAround: "Look around the meter"
         case .finish: "Scan done"
         }
     }
@@ -109,6 +117,11 @@ private enum CoachTip: String {
     case tapGas = "Tap the gas meter, or say there isn’t one"
     case lookLeft = "Turn to look left"
     case lookRight = "Turn to look right"
+    // The look-around, guided by what the mesh holds. Left and right are as seen facing the meter.
+    case scanGroundByWall = "Point down at the ground along the wall"
+    case scanWallLeft = "Show the wall left of the meter"
+    case scanWallRight = "Show the wall right of the meter"
+    case tenStepsBack = "Take about 10 steps back"
     // The Live Survey has no buttons: a hold on the center ring marks what the detector cannot.
     case holdOnMeter = "Hold the ring on the meter"
     case holdOnPanel = "Hold the ring on the panel"
@@ -139,8 +152,8 @@ private enum CoachTip: String {
     case gotBreaker = "Got the main breaker"
     case movingOn = "Not found. Review lists it"
     case cantRecognize = "This phone can’t spot it. Review lists it"
-    // Fixer: a finished scan opened again has nothing left to do but slide the battery or go back.
-    case swipeBack = "Slide the battery, or swipe from the left edge to go back"
+    // Fixer: a finished scan opened again has nothing left to do but go back.
+    case swipeBack = "Swipe from the left edge to go back"
     // Live Survey v2: the gas step is shown, not tapped or ringed; the panel read asks for the whole panel; the
     // finished scan says so.
     case pointAtIt = "Point your phone at it"
@@ -168,6 +181,10 @@ private enum CoachTip: String {
         case .typeNumber: "keyboard"
         case .lookLeft: "arrow.turn.up.left"
         case .lookRight: "arrow.turn.up.right"
+        case .scanGroundByWall: "arrow.down.circle.fill"
+        case .scanWallLeft: "arrow.turn.up.left"
+        case .scanWallRight: "arrow.turn.up.right"
+        case .tenStepsBack: "figure.walk.motion"
         case .holdOnMeter, .holdOnPanel, .holdOnGas: "scope"
         case .cantSee: "eye.slash.fill"
         case .slowDown: "tortoise.fill"
@@ -449,9 +466,9 @@ private enum ValueEntry: String, Identifiable {
     }
 }
 
-/// The controller's view of the scan step. `finish` keeps the placed battery and its transfer-switch box on screen
-/// until the scan saves. The view no longer sends `battery` (the spot is suggested in the background); the
-/// controller still answers it (placing the spot at once) for any caller that asks.
+/// The controller's view of the scan step. The Live Survey never sends `battery`: there is no battery on the camera,
+/// and the site check judges the ground beside the meter without one. The case stays for the older hand-placement
+/// code paths, which only act on it.
 private enum WalkStep: Equatable {
     case scan
     case gas
@@ -567,10 +584,14 @@ struct PlacementARView: View {
     private static let gasHoldGrace: Duration = .seconds(3)
     /// With no spot yet by then, the bottom line says where gas meters sit (Yes) or that the step moves on by itself.
     private static let gasNudgeDelay: Duration = .seconds(10)
-    /// A tight side yard can keep the user from stepping back far enough.
-    private static let lookAroundWait: Duration = .seconds(40)
-    /// The suggested battery and its tone stay on screen this long before the scan saves.
+    /// A tight side yard, or indoors, can keep the user from stepping back about 10 steps, and a wall can fail to fill
+    /// in: the look-around ends by then, and the site check judges what was covered (never a conflict). Tune on device.
+    private static let lookAroundWait: Duration = .seconds(60)
+    /// "Scanned" stays on screen this long before the scan saves.
     private static let finishDwell: Duration = .seconds(1.5)
+    /// The finish waits at most this long for the site check before it saves; a check still running leaves the
+    /// site rule unknown in Review. It normally takes well under a second. Tune on device.
+    private static let siteCheckWait: Duration = .seconds(6)
     private static let blindCameraDelay: Duration = .seconds(5)
     /// A panel the scan cannot capture by then is left unmarked, so the scan still ends (amber) instead
     /// of waiting forever. With the detector down nothing can capture, so the wait is short. Tune on device.
@@ -658,7 +679,7 @@ struct PlacementARView: View {
 
     /// meter found → meter captured → panel found → panel captured → gas → look around → finish.
     /// Numbers are not asked for on the camera; a number read by the scan is a suggestion the user confirms in Review.
-    /// There is no battery step: the controller suggests the spot in the background and `finish` places it.
+    /// There is no battery step: the look-around's end starts the site check, and `finish` saves.
     private var step: LiveStep {
         // `passed` holding a find step means it ran out of time: the item stays unmarked and the scan goes on.
         if !meterMarked, !passed.contains(.findMeter) { return .findMeter }
@@ -683,7 +704,7 @@ struct PlacementARView: View {
     /// Locked anchors that a screen-edge chevron should point back to whenever they leave the frame. Empty on the
     /// find-meter step (nothing marked yet) and on the finish (the save has nothing to re-orient toward). The
     /// chevron itself decides visibility per-frame; this list only says which anchors are eligible. The gas pointer
-    /// shows during the look-around, where the pad's clearances (gas included) are measured.
+    /// shows during the look-around, whose mesh the site check (gas clearance included) is judged on.
     private var activeAnchorPointers: [AnchorPointer] {
         switch step {
         case .findMeter, .finish:
@@ -703,8 +724,7 @@ struct PlacementARView: View {
         }
     }
 
-    /// Controller step for the current one. `finish` keeps the placed battery and its transfer-switch box on screen
-    /// until the scan saves. `WalkStep.battery` is never sent: the spot is suggested in the background.
+    /// Controller step for the current one. `WalkStep.battery` is never sent: there is no battery on the camera.
     private var guideStep: WalkStep {
         switch step {
         case .findMeter, .readMeter, .findPanel, .readBreaker, .lookAround: .scan
@@ -713,9 +733,8 @@ struct PlacementARView: View {
         }
     }
 
-    /// `liveAssessment` is the full survey assessment with the placed battery applied: every required rule,
-    /// including the breaker and panel-rating ones, so the tint is green only when the survey itself would be. Nil
-    /// with no battery on screen, which is the whole scan until the finish places the suggested spot.
+    /// `liveAssessment` is the full survey assessment with a hand-placed battery applied (older scans only). The Live
+    /// Survey places none, so it stays nil and the camera never shows a tone.
     private func refreshLiveAssessment() {
         liveAssessment = scene.batteryPosition == nil ? nil : store.assessment(applying: scene)
     }
@@ -782,14 +801,15 @@ struct PlacementARView: View {
             statusMessage = nil
             gasNudgeDue = false
             syncGuide()
-            // Reached on this visit, so it finishes by itself: the controller places its best battery spot (or
-            // records why there is none), and the scan is saved before the photo. A finished scan opened again
-            // never gets here, so it does not bounce straight back to Review.
+            // Reached on this visit, so it finishes by itself: the site check is already running off the main
+            // thread (the look-around's end started it; this starts one if not), and `runFinishClock` saves once it
+            // lands. A finished scan opened again never gets here, so it does not bounce straight back to Review.
             if newStep == .finish, !isLeaving {
                 autoFinishArmed = true
+                store.placementController?.startSiteCheck()
                 commitLiveScene()
-                // The spot is planned off the main thread; the scene is saved again once it is placed.
-                store.placementController?.finalizeBatterySuggestion { _ in commitLiveScene() }
+                // A check that outlasts the finish's wait still reaches Review: the scene is saved again when it lands.
+                store.placementController?.afterSiteCheck { _ in commitLiveScene() }
             }
         }
         .onChange(of: meterMarked) { _, marked in
@@ -1246,13 +1266,14 @@ struct PlacementARView: View {
             guard gasNudgeDue else { return Feedback(.pointAtIt) }
             return Feedback(gasAnswer == .yes ? .gasLooksLow : .gasNoneMovesOn)
         case .lookAround:
-            if !lookAround.movedFarther { return Feedback(.stepBack) }
-            if !lookAround.lookedLeft { return Feedback(.lookLeft) }
-            if !lookAround.lookedRight { return Feedback(.lookRight) }
-            return Feedback(.stepBack)
+            // What the mesh still lacks, nearest first; the wide view last, since LiDAR adds nothing from there.
+            if !lookAround.groundCovered { return Feedback(.scanGroundByWall) }
+            if !lookAround.leftWallCovered { return Feedback(.scanWallLeft) }
+            if !lookAround.rightWallCovered { return Feedback(.scanWallRight) }
+            return Feedback(.tenStepsBack)
         case .finish:
-            // Reached on this visit: it is saving on its own, with no battery instructions. A finished scan opened
-            // again has nothing left to do but go back.
+            // Reached on this visit: it is saving on its own. A finished scan opened again has nothing left to do
+            // but go back.
             return Feedback(autoFinishArmed ? .scanned : .scanDone)
         }
     }
@@ -1490,12 +1511,7 @@ struct PlacementARView: View {
     /// A conflicting rule as the fix to try. What moving the battery cannot fix says what was found.
     private static func fix(for rule: RuleResult) -> String {
         switch rule.id {
-        case "wall-distance": "Slide it closer to the wall"
-        case "meter-distance": "Move it closer to the meter"
-        case "gas-meter-clearance": "Too close to the gas meter"
-        case "not-in-front-of-window": "It’s in front of a window"
-        case "meter-panel-access": "It blocks the meter or panel"
-        case "planning-footprint": "Something is in the way"
+        case BaseRuleSet.siteSpotRuleID: "No clear spot beside the meter"
         case "transfer-switch-space": "Something blocks the wall beside the meter"
         case "front-working-space": "Something blocks the space in front of the meter"
         case "meter-height": "The meter is outside Base’s height range"
@@ -1510,19 +1526,16 @@ struct PlacementARView: View {
     /// An unknown rule as the next thing to do. Mesh checks cannot finish on an iPhone without LiDAR. What the camera
     /// cannot settle points at Review, which asks for it; there are no buttons here.
     private func nextAction(for rule: RuleResult) -> String {
-        let meshChecks: Set<String> = ["planning-footprint", "not-in-front-of-window", "transfer-switch-space", "front-working-space"]
+        let meshChecks: Set<String> = [BaseRuleSet.siteSpotRuleID, "transfer-switch-space", "front-working-space"]
         if meshChecks.contains(rule.id), !scene.lidarMeshAvailable {
             return "This iPhone can’t scan that. Review lists it."
         }
         switch rule.id {
-        case "wall-distance", "not-in-front-of-window": return "Aim at the wall behind it"
-        case "planning-footprint": return "Point down at the ground under it"
+        case BaseRuleSet.siteSpotRuleID: return "Point down at the ground along the wall"
         case "transfer-switch-space": return "Look at the wall beside the meter"
         case "front-working-space": return "Point down in front of the meter"
-        case "meter-panel-access", "meter-panel-same-wall": return "Keep the meter and panel in view"
-        case "meter-distance": return "Keep the meter in view"
+        case "meter-panel-same-wall": return "Keep the meter and panel in view"
         case "meter-height": return "Point down at the ground under the meter"
-        case "gas-meter-clearance": return "Review asks about the gas meter"
         case "austin-main-breaker": return "Review asks for the main breaker size"
         case "solar-or-two-batteries":
             return store.session.electrical.needsPanelBusRating
@@ -1533,8 +1546,8 @@ struct PlacementARView: View {
     }
 
     private func syncGuide() {
-        // A gas meter not seen still lets the battery be suggested; its clearance check stays unknown.
-        store.placementController?.syncGuide(step: guideStep, gasResolved: gasStepDone)
+        // A gas meter not seen still lets the site check run; its gas clearance stays unknown.
+        store.placementController?.syncGuide(step: guideStep, gasResolved: gasStepDone, lookingAround: step == .lookAround)
     }
 
     private func pass(_ liveStep: LiveStep) {
@@ -1583,10 +1596,11 @@ struct PlacementARView: View {
         case .gas:
             await runGasClock()
         case .lookAround:
-            // The look-around is measured from the meter or panel wall. With neither found there is nothing to
-            // look around from, so it is skipped at once.
-            if meterMarked || panelMarked {
-                // The mesh checks still judge what was covered, so moving on claims nothing.
+            // The look-around is measured from the meter wall, and the site check needs the meter. Without a meter
+            // there is nothing to look around from, so it is skipped at once.
+            if meterMarked {
+                // The site check still judges what was covered, and an unfinished look-around never makes it a
+                // conflict, so moving on claims nothing.
                 guard await waitFor(Self.lookAroundWait), step == .lookAround else { return }
             }
             store.placementController?.skipLookAround()
@@ -1639,16 +1653,18 @@ struct PlacementARView: View {
         flashTip = detectorDown ? .cantRecognize : .movingOn
     }
 
-    /// The finish, reached on this visit: `onChange(of: step)` already placed the suggested battery and saved the
-    /// scene. The placed battery and its tone stay on screen for `finishDwell`, then the scan is saved and
-    /// Review opens. The dwell pauses with the other clocks. A finished scan opened again is not armed and waits.
+    /// The finish, reached on this visit: "Scanned" stays up for `finishDwell` while the site check lands (at most
+    /// `siteCheckWait`), then the scan is saved with its result and Review opens. The wait pauses with the other
+    /// clocks. A finished scan opened again is not armed and waits.
     private func runFinishClock() async {
         guard step == .finish, autoFinishArmed, !clockHeld else { return }
-        // The suggested spot is planned off the main thread: the dwell starts once it is on screen.
-        while store.placementController?.batteryFinalizing == true {
-            guard await waitFor(.milliseconds(100)), step == .finish, autoFinishArmed, !clockHeld else { return }
+        let started = ContinuousClock.now
+        await store.placementController?.waitForSiteCheck(atMost: Self.siteCheckWait)
+        let left = Self.finishDwell - (ContinuousClock.now - started)
+        if left > .zero {
+            guard await waitFor(left) else { return }
         }
-        guard await waitFor(Self.finishDwell), step == .finish, autoFinishArmed, !clockHeld else { return }
+        guard !Task.isCancelled, step == .finish, autoFinishArmed, !clockHeld else { return }
         submit()
     }
 
@@ -1850,7 +1866,7 @@ struct PlacementARView: View {
         onContinue()
     }
 
-    /// Saves the scan and opens Review. Only the finish saves: the suggested battery is already placed, and the AR
+    /// Saves the scan and opens Review. Only the finish saves: the site check's result is on the scene, and the AR
     /// scan itself is the placement evidence, so there is no scan photo to wait for.
     private func submit() {
         guard !isLeaving, step == .finish else { return }
@@ -1999,22 +2015,6 @@ private struct BatterySlide {
     var axis: SIMD3<Float>
     var groundY: Float
     var along: Float
-}
-
-/// What the background battery-spot plan was made from. A new plan is worth it when a mark or the look-around moved,
-/// or the mesh grew or shrank by 2%.
-private struct BatteryPlanKey: Equatable {
-    var meshSamples: Int
-    var meter: SIMD3<Float>?
-    var panel: SIMD3<Float>?
-    var gas: SIMD3<Float>?
-    var lookAround: LookAround
-
-    func needsReplan(since old: BatteryPlanKey?) -> Bool {
-        guard let old else { return true }
-        if meter != old.meter || panel != old.panel || gas != old.gas || lookAround != old.lookAround { return true }
-        return abs(meshSamples - old.meshSamples) * 50 >= max(old.meshSamples, 1)
-    }
 }
 
 private final class EquipmentBoxOverlay: UIView {
@@ -2239,16 +2239,15 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private nonisolated static let cropContext = CIContext()
         private var batterySlide: BatterySlide?
         private var batteryConfirmed = false
-        /// The background battery-spot search: its latest plan, what that plan was made from, and a generation that
-        /// drops a plan finishing after the scene moved on.
-        private var batteryPlan: BatterySpotPlanner.Plan?
-        private var batteryPlanKey: BatteryPlanKey?
-        private var batteryPlanGeneration = 0
-        private var batteryPlanInFlight = false
-        private var batteryPlanAt: CFTimeInterval = 0
-        /// The finish's plan is running off the main thread. The finish waits for it before it saves.
-        private(set) var batteryFinalizing = false
-        private var batteryFinalizeWaiters: [(Bool) -> Void] = []
+        /// The site check: the one run in flight, and a generation that drops a result landing after the scene moved on
+        /// (a redone meter, a cleared gas mark, a restart).
+        private var siteCheckTask: Task<Void, Never>?
+        private var siteCheckGeneration = 0
+        private var siteCheckWaiters: [(Bool) -> Void] = []
+        /// The Live Survey is on its look-around step: coverage is measured off the main thread about once a second.
+        private var lookingAround = false
+        private var coverageInFlight = false
+        private var coverageAt: CFTimeInterval = 0
         /// The live Jev lane's per-packet memory (`JevScanRings`): fed by the capture gate and label reads, reset with
         /// the capture state, read by the view about once a second. Never published at packet rate.
         private var jevRings = JevScanRings()
@@ -2974,173 +2973,107 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             scene.gasMeterPosition = nil
             scene.gasMarkSource = nil
             scene.confirmedMeasurements.removeAll { $0.kind == .batteryToGasMeter }
-            // The battery kept 3 ft from that mark; without it the best spot may be elsewhere.
-            if hadMark, batteryConfirmed {
-                resuggestBattery()
+            // The site check kept 3 ft from that mark; without it the answer may differ.
+            if hadMark {
+                invalidateSiteCheck()
             } else {
                 emit()
             }
         }
 
-        // MARK: - Battery spot, chosen in the background
+        // MARK: - Site check
 
-        /// The background search replans at most this often while the Live Survey runs. Tune on device.
-        private static let batteryPlanInterval: CFTimeInterval = 1
-
-        /// Places the best battery spot along the meter wall and shows it with its transfer-switch box, at the end of
-        /// the scan. Planned again on the current scene, so the pick sees every face the look-around added. The plan
-        /// runs off the main thread (a whole-scan re-measure on it froze the phone on 26 Sep); `batteryFinalizing`
-        /// stays true until it is applied, and `done` runs then, on the main actor, with whether a spot was placed.
-        /// Nothing is placed when there is no meter, no wall beside it, or no candidate clears; the reason is in the
-        /// snapshot's `batterySpot` and the battery checks stay unknown. A battery already placed stays.
-        func finalizeBatterySuggestion(then done: ((Bool) -> Void)? = nil) {
-            if let done { batteryFinalizeWaiters.append(done) }
-            if batteryConfirmed, batteryRig != nil {
-                finishBatteryFinalize(placed: true)
-                return
-            }
-            // A background plan still running is stale now, and so is an earlier final plan.
-            batteryPlanGeneration += 1
-            guard let input = batteryPlanInput(final: true) else {
-                scene.batterySpot = BatterySpotSummary(status: .noMeter)
+        /// Runs the site check once on the finished mesh: a copy of the scene (Sendable) goes to a detached task, and
+        /// the result lands back here on the main actor as the scene's `batterySpot`. Nothing is drawn or placed.
+        /// A check already run or running for this scene is left alone; `invalidateSiteCheck` starts over.
+        func startSiteCheck() {
+            guard siteCheckTask == nil, scene.batterySpot == nil else { return }
+            siteCheckGeneration += 1
+            let generation = siteCheckGeneration
+            guard let input = siteCheckInput() else {
+                scene.batterySpot = BatterySpotSummary(status: .noMeter, source: BatterySpotPlanner.source)
                 emit()
-                finishBatteryFinalize(placed: false)
                 return
             }
-            batteryFinalizing = true
-            let generation = batteryPlanGeneration
             let measurer = placementMeasurer
-            Task.detached(priority: .userInitiated) { [weak self] in
-                let plan = BatterySpotPlanner.plan(input, measurer: measurer)
-                await self?.applyFinalBatteryPlan(plan, input: input, generation: generation)
+            siteCheckTask = Task { [weak self] in
+                let plan = await Task.detached(priority: .userInitiated) {
+                    BatterySpotPlanner.plan(input, measurer: measurer)
+                }.value
+                self?.acceptSiteCheck(plan, generation: generation)
             }
         }
 
-        /// The final plan is back. A plan from before a newer finalize, a resuggest, or a restart is dropped: that
-        /// newer call owns the waiters.
-        private func applyFinalBatteryPlan(_ plan: BatterySpotPlanner.Plan, input: BatterySpotPlanner.Input, generation: Int) {
-            guard generation == batteryPlanGeneration, batteryFinalizing else { return }
-            if batteryConfirmed, batteryRig != nil {
-                finishBatteryFinalize(placed: true)
-                return
-            }
-            batteryPlan = plan
-            logBatteryPlan(plan, final: true)
-            guard let winner = plan.winner,
-                  let axis = unitVector(simd_cross(SIMD3<Float>(0, 1, 0), input.outward)) else {
-                scene.batterySpot = plan.summary
-                emit()
-                finishBatteryFinalize(placed: false)
-                return
-            }
-            let wall = input.meterPoint - input.outward * input.wallBehindMeters
-            batterySlide = BatterySlide(
-                origin: SIMD3(wall.x, input.groundY, wall.z),
-                outward: input.outward,
-                axis: axis,
-                groundY: input.groundY,
-                along: winner.offsetMeters
-            )
-            applyBatterySlide(resetYaw: true)
-            batteryConfirmed = true
-            applyTone()
-            // The transfer switch goes on the meter's other side from the battery (viewer-right is +along).
-            scene.transferSwitchOnLeft = winner.offsetMeters > 0
-            scene.batterySpot = plan.summary
-            emitGestureEnded()
-            finishBatteryFinalize(placed: true)
+        /// Runs `action` once the running site check lands (true when it found a spot). Nothing runs when no check is
+        /// running, or when the check is dropped without a new one.
+        func afterSiteCheck(_ action: @escaping (Bool) -> Void) {
+            guard siteCheckTask != nil else { return }
+            siteCheckWaiters.append(action)
         }
 
-        private func finishBatteryFinalize(placed: Bool) {
-            batteryFinalizing = false
-            let waiters = batteryFinalizeWaiters
-            batteryFinalizeWaiters = []
-            waiters.forEach { $0(placed) }
-        }
-
-        /// Runs `action` once the final plan in flight is applied. Nothing runs when none is in flight.
+        /// SurveyStore's name from the battery-spot days ("Not the gas meter" in Review saves the new answer).
         func afterBatteryFinalize(_ action: @escaping (Bool) -> Void) {
-            guard batteryFinalizing else { return }
-            batteryFinalizeWaiters.append(action)
+            afterSiteCheck(action)
         }
 
-        /// A restart: a final plan in flight is dropped with its waiters.
-        private func cancelBatteryFinalize() {
-            batteryFinalizing = false
-            batteryFinalizeWaiters = []
-        }
-
-        /// A meter lock cleared or a gas mark removed: the battery chosen from them goes, and the search starts over.
-        /// A battery that was already placed at the finish (or was being placed) is placed again from the new scene,
-        /// off the main thread, so Review keeps a spot; otherwise the next finish chooses.
-        func resuggestBattery() {
-            let wasPlaced = (batteryConfirmed && batteryRig != nil) || batteryFinalizing
-            batteryConfirmed = false
-            clearUnconfirmedBattery()
-            scene.batterySpot = nil
-            batteryPlan = nil
-            batteryPlanKey = nil
-            batteryPlanGeneration += 1
-            if wasPlaced, meterWallHit != nil {
-                finalizeBatterySuggestion()
-            } else {
-                emit()
-                finishBatteryFinalize(placed: false)
+        /// Returns once the site check has landed, or after `limit`, or when the caller is cancelled. Returns at once
+        /// with none running. Polls, so a slow check never holds the caller past `limit`.
+        func waitForSiteCheck(atMost limit: Duration) async {
+            let clock = ContinuousClock()
+            let deadline = clock.now + limit
+            while siteCheckTask != nil, clock.now < deadline, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
             }
         }
 
-        /// The search's input: the scene now, the meter wall, and the ground in front of the meter. Nil without a meter
-        /// lock or a ground estimate.
-        private func batteryPlanInput(final: Bool) -> BatterySpotPlanner.Input? {
+        /// A meter lock cleared or a gas mark removed: the site check's answer is stale. A scan that had its answer
+        /// gets a new one right away from the scene now, so Review keeps one; otherwise the next finish asks.
+        func invalidateSiteCheck() {
+            let hadAnswer = scene.batterySpot != nil || siteCheckTask != nil
+            siteCheckTask?.cancel()
+            siteCheckTask = nil
+            siteCheckGeneration += 1
+            scene.batterySpot = nil
+            emit()
+            if hadAnswer, lookAround.done, meterWallHit != nil {
+                startSiteCheck()
+            }
+            if siteCheckTask == nil { siteCheckWaiters = [] }
+        }
+
+        private func acceptSiteCheck(_ plan: BatterySpotPlanner.Plan, generation: Int) {
+            guard generation == siteCheckGeneration else { return }
+            siteCheckTask = nil
+            logSiteCheck(plan)
+            if let winner = plan.winner {
+                // The transfer switch goes on the meter's other side from the spot (viewer-right is +along).
+                scene.transferSwitchOnLeft = winner.offsetMeters > 0
+            }
+            scene.batterySpot = plan.summary
+            emit()
+            let waiters = siteCheckWaiters
+            siteCheckWaiters = []
+            waiters.forEach { $0(plan.winner != nil) }
+        }
+
+        /// The check's input: the scene now, the meter wall, and the ground in front of the meter. Nil without a meter
+        /// lock or a ground estimate. Built on the main actor; everything in it is a copy.
+        private func siteCheckInput() -> BatterySpotPlanner.Input? {
             guard let wall = meterWallHit, let outward = horizontalUnit(wall.normal),
                   let groundY = meterGroundPosition?.y ?? groundUnder(wall.position, normal: wall.normal)?.y else { return nil }
-            return BatterySpotPlanner.Input(
+            var input = BatterySpotPlanner.Input(
                 snapshot: makeSnapshot(),
                 meterPoint: wall.position,
                 outward: outward,
                 wallBehindMeters: meterWallBehind,
                 groundY: groundY,
-                final: final
+                final: true
             )
+            input.coverageComplete = lookAround.covered
+            return input
         }
 
-        private var meshSampleCount: Int {
-            meshSamples.values.reduce(0) { $0 + $1.count }
-        }
-
-        /// From the meter lock on, on the display tick: replans off the main thread when the mesh grew by 2% or a mark
-        /// or the look-around changed, at most once a second. Nothing is drawn; the finish places the pick.
-        private func updateBatterySuggestion() {
-            guard !batteryConfirmed, !batteryFinalizing, meterWallHit != nil, !batteryPlanInFlight else { return }
-            let now = CACurrentMediaTime()
-            guard now - batteryPlanAt >= Self.batteryPlanInterval else { return }
-            let key = BatteryPlanKey(
-                meshSamples: meshSampleCount,
-                meter: meterWallHit?.position,
-                panel: panelWallHit?.position,
-                gas: gasPoint,
-                lookAround: lookAround
-            )
-            guard key.needsReplan(since: batteryPlanKey), let input = batteryPlanInput(final: false) else { return }
-            batteryPlanKey = key
-            batteryPlanAt = now
-            batteryPlanInFlight = true
-            let generation = batteryPlanGeneration
-            let measurer = placementMeasurer
-            Task.detached(priority: .utility) { [weak self] in
-                let plan = BatterySpotPlanner.plan(input, measurer: measurer)
-                await self?.acceptBatteryPlan(plan, generation: generation)
-            }
-        }
-
-        private func acceptBatteryPlan(_ plan: BatterySpotPlanner.Plan, generation: Int) {
-            batteryPlanInFlight = false
-            guard generation == batteryPlanGeneration, !batteryConfirmed else { return }
-            batteryPlan = plan
-            logBatteryPlan(plan, final: false)
-        }
-
-        private func logBatteryPlan(_ plan: BatterySpotPlanner.Plan, final: Bool) {
+        private func logSiteCheck(_ plan: BatterySpotPlanner.Plan) {
             #if DEBUG
             let rows = plan.candidates.map { candidate -> String in
                 let verdict: String
@@ -3149,10 +3082,60 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 case .pending(let reason): verdict = "pending(\(reason))"
                 case .rejected(let reason): verdict = reason
                 }
-                return String(format: "%+.1f=%@", candidate.offsetMeters, verdict)
+                return String(format: "%+.1f=%@%@", candidate.offsetMeters, verdict, candidate.pathBlocked ? "/path" : "")
             }
-            Self.captureLog.debug("battery plan \(final ? "final" : "background", privacy: .public) status=\(plan.status.rawValue, privacy: .public) pick=\(plan.winner.map { String(format: "%+.1f", $0.offsetMeters) } ?? "-", privacy: .public) [\(rows.joined(separator: " "), privacy: .public)]")
+            Self.captureLog.debug("site check status=\(plan.status.rawValue, privacy: .public) covered=\(self.lookAround.covered, privacy: .public) pick=\(plan.winner.map { String(format: "%+.1f", $0.offsetMeters) } ?? "-", privacy: .public) [\(rows.joined(separator: " "), privacy: .public)]")
             #endif
+        }
+
+        /// How often the look-around measures its coverage. Tune on device.
+        private static let coverageInterval: CFTimeInterval = 1
+
+        /// On the look-around step, about once a second: measures off the main thread how much of the ground in front
+        /// of the meter wall and of the wall on each side the mesh holds, from the last emitted scene's samples (a
+        /// copy), and marks each part covered once it is. Covered parts stay covered.
+        private func updateLookAroundCoverage() {
+            guard lookingAround, !lookAround.done, !lookAround.covered, !coverageInFlight else { return }
+            let now = CACurrentMediaTime()
+            guard now - coverageAt >= Self.coverageInterval else { return }
+            guard let wall = meterWallHit, let outward = horizontalUnit(wall.normal) else { return }
+            let groundY = meterGroundPosition?.y
+            coverageAt = now
+            coverageInFlight = true
+            let samples = scene.classifiedMesh
+            let point = wall.position
+            let behind = meterWallBehind
+            let generation = siteCheckGeneration
+            Task { [weak self] in
+                let coverage = await Task.detached(priority: .utility) { () -> BatterySpotPlanner.Coverage in
+                    // No ground under the meter yet: the floor in front of it, from the same copy.
+                    guard let ground = groundY
+                        ?? CorePlacementMeasurer.floorMedianY(samples, near: point, outward: outward) else {
+                        return BatterySpotPlanner.Coverage()
+                    }
+                    return BatterySpotPlanner.coverage(
+                        samples: samples,
+                        meterPoint: point,
+                        outward: outward,
+                        wallBehindMeters: behind,
+                        groundY: ground
+                    )
+                }.value
+                self?.acceptCoverage(coverage, generation: generation)
+            }
+        }
+
+        private func acceptCoverage(_ coverage: BatterySpotPlanner.Coverage, generation: Int) {
+            coverageInFlight = false
+            guard generation == siteCheckGeneration, !lookAround.done else { return }
+            var next = lookAround
+            next.groundCovered = next.groundCovered || coverage.groundCovered
+            next.leftWallCovered = next.leftWallCovered || coverage.leftCovered
+            next.rightWallCovered = next.rightWallCovered || coverage.rightCovered
+            guard next != lookAround else { return }
+            lookAround = next
+            onLookAround?(next)
+            if next.done { lookAroundFinished() }
         }
 
         func startAiming() {
@@ -3181,7 +3164,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             refreshEquipmentBoxes()
             publishScanFeedback()
             noteLookAround()
-            updateBatterySuggestion()
+            updateLookAroundCoverage()
             if holdLockKind() != nil {
                 updateHoldAim()
                 return
@@ -3724,9 +3707,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             if let hit { banRelock(kind, point: hit.position) }
             resetHold()
             if kind == .electricMeter {
-                resuggestBattery()
                 lookAround = LookAround()
                 onLookAround?(lookAround)
+                invalidateSiteCheck()
             }
         }
 
@@ -4093,10 +4076,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             passedLiveSteps = []
             clearBattery()
             scene.batterySpot = nil
-            batteryPlan = nil
-            batteryPlanKey = nil
-            batteryPlanGeneration += 1
-            cancelBatteryFinalize()
+            siteCheckTask?.cancel()
+            siteCheckTask = nil
+            siteCheckGeneration += 1
+            siteCheckWaiters = []
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
             relockBan = nil
@@ -4106,54 +4089,36 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onLookAround?(lookAround)
         }
 
+        /// The step clock ran out. Coverage not reached stays not reached, so the site check cannot read a conflict.
         fileprivate func skipLookAround() {
             let wasDone = lookAround.done
-            lookAround.movedFarther = true
-            lookAround.lookedLeft = true
-            lookAround.lookedRight = true
+            lookAround.timedOut = true
             onLookAround?(lookAround)
             if !wasDone { lookAroundFinished() }
         }
 
-        /// The look-around added floor in front of the meter: its height is measured again before the finish.
+        /// The look-around added floor in front of the meter: its height is measured again, then the site check runs
+        /// on the finished mesh.
         private func lookAroundFinished() {
             refineLockGeometry()
             emit()
+            startSiteCheck()
         }
 
-        /// After the equipment is locked, one step back and a pan left and right finish the scan. Measured from the
-        /// meter wall first, since the battery, pad, and transfer switch sit beside the meter and need mesh there.
+        /// About 10 steps back from the meter wall, where space allows: Base's wide view of the meter area. Indoors or
+        /// in a tight side yard the look-around's step clock ends it instead. Tune on device.
+        static let lookAroundStepBackFeet: Double = 25
+
+        /// After the equipment is locked, the wide view: about 10 steps back from the meter (or the panel) wall. The
+        /// coverage half of the look-around is `updateLookAroundCoverage`.
         private func noteLookAround() {
-            let origin = meterWallHit?.position ?? panelWallHit?.position
-            let normal = meterWallHit?.normal ?? panelWallHit?.normal
-            guard let origin else { return }
+            guard !lookAround.movedFarther, let origin = meterWallHit?.position ?? panelWallHit?.position else { return }
             let camera = arView.cameraTransform.translation
-            let forward = -SIMD3<Float>(
-                arView.cameraTransform.matrix.columns.2.x,
-                arView.cameraTransform.matrix.columns.2.y,
-                arView.cameraTransform.matrix.columns.2.z
-            )
             var next = lookAround
             let offset = SIMD3<Float>(camera.x - origin.x, 0, camera.z - origin.z)
             let feet = Double(simd_length(offset)) / Double(BatteryGeometry.feetToMeters)
-            guard feet >= 8 else { return }
+            guard feet >= Self.lookAroundStepBackFeet else { return }
             next.movedFarther = true
-            if let forwardFlat = horizontalUnit(forward) {
-                var outward = normal.flatMap { horizontalUnit($0) }
-                if let current = outward, simd_dot(offset, current) < 0 {
-                    outward = -current
-                }
-                if let outward, let side = horizontalUnit(simd_cross(SIMD3<Float>(0, 1, 0), outward)) {
-                    let angle = atan2(simd_dot(forwardFlat, side), simd_dot(forwardFlat, -outward))
-                    let sideNear: Float = 40 * .pi / 180
-                    let sideFar: Float = 140 * .pi / 180
-                    if angle > sideNear && angle < sideFar {
-                        next.lookedLeft = true
-                    } else if angle < -sideNear && angle > -sideFar {
-                        next.lookedRight = true
-                    }
-                }
-            }
             guard next != lookAround else { return }
             let wasDone = lookAround.done
             lookAround = next
@@ -5154,9 +5119,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             sendGasPhoto(from: frame)
             recordLockFrame(kind: "gasMeter", source: GasMarkSource.shownOnScan.rawValue, point: point, reason: FrameRecorder.Reason.lock)
-            // The pad keeps 3 ft from this mark: the background search replans on the next tick.
-            batteryPlanKey = nil
-            batteryPlanAt = 0
             emit()
         }
 
@@ -5285,14 +5247,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// A few inches, so the measured back face can sit inside the 1 ft wall check.
         private var batteryWallGap: Float { 3 * BatteryGeometry.inchesToMeters }
 
-        fileprivate func syncGuide(step: WalkStep, gasResolved: Bool) {
+        fileprivate func syncGuide(step: WalkStep, gasResolved: Bool, lookingAround: Bool = false) {
             walkStep = step
             self.gasResolved = gasResolved
-            // The battery is never a ghost any more: the background search places it once, at the finish. A view that
-            // still has a battery step gets that placement as soon as it asks.
-            if step == .battery, !batteryConfirmed {
-                finalizeBatterySuggestion()
-            }
+            self.lookingAround = lookingAround
         }
 
         /// "Put it here": the ghost becomes the placed battery, so the snapshot reports it as `batteryPosition`.
@@ -5432,14 +5390,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func placeDerivedWorkingSpace() {
             let sample: (position: SIMD3<Float>, normal: SIMD3<Float>)?
             let groundY: Float
-            if let meterWallHit {
+            // Without a ground point the slab is not placed: at the lock's own height it sat in the air (meter
+            // height on the demo wall) and read the return wall and the eaves as a blocked working space.
+            if let meterWallHit, let ground = meterGroundPosition?.y {
                 sample = meterWallHit
-                groundY = meterGroundPosition?.y ?? meterWallHit.position.y
-            } else if let panelWallHit {
+                groundY = ground
+            } else if meterWallHit == nil, let panelWallHit, let ground = panelGroundPosition?.y {
                 sample = panelWallHit
-                groundY = panelGroundPosition?.y ?? panelWallHit.position.y
+                groundY = ground
             } else {
-                // Both locks were cleared. Drop the slab so it is not scored at the old spot.
+                // Both locks were cleared, or the lock has no ground yet. Drop the slab so it is not scored at the
+                // old spot or in the air.
                 workingSpaceOverlay?.removeFromParent()
                 workingSpaceOverlay = nil
                 scene.workingSpacePosition = nil
@@ -5594,6 +5555,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             snapshot.gasMarkSource = snapshot.gasMeterPosition == nil ? nil : gasMarkSource
             snapshot.meterHalfWidthMeters = meterWallHit == nil ? nil : meterHalfWidth
+            snapshot.meterWallBehindMeters = meterWallHit == nil ? 0 : meterWallBehind
             snapshot.draftMeasurementStart = measurementEndpoints.first
             snapshot.draftMeasurementEnd = measurementEndpoints.count > 1 ? measurementEndpoints[1] : nil
             if let workingSpaceOverlay {

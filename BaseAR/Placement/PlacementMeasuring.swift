@@ -111,6 +111,9 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var draftMeasurementEnd: MeasurementEndpoint?
     /// Half the meter enclosure's width along its wall, from the lock box. Nil until the meter locks.
     var meterHalfWidthMeters: Float?
+    /// How far the siding sits behind the meter lock point (the enclosure stands off the wall, 0.14 m on the demo
+    /// wall), from the mesh at the lock. 0 when the mesh did not say.
+    var meterWallBehindMeters: Float = 0
     /// How the gas-meter mark was made. Nil with no mark.
     var gasMarkSource: GasMarkSource?
     /// The scan's own battery-spot suggestion. Nil until the scan finishes.
@@ -227,7 +230,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let meterFeet = confirmed(.batteryToMeter, in: snapshot)?.distanceFeet
             ?? horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition)
         let gasFeet = confirmed(.batteryToGasMeter, in: snapshot)?.distanceFeet
-            ?? horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition)
+            ?? gasClearanceFeet(snapshot)
         let wallFeet = wallDistanceFeet(snapshot)
         let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
         let sameWall = meterAndPanelSameWall(snapshot)
@@ -357,23 +360,23 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return nil
     }
 
-    /// The cabinet may not stand in the meter's or panel's own 30 × 36 in working space.
-    /// One blocked piece of equipment is a conflict. Otherwise both need a wall tap to pass.
+    /// The cabinet may not stand in the meter's or panel's own 30 × 36 in working space. One blocked piece of
+    /// equipment is a conflict. Scored against the meter; the panel counts when it was found on the same side of the
+    /// wall. A panel not found (often indoors), or found facing the other way (a garage panel behind an outdoor meter),
+    /// has its working space somewhere the outdoor pad cannot reach. The old check mirrored that indoor working space
+    /// onto the yard and read a clear spot as blocking the panel.
     private func keepsEquipmentAccess(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard let battery = snapshot.batteryPosition?.simd else { return nil }
-        let equipment = [
-            wallFrame(position: snapshot.meterWallPosition, normal: snapshot.meterWallNormal),
-            wallFrame(position: snapshot.panelWallPosition, normal: snapshot.panelWallNormal)
-        ]
-        var missing = false
-        for frame in equipment {
-            guard let frame else {
-                missing = true
-                continue
-            }
+        let meter = wallFrame(position: snapshot.meterWallPosition, normal: snapshot.meterWallNormal)
+        var panel = wallFrame(position: snapshot.panelWallPosition, normal: snapshot.panelWallNormal)
+        if let meterFrame = meter, let panelFrame = panel, simd_dot(meterFrame.normal, panelFrame.normal) < -0.5 {
+            panel = nil
+        }
+        guard let meter else { return nil }
+        for frame in [meter, panel].compactMap({ $0 }) {
             if cabinet(battery: battery, yaw: snapshot.batteryYawRadians, blocksAccessTo: frame) { return false }
         }
-        return missing ? nil : true
+        return true
     }
 
     private func cabinet(battery: SIMD3<Float>, yaw: Float, blocksAccessTo equipment: WallFrame) -> Bool {
@@ -555,6 +558,14 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return false
     }
 
+    /// From the cabinet's nearest base edge to the gas mark, not from its center: the center read 3.5 ft on the demo
+    /// wall where the nearest edge was 2 ft away.
+    fileprivate func gasClearanceFeet(_ snapshot: PlacementSceneSnapshot) -> Double? {
+        guard let battery = snapshot.batteryPosition?.simd, let gas = snapshot.gasMeterPosition?.simd else { return nil }
+        let edge = BatteryGeometry.nearestBasePoint(origin: battery, yaw: snapshot.batteryYawRadians, toward: gas)
+        return horizontalFeet(PlacementAnchor(edge), snapshot.gasMeterPosition)
+    }
+
     private func horizontalFeet(_ origin: PlacementAnchor?, _ target: PlacementAnchor?) -> Double? {
         guard let origin, let target else { return nil }
         let dx = Double(origin.x - target.x)
@@ -731,8 +742,11 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     }
 
     private func transferSwitchFrame(_ snapshot: PlacementSceneSnapshot, onLeft: Bool) -> TransferFrame? {
-        guard let wallPoint = snapshot.meterWallPosition?.simd,
+        guard let lockPoint = snapshot.meterWallPosition?.simd,
               let outward = horizontalUnit(snapshot.meterWallNormal?.simd ?? .zero) else { return nil }
+        // The switch mounts on the siding, not on the meter's glass: on the demo wall the glass plane missed the
+        // siding by 14 cm, so the wall behind the box never counted as scanned.
+        let wallPoint = lockPoint - outward * snapshot.meterWallBehindMeters
         let up = SIMD3<Float>(0, 1, 0)
         // Facing the wall, the viewer's right. `cross(outward, up)` pointed to the viewer's left, so "left" was right.
         guard let viewerRight = unit(simd_cross(up, outward)) else { return nil }
@@ -745,7 +759,9 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         // over the meter itself and read the meter as an obstacle.
         let meterHalfWidth = snapshot.meterHalfWidthMeters ?? Self.defaultMeterHalfWidthMeters
         var center = wallPoint + along * (meterHalfWidth + 0.02 + halfAlong) + outward * halfOut
-        if let ground = snapshot.meterPosition?.simd {
+        // Only a real ground point lifts the box. With no ground found, `meterPosition` is the wall hit itself, which
+        // lifted the box above the meter (1.5 to 2.5 m up on the demo wall).
+        if let ground = snapshot.meterPosition?.simd, ground.y < lockPoint.y - 0.2 {
             center.y = max(center.y, ground.y + halfHeight)
         }
         return TransferFrame(
@@ -855,7 +871,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             withinWallDistance: wallDistanceFeet(snapshot).map { $0 <= BaseRuleSet.maxWallDistanceFeet },
             clearOfWindows: clearOfWindows(snapshot),
             keepsAccess: keepsEquipmentAccess(snapshot),
-            clearOfGas: horizontalFeet(snapshot.batteryPosition, snapshot.gasMeterPosition).map { $0 >= BaseRuleSet.minGasMeterDistanceFeet },
+            clearOfGas: gasClearanceFeet(snapshot).map { $0 >= BaseRuleSet.minGasMeterDistanceFeet },
             withinMeterDistance: horizontalFeet(snapshot.batteryPosition, snapshot.meterPosition).map { $0 <= BaseRuleSet.maxMeterDistanceFeet }
         )
     }
@@ -932,13 +948,17 @@ struct CorePlacementMeasurer: PlacementMeasuring {
     static let snapMinFaces = 12
 }
 
-/// The Live Survey's own battery spot. Candidates stand along the meter wall on both sides, judged from the scan in the
-/// background while the user looks around, and the best is placed when the scan ends. Pure: it runs on a snapshot copy
-/// off the main thread, and the same code runs at the finish.
+/// The site check: one question asked once, off the main thread, on the finished mesh after the look-around. Does a
+/// clear 3 × 3 ft ground spot exist within 1 ft of the meter wall, within 20 ft of the meter, at least 3 ft from the
+/// gas meter (when it was marked), not in front of a window, and out of the meter's and panel's working space?
+/// Nothing is drawn and nothing is placed: there is no battery on the camera.
 ///
-/// A candidate is out when the wall ends under it, when something stands between it and the meter (the conduit run),
-/// when it is within 3.25 ft of the gas mark, or when any pad rule measures a conflict. The rest rank by fewest
-/// unknown pad rules, then nearest the meter, then away from the panel.
+/// Candidate spots stand along the meter wall on both sides. A spot with every check measured clear is found (pass).
+/// Conflict needs the look-around's coverage and every candidate measured blocked by one of those rules. Anything
+/// else (a stretch not scanned, the wall ending, a check with no reading) is unknown, never red.
+///
+/// Something standing between a spot and the meter (a conduit run, a bush) is not one of Base's siting rules, so it
+/// only ranks spots; it never rules one out.
 struct BatterySpotPlanner: Sendable {
     /// Cabinet-center offsets from the meter along its wall, each tried on both sides. Tune on device.
     static let offsetsMeters: [Float] = [0.9, 1.4, 1.8, 2.7, 3.6]
@@ -968,6 +988,9 @@ struct BatterySpotPlanner: Sendable {
         var groundY: Float
         /// At the finish a stretch nobody scanned is out ("not scanned"); during the scan it is only pending.
         var final: Bool
+        /// The look-around covered the ground in front of the meter wall and the wall on both sides. Without it no
+        /// verdict is a conflict: an unscanned stretch may hold the spot.
+        var coverageComplete = false
     }
 
     enum Verdict: Sendable, Equatable {
@@ -982,6 +1005,8 @@ struct BatterySpotPlanner: Sendable {
         var position: SIMD3<Float>
         var yaw: Float
         var verdict: Verdict
+        /// Something stands between it and the meter. Ranks spots only.
+        var pathBlocked = false
     }
 
     struct Plan: Sendable, Equatable {
@@ -1005,6 +1030,7 @@ struct BatterySpotPlanner: Sendable {
             }
             return BatterySpotSummary(
                 status: status,
+                source: BatterySpotPlanner.source,
                 alongWallFeet: winner.map { Double($0.offsetMeters * towardPanelSign / BatteryGeometry.feetToMeters) },
                 towardPanel: winner.flatMap { winner in panelAlongMeters.map { ($0 < 0) == (winner.offsetMeters < 0) } },
                 candidatesTried: candidates.count,
@@ -1015,6 +1041,16 @@ struct BatterySpotPlanner: Sendable {
 
     static let wallEnds = "wall ends"
     static let notScanned = "not scanned"
+    static let notMeasured = "a check had no reading"
+    /// `BatterySpotSummary.source` for the site check. The status reads: `placed` = a spot was found (pass),
+    /// `allRejected` = every scanned spot was measured blocked (conflict), `noWall` / `noMeter` = unknown.
+    static let source = "siteCheck"
+    /// Rejections that are a measured "no": the spot is scanned and a siting rule fails there.
+    static let blockingReasons: Set<String> = [
+        "pad blocked", "more than 1 ft from the wall", "in front of a window",
+        "in the meter or panel working space", "within 3 ft of the gas meter", "more than 20 ft from the meter",
+        "too close to the gas meter"
+    ]
 
     static func plan(_ input: Input, measurer: CorePlacementMeasurer = CorePlacementMeasurer()) -> Plan {
         let up = SIMD3<Float>(0, 1, 0)
@@ -1082,18 +1118,11 @@ struct BatterySpotPlanner: Sendable {
                         }
                         return .rejected(wallEnds)
                     }
-                    let near = meterHalfWidth
-                    let far = magnitude - halfPad
-                    if far > near {
-                        let between = corridor.filter { along in
-                            let reach = along * sign
-                            return reach > near && reach < far
-                        }.count
-                        if between >= corridorBlockingFaces { return .rejected("something between it and the meter") }
-                    }
                     if let gas {
-                        let dx = Double(position.x - gas.x)
-                        let dz = Double(position.z - gas.z)
+                        // From the cabinet's nearest base edge, as the rule reads it, not from its center.
+                        let edge = BatteryGeometry.nearestBasePoint(origin: position, yaw: yaw, toward: gas)
+                        let dx = Double(edge.x - gas.x)
+                        let dz = Double(edge.z - gas.z)
                         if (dx * dx + dz * dz).squareRoot() / Double(BatteryGeometry.feetToMeters) < gasKeepAwayFeet {
                             return .rejected("too close to the gas meter")
                         }
@@ -1114,27 +1143,116 @@ struct BatterySpotPlanner: Sendable {
                     let counted = gas == nil ? rules.filter { $0.1 != "within 3 ft of the gas meter" } : rules
                     return .fits(unknowns: counted.filter { $0.0 == nil }.count)
                 }
-                candidates.append(Candidate(offsetMeters: offset, position: position, yaw: yaw, verdict: verdict()))
+                let near = meterHalfWidth
+                let far = magnitude - halfPad
+                let between = far > near
+                    ? corridor.filter { along in
+                        let reach = along * sign
+                        return reach > near && reach < far
+                    }.count
+                    : 0
+                candidates.append(Candidate(
+                    offsetMeters: offset,
+                    position: position,
+                    yaw: yaw,
+                    verdict: verdict(),
+                    pathBlocked: between >= corridorBlockingFaces
+                ))
             }
         }
 
+        // Found means every check on the spot was measured clear. A spot that only might fit is not a pass.
         func rank(_ candidate: Candidate) -> (Int, Float, Int)? {
-            guard case .fits(let unknowns) = candidate.verdict else { return nil }
+            guard candidate.verdict == .fits(unknowns: 0) else { return nil }
             let panelSide = panelAlong.map { ($0 < 0) == (candidate.offsetMeters < 0) } ?? false
-            return (unknowns, abs(candidate.offsetMeters), panelSide ? 1 : 0)
+            return (candidate.pathBlocked ? 1 : 0, abs(candidate.offsetMeters), panelSide ? 1 : 0)
         }
         let winner = candidates
             .compactMap { candidate in rank(candidate).map { (candidate, $0) } }
             .min { lhs, rhs in lhs.1 < rhs.1 }?.0
+        let allBlocked = !candidates.isEmpty && candidates.allSatisfy { candidate in
+            if case .rejected(let reason) = candidate.verdict { return blockingReasons.contains(reason) }
+            return false
+        }
         let status: BatterySpotSummary.Status
         if winner != nil {
             status = .placed
-        } else if candidates.allSatisfy({ $0.verdict == .rejected(wallEnds) || $0.verdict == .rejected(notScanned) || $0.verdict == .pending(notScanned) }) {
-            status = .noWall
-        } else {
+        } else if allBlocked, input.coverageComplete {
             status = .allRejected
+        } else {
+            status = .noWall
         }
-        return Plan(candidates: candidates, winner: winner, status: status, panelAlongMeters: panelAlong)
+        // A spot that fits with a check unread is listed with why it is not a pass.
+        let listed = candidates.map { candidate -> Candidate in
+            guard case .fits(let unknowns) = candidate.verdict, unknowns > 0 else { return candidate }
+            var copy = candidate
+            copy.verdict = .pending(notMeasured)
+            return copy
+        }
+        return Plan(candidates: listed, winner: winner, status: status, panelAlongMeters: panelAlong)
+    }
+
+    // MARK: - Look-around coverage
+
+    /// How much of the site-check area the mesh holds: the ground in front of the meter wall and the wall on each
+    /// side of the meter, each a share of 10 cm cells (0…1). Left and right are as seen facing the wall.
+    struct Coverage: Sendable, Equatable {
+        var groundLeft: Float = 0
+        var groundRight: Float = 0
+        var wallLeft: Float = 0
+        var wallRight: Float = 0
+
+        var groundCovered: Bool {
+            groundLeft >= BatterySpotPlanner.coverageShare && groundRight >= BatterySpotPlanner.coverageShare
+        }
+        var leftCovered: Bool { Self.sideCovered(wall: wallLeft, ground: groundLeft) }
+        var rightCovered: Bool { Self.sideCovered(wall: wallRight, ground: groundRight) }
+
+        /// The wall is scanned, or the ground in front of it is scanned and holds no wall at all (a corner or an
+        /// opening): looking longer would not add a wall, so the look-around does not wait for one.
+        private static func sideCovered(wall: Float, ground: Float) -> Bool {
+            wall >= BatterySpotPlanner.coverageShare
+                || (ground >= BatterySpotPlanner.coverageShare && wall <= BatterySpotPlanner.wallEndsShare)
+        }
+    }
+
+    /// Share of cells a region needs before it counts as scanned. Tune on device.
+    static let coverageShare: Float = 0.6
+    /// A wall strip this empty, with its ground scanned, is a wall that ends. Tune on device.
+    static let wallEndsShare: Float = 0.1
+    /// The strip checked on each side: from the meter enclosure's edge out along the wall, where the first
+    /// candidate spots stand. Tune on device.
+    static let coverageAlongMeters: ClosedRange<Float> = 0.35...1.8
+    /// The ground strip's depth out from the wall: the 3 ft pad plus its stand-off.
+    static let coverageOutMeters: ClosedRange<Float> = 0.1...1.0
+    /// The wall strip's height above the ground: where a cabinet's back and a window over it would be.
+    static let coverageHeightMeters: ClosedRange<Float> = 0.2...1.5
+
+    /// Pure: runs on a copy of the scene's samples off the main thread.
+    static func coverage(
+        samples: [ClassifiedMeshSample],
+        meterPoint: SIMD3<Float>,
+        outward rawOutward: SIMD3<Float>,
+        wallBehindMeters: Float,
+        groundY: Float
+    ) -> Coverage {
+        let flat = SIMD3<Float>(rawOutward.x, 0, rawOutward.z)
+        guard simd_length(flat) > 0.001 else { return Coverage() }
+        let outward = simd_normalize(flat)
+        let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), outward))
+        var wall = meterPoint - outward * wallBehindMeters
+        wall.y = groundY
+        let scan = ScanIndex(samples)
+        func side(_ sign: Float) -> (ground: Float, wall: Float) {
+            let along = sign * right
+            return (
+                scan.groundStripCoverage(origin: wall, along: along, outward: outward, alongRange: coverageAlongMeters, outRange: coverageOutMeters),
+                scan.wallStripCoverage(origin: wall, along: along, outward: outward, alongRange: coverageAlongMeters, heightRange: coverageHeightMeters)
+            )
+        }
+        let left = side(-1)
+        let rightSide = side(1)
+        return Coverage(groundLeft: left.ground, groundRight: rightSide.ground, wallLeft: left.wall, wallRight: rightSide.wall)
     }
 }
 
@@ -1197,6 +1315,59 @@ fileprivate struct ScanIndex {
                 if columns.contains(SIMD2(key.x, key.z)) { seen += 1 }
             }
             localX += Self.cell
+        }
+        return total == 0 ? 0 : Float(seen) / Float(total)
+    }
+
+    /// Share of ground cells in a strip in front of a wall that hold any scanned face, seen from above. `origin` is
+    /// on the wall at ground height; `along` and `outward` are horizontal unit vectors.
+    func groundStripCoverage(
+        origin: SIMD3<Float>,
+        along: SIMD3<Float>,
+        outward: SIMD3<Float>,
+        alongRange: ClosedRange<Float>,
+        outRange: ClosedRange<Float>
+    ) -> Float {
+        var seen = 0
+        var total = 0
+        var a = alongRange.lowerBound + Self.cell / 2
+        while a < alongRange.upperBound {
+            var o = outRange.lowerBound + Self.cell / 2
+            while o < outRange.upperBound {
+                let key = Self.key(origin + along * a + outward * o)
+                total += 1
+                if columns.contains(SIMD2(key.x, key.z)) { seen += 1 }
+                o += Self.cell
+            }
+            a += Self.cell
+        }
+        return total == 0 ? 0 : Float(seen) / Float(total)
+    }
+
+    /// Share of cells on a wall face (one cell in front of or behind the plane counts) that hold scanned surface.
+    /// `origin` is on the wall at ground height.
+    func wallStripCoverage(
+        origin: SIMD3<Float>,
+        along: SIMD3<Float>,
+        outward: SIMD3<Float>,
+        alongRange: ClosedRange<Float>,
+        heightRange: ClosedRange<Float>
+    ) -> Float {
+        let up = SIMD3<Float>(0, 1, 0)
+        var seen = 0
+        var total = 0
+        var a = alongRange.lowerBound + Self.cell / 2
+        while a < alongRange.upperBound {
+            var h = heightRange.lowerBound + Self.cell / 2
+            while h < heightRange.upperBound {
+                let point = origin + along * a + up * h
+                total += 1
+                if [-Self.cell, 0, Self.cell].contains(where: { voxels.contains(Self.key(point + outward * $0)) }) {
+                    seen += 1
+                }
+                h += Self.cell
+            }
+            a += Self.cell
         }
         return total == 0 ? 0 : Float(seen) / Float(total)
     }

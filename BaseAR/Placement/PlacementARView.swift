@@ -221,6 +221,58 @@ private struct Feedback: Equatable {
     }
 }
 
+/// Keeps the bottom line steady. The detector reports about four times a second, and showing every read made the cue
+/// jump before it could be trusted. A new cue has to hold for a moment before it shows, and a cue that showed stays
+/// up for a minimum time. Errors, "Paused", the blind-camera cue, and confirmations go straight through.
+private struct FeedbackPacer {
+    /// About three of the last four detector reads. Tune on device.
+    static let settle: Duration = .milliseconds(750)
+    /// ARKit's tracking state is steadier than detector reads. Tune on device.
+    static let trackingSettle: Duration = .milliseconds(500)
+    /// A cue that showed stays at least this long unless something urgent replaces it. Tune on device.
+    static let minDwell: Duration = .milliseconds(1500)
+
+    private(set) var shown: Feedback?
+    private var shownAt: ContinuousClock.Instant?
+    private var shownIsUrgent = false
+    private var candidate: Feedback?
+    private var candidateSince: ContinuousClock.Instant?
+
+    /// Offers the latest cue. Returns how long to wait before offering it again, or nil when nothing is pending.
+    mutating func offer(_ next: Feedback?, urgent: Bool, fromTracking: Bool, now: ContinuousClock.Instant) -> Duration? {
+        if next == shown {
+            candidate = nil
+            candidateSince = nil
+            return nil
+        }
+        // Urgent cues show at once, an empty line takes the first cue at once, and a cleared error never lingers.
+        if urgent || shown == nil || shownIsUrgent {
+            show(next, urgent: urgent, now: now)
+            return nil
+        }
+        if candidate != next {
+            candidate = next
+            candidateSince = now
+        }
+        let settle = fromTracking ? Self.trackingSettle : Self.settle
+        let heldFor = now - (candidateSince ?? now)
+        let shownFor = now - (shownAt ?? now)
+        if heldFor >= settle, shownFor >= Self.minDwell {
+            show(next, urgent: false, now: now)
+            return nil
+        }
+        return max(settle - heldFor, Self.minDwell - shownFor, .milliseconds(50))
+    }
+
+    private mutating func show(_ next: Feedback?, urgent: Bool, now: ContinuousClock.Instant) {
+        shown = next
+        shownAt = now
+        shownIsUrgent = urgent
+        candidate = nil
+        candidateSince = nil
+    }
+}
+
 /// A value typed over the running scan.
 private enum ValueEntry: String, Identifiable {
     case meterNumber
@@ -312,6 +364,12 @@ struct PlacementARView: View {
     @State private var scanFeedback = ScanFeedback()
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
+    @State private var capturedFrames = 0
+    /// The bottom line as shown, paced so it does not flicker at the detector's rate.
+    @State private var pacer = FeedbackPacer()
+    @State private var latestFeedback: Feedback?
+    @State private var pacerWait: Duration?
+    @State private var pacerWake = 0
     /// Steps the scan finished that the scene itself does not show: each lock's capture and a gas meter not seen.
     /// Mirrored on the controller, so coming back to the scan does not ask again.
     @State private var passed: Set<LiveStep>
@@ -737,9 +795,10 @@ struct PlacementARView: View {
                     aimEnabled: step == .gas && scene.gasMeterPosition == nil,
                     // Nothing is marked by a tap: the scan locks, holds, and places by itself.
                     tapEnabled: false,
-                    // Boxes draw for both kinds until each locks, so the detector rests once both are found, and
-                    // once the scan has moved past them.
-                    scanning: findingEquipment && (!meterMarked || !panelMarked),
+                    // Scanning stays on for the whole scan screen, as on main. The controller's detector gate rests
+                    // the detector once both are locked, and the keyframe gate records from the panel lock through
+                    // the look-around; both depend on this staying true.
+                    scanning: true,
                     lockTarget: lockTarget,
                     yawRadians: yawRadians,
                     tone: assessment?.placementTone ?? .incomplete,
@@ -779,6 +838,23 @@ struct PlacementARView: View {
                 .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if capturedFrames > 0 && !coachingIsActive {
+                Label("\(capturedFrames)", systemImage: "camera.fill")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(12)
+                    .accessibilityLabel("\(capturedFrames) scan photos captured")
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                capturedFrames = store.placementController?.keyframes.count ?? 0
+                try? await Task.sleep(for: .seconds(0.5))
+            }
+        }
     }
 
     /// The top line: the one job now. A finished scan opened again says so instead of "Saving".
@@ -802,10 +878,29 @@ struct PlacementARView: View {
     }
 
     private func bottomBar(_ assessment: SurveyAssessment?) -> some View {
-        feedbackLine(feedback(assessment))
+        let raw = feedback(assessment)
+        return feedbackLine(pacer.shown)
             .padding(16)
             .frame(maxWidth: .infinity)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .onChange(of: raw, initial: true) { _, new in pace(new) }
+            .task(id: pacerWake) {
+                guard let wait = pacerWait, await waitFor(wait) else { return }
+                pace(latestFeedback)
+            }
+    }
+
+    private func pace(_ new: Feedback?) {
+        latestFeedback = new
+        let urgent = new.map { cue in
+            cue.isError
+                || cue.text == CoachTip.cantSee.rawValue
+                || cue.text == CoachTip.paused.rawValue
+                || flashTip.map { Feedback($0) } == cue
+        } ?? false
+        let fromTracking = !urgent && trackingMessage != nil && new?.text == trackingMessage
+        pacerWait = pacer.offer(new, urgent: urgent, fromTracking: fromTracking, now: .now)
+        if pacerWait != nil { pacerWake &+= 1 }
     }
 
     /// Animated SF Symbol plus short copy, one cue at a time. The height stays fixed so the line does not jump.
@@ -2581,7 +2676,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// Frames arrive only while the Live Survey's session runs.
         private func updateKeyframeGate() {
             let panelLocked = panelWallHit != nil || panelGroundPosition != nil
-            keyframes.setEnabled(!coachingActive && panelLocked)
+            keyframes.setEnabled(scanningEquipment && !coachingActive && panelLocked)
         }
 
         private var worldBoxesHidden = false

@@ -24,7 +24,10 @@ struct TypeSafeJevClient: Sendable {
         if let env = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !env.isEmpty {
             return env
         }
-        return Bundle.main.object(forInfoDictionaryKey: "TYPESAFE_API_KEY") as? String
+        // An unset build setting leaves an empty string (or the literal placeholder) in Info.plist: that is "no key".
+        guard let plist = Bundle.main.object(forInfoDictionaryKey: "TYPESAFE_API_KEY") as? String else { return nil }
+        let key = plist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return key.isEmpty || key.hasPrefix("$(") ? nil : key
     }
 
     /// Never throws. Offline, auth, HTTP, decode and timeout failures all come back as `.unavailable`.

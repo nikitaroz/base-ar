@@ -995,7 +995,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             hideWorldBoxesIfNeeded()
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
-            equipmentBridge.setEnabled(scanning && !coachingActive)
+            updateDetectorGate()
             updateKeyframeGate()
             if !scanning {
                 clearPendingScan()
@@ -1089,7 +1089,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated func coachingOverlayViewDidDeactivate(_ coachingOverlayView: ARCoachingOverlayView) {
             Task { @MainActor in
                 self.coachingActive = false
-                self.equipmentBridge.setEnabled(self.scanningEquipment)
+                self.updateDetectorGate()
                 self.updateKeyframeGate()
                 self.onCoachingActiveChange?(false)
             }
@@ -1456,6 +1456,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 return
             }
             updateKeyframeGate()
+        }
+
+        /// A home has one meter and one panel. Once the asked-for item is locked there is nothing left to find,
+        /// so the detector stops instead of boxing random objects for the rest of the session. A redo turns it back on.
+        private func updateDetectorGate() {
+            equipmentBridge.setEnabled(scanningEquipment && !coachingActive && searchableTarget() != nil)
         }
 
         /// Scan photos start at the panel lock. Frames from the search before it are mostly ground and sky,
@@ -1945,6 +1951,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .battery, .gasMeter:
                 return
             }
+            updateDetectorGate()
             emit()
         }
 
@@ -1980,7 +1987,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             var best: [EquipmentKind: EquipmentDetection] = [:]
             // Weak boxes still draw. Only boxes at the lock score count toward a lock or a hold.
+            // A kind that is already locked has been found; there is only one per home. Its boxes elsewhere are
+            // false hits, and letting them win the tie-break below would hide the item still being searched for.
+            // A box on the locked item itself is still caught by the separation guard in `lockRejection`.
             for detection in packet.detections where detection.confidence >= EquipmentDetection.drawConfidence {
+                let alreadyLocked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
+                if alreadyLocked { continue }
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
@@ -2297,6 +2309,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelLockSource = source
             }
             resetHold()
+            updateDetectorGate()
         }
 
         /// Live boxes for both kinds, until that kind locks. A lock is a position, not a box left on the camera.

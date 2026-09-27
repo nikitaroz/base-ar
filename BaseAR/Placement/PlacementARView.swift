@@ -1860,7 +1860,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
-            upsertMesh(from: anchors)
+            upsertMesh(from: anchors, frame: session.currentFrame)
             maybeAutoPlace(from: anchors)
         }
 
@@ -1887,9 +1887,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
         }
 
-        private nonisolated func upsertMesh(from anchors: [ARAnchor]) {
+        private nonisolated func upsertMesh(from anchors: [ARAnchor], frame: ARFrame? = nil) {
             let epoch = callbackEpoch.withLock { $0 }
-            let samples = Self.classifiedMeshes(from: anchors)
+            let samples = Self.classifiedMeshes(from: anchors, frame: frame, colors: meshColors)
             guard !samples.isEmpty else { return }
             Task { @MainActor in
                 guard self.isRunning, self.callbackEpoch.withLock({ $0 }) == epoch else { return }

@@ -28,7 +28,13 @@ actor TypeSafeJevClient {
     
     /// Fetch advisory. Gracefully degrades: offline/auth/timeout → advisoryUnavailable.
     func advisory(for session: SurveySession) async -> JevAdvisory {
-        await fetchAdvisory(session: session)
+        do {
+            return try await fetchAdvisory(session: session)
+        } catch is CancellationError {
+            return JevAdvisory(status: .unavailable, reason: "Request cancelled")
+        } catch {
+            return JevAdvisory(status: .unavailable, reason: error.localizedDescription)
+        }
     }
     
     func fetchAdvisory(session: SurveySession) async throws -> TypeSafeJevResponse {
@@ -111,7 +117,7 @@ struct JevQuestion: Codable {
     let instructions: String
     let criteria: Any?
     
-    init(type: String, instructions: String, criteria: [String: String]? = nil) {
+    init(type: String, instructions: String, criteria: Any? = nil) {
         self.type = type
         self.instructions = instructions
         self.criteria = criteria
@@ -127,6 +133,8 @@ struct JevQuestion: Codable {
         try container.encode(instructions, forKey: .instructions)
         if let criteria = criteria as? [String: String] {
             try container.encode(criteria, forKey: .criteria)
+        } else if let criteria = criteria as? [String] {
+            try container.encode(criteria, forKey: .criteria)
         }
     }
     
@@ -134,7 +142,13 @@ struct JevQuestion: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         type = try container.decode(String.self, forKey: .type)
         instructions = try container.decode(String.self, forKey: .instructions)
-        criteria = try? container.decode([String: String].self, forKey: .criteria)
+        if let dict = try? container.decode([String: String].self, forKey: .criteria) {
+            criteria = dict
+        } else if let arr = try? container.decode([String].self, forKey: .criteria) {
+            criteria = arr
+        } else {
+            criteria = nil
+        }
     }
 }
 

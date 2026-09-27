@@ -1,4 +1,5 @@
 import Foundation
+import os
 import simd
 
 /// A vertical plane copied out of ARKit so measurement code does not keep AR objects.
@@ -58,6 +59,18 @@ enum TransferSwitchReservation {
     static let outFromWallMeters: Float = 30 * BatteryGeometry.inchesToMeters
 }
 
+private let meshKeyCounter = OSAllocatedUnfairLock(initialState: 0)
+
+extension PlacementSceneSnapshot {
+    /// A key no other `classifiedMesh` has used in this run of the app.
+    static func newMeshKey() -> Int {
+        meshKeyCounter.withLock { value in
+            value += 1
+            return value
+        }
+    }
+}
+
 struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
@@ -80,6 +93,9 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var lidarMeshAvailable: Bool = false
     /// Classified face samples near the battery, meter, or working space.
     var classifiedMesh: [ClassifiedMeshSample] = []
+    /// Names this exact `classifiedMesh`, so measuring reuses one scan index for it. 0 means unnamed: always rebuilt.
+    /// Set only beside `classifiedMesh`, from `newMeshKey()`.
+    var classifiedMeshKey = 0
     /// Rounded automatic wall clearance so the placement screen refreshes when the scan changes.
     var automaticWallClearanceFeet: Double?
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
@@ -203,7 +219,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let wallFeet = wallDistanceFeet(snapshot)
         let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
         let sameWall = meterAndPanelSameWall(snapshot)
-        let scan = ScanIndex(snapshot.classifiedMesh)
+        let scan = ScanIndex.of(snapshot)
         let footprint = footprintClearance(snapshot, scan: scan)
         let windows = clearOfWindows(snapshot)
         let access = keepsEquipmentAccess(snapshot)
@@ -248,7 +264,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Drawn on the side the check used: the chosen side, or the other side when only that one is clear.
     func transferSwitchBox(in snapshot: PlacementSceneSnapshot) -> TransferSwitchBox? {
-        guard let frame = transferSwitch(snapshot, scan: ScanIndex(snapshot.classifiedMesh))?.frame else { return nil }
+        guard let frame = transferSwitch(snapshot, scan: ScanIndex.of(snapshot))?.frame else { return nil }
         return TransferSwitchBox(
             center: frame.center,
             wallPoint: frame.wallPoint,
@@ -721,6 +737,18 @@ fileprivate struct ScanIndex {
             columns.insert(SIMD2(key.x, key.z))
             voxels.insert(key)
         }
+    }
+
+    private static let latest = OSAllocatedUnfairLock<(key: Int, index: ScanIndex)?>(initialState: nil)
+
+    /// The index for the snapshot's mesh, built once per `classifiedMeshKey`.
+    static func of(_ snapshot: PlacementSceneSnapshot) -> ScanIndex {
+        let key = snapshot.classifiedMeshKey
+        guard key != 0 else { return ScanIndex(snapshot.classifiedMesh) }
+        if let hit = latest.withLock({ $0?.key == key ? $0?.index : nil }) { return hit }
+        let index = ScanIndex(snapshot.classifiedMesh)
+        latest.withLock { $0 = (key, index) }
+        return index
     }
 
     private static func key(_ point: SIMD3<Float>) -> SIMD3<Int32> {

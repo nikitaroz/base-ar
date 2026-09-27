@@ -3,6 +3,7 @@ import SwiftUI
 private enum RootPhase {
     case splash
     case welcome
+    case onboarding
     case hub
 }
 
@@ -20,6 +21,7 @@ struct ContentView: View {
     @State private var path = NavigationPath()
     @State private var startError: String?
     @Namespace private var brandNamespace
+    @AppStorage("hasSeenHomeInfoOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
         Group {
@@ -29,6 +31,13 @@ struct ContentView: View {
             case .welcome:
                 WelcomeView(namespace: brandNamespace) {
                     beginSurvey()
+                }
+            case .onboarding:
+                if let store {
+                    OnboardingContainerView(store: store) {
+                        finishOnboarding()
+                    }
+                    .transition(.opacity)
                 }
             case .hub:
                 if let store {
@@ -85,11 +94,19 @@ struct ContentView: View {
         do {
             store = try SurveyStore(propertyIdentifier: "")
             path = NavigationPath()
-            withAnimation(.easeInOut(duration: 0.35)) {
-                phase = .hub
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                phase = hasSeenOnboarding ? .hub : .onboarding
             }
         } catch {
             startError = error.localizedDescription
+        }
+    }
+
+    private func finishOnboarding() {
+        hasSeenOnboarding = true
+        path = NavigationPath()
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+            phase = .hub
         }
     }
 
@@ -457,7 +474,7 @@ private enum AnswerChoice: String, CaseIterable, Identifiable {
     }
 }
 
-private enum OwnershipChoice: String, CaseIterable, Identifiable {
+enum OwnershipChoice: String, CaseIterable, Identifiable {
     case own
     case rent
 
@@ -486,7 +503,7 @@ private enum OwnershipChoice: String, CaseIterable, Identifiable {
     }
 }
 
-private enum BatteryCountChoice: String, CaseIterable, Identifiable {
+enum BatteryCountChoice: String, CaseIterable, Identifiable {
     case one
     case two
 
@@ -745,7 +762,7 @@ private struct HomeInformationView: View {
     }
 }
 
-private struct RadioChoice<Choice: Hashable & Identifiable>: View where Choice: CaseIterable, Choice.AllCases: RandomAccessCollection {
+struct RadioChoice<Choice: Hashable & Identifiable>: View where Choice: CaseIterable, Choice.AllCases: RandomAccessCollection {
     var title: String
     @Binding var selection: Choice?
     var label: (Choice) -> String

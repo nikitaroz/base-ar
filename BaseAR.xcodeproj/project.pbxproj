@@ -18,13 +18,9 @@
 		B10000000000000000000004 /* MeterNumberRecognizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* MeterNumberRecognizing.swift */; };
 		B10000000000000000000005 /* CameraImagePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* CameraImagePicker.swift */; };
 		B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* ElectricalCaptureView.swift */; };
-		B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* VisionElectricalRecognizer.swift */; };
-		B10000000000000000000014 /* LiveLabelScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* LiveLabelScanner.swift */; };
 		B10000000000000000000007 /* BatteryGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* BatteryGeometry.swift */; };
 		B10000000000000000000008 /* PlacementMeasuring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* PlacementMeasuring.swift */; };
 		B10000000000000000000009 /* PlacementARView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* PlacementARView.swift */; };
-		C10000000000000000000001 /* EquipmentDetecting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* EquipmentDetecting.swift */; };
-		C10000000000000000000002 /* EquipmentScan.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* EquipmentScan.mlpackage */; };
 		B1000000000000000000000A /* EligibilityRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000A /* EligibilityRule.swift */; };
 		B1000000000000000000000B /* BaseRuleSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000B /* BaseRuleSet.swift */; };
 		B1000000000000000000000C /* SurveyEvaluating.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000C /* SurveyEvaluating.swift */; };
@@ -34,7 +30,13 @@
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
 		B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */; };
+		B10000000000000000000014 /* LiveLabelScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* LiveLabelScanner.swift */; };
+		B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* VisionElectricalRecognizer.swift */; };
 		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
+		C10000000000000000000001 /* EquipmentDetecting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* EquipmentDetecting.swift */; };
+		C10000000000000000000002 /* EquipmentScan.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* EquipmentScan.mlpackage */; };
+		E10000000000000000000001 /* OnboardingContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* OnboardingContainerView.swift */; };
+		E10000000000000000000002 /* OnboardingPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* OnboardingPages.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,13 +63,9 @@
 		B20000000000000000000004 /* MeterNumberRecognizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeterNumberRecognizing.swift; sourceTree = "<group>"; };
 		B20000000000000000000005 /* CameraImagePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraImagePicker.swift; sourceTree = "<group>"; };
 		B20000000000000000000006 /* ElectricalCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElectricalCaptureView.swift; sourceTree = "<group>"; };
-		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
-		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
 		B20000000000000000000007 /* BatteryGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryGeometry.swift; sourceTree = "<group>"; };
 		B20000000000000000000008 /* PlacementMeasuring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementMeasuring.swift; sourceTree = "<group>"; };
 		B20000000000000000000009 /* PlacementARView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacementARView.swift; sourceTree = "<group>"; };
-		C20000000000000000000001 /* EquipmentDetecting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquipmentDetecting.swift; sourceTree = "<group>"; };
-		C20000000000000000000002 /* EquipmentScan.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = EquipmentScan.mlpackage; sourceTree = "<group>"; };
 		B2000000000000000000000A /* EligibilityRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EligibilityRule.swift; sourceTree = "<group>"; };
 		B2000000000000000000000B /* BaseRuleSet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseRuleSet.swift; sourceTree = "<group>"; };
 		B2000000000000000000000C /* SurveyEvaluating.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurveyEvaluating.swift; sourceTree = "<group>"; };
@@ -78,9 +76,15 @@
 		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
 		B20000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionMeterNumberRecognizer.swift; sourceTree = "<group>"; };
+		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
+		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
 		B20000000000000000000016 /* BatteryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCatalog.swift; sourceTree = "<group>"; };
+		C20000000000000000000001 /* EquipmentDetecting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquipmentDetecting.swift; sourceTree = "<group>"; };
+		C20000000000000000000002 /* EquipmentScan.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = EquipmentScan.mlpackage; sourceTree = "<group>"; };
 		D20000000000000000000001 /* BaseAR.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BaseAR.xcconfig; sourceTree = "<group>"; };
 		D20000000000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
+		E20000000000000000000001 /* OnboardingContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingContainerView.swift; sourceTree = "<group>"; };
+		E20000000000000000000002 /* OnboardingPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPages.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +122,7 @@
 			children = (
 				A20000000000000000000001 /* BaseARApp.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
+				E70000000000000000000001 /* Onboarding */,
 				B70000000000000000000010 /* Survey */,
 				B70000000000000000000011 /* Electrical */,
 				B70000000000000000000012 /* Placement */,
@@ -218,6 +223,15 @@
 				B20000000000000000000011 /* PropertyLocationMap.swift */,
 			);
 			path = Location;
+			sourceTree = "<group>";
+		};
+		E70000000000000000000001 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				E20000000000000000000001 /* OnboardingContainerView.swift */,
+				E20000000000000000000002 /* OnboardingPages.swift */,
+			);
+			path = Onboarding;
 			sourceTree = "<group>";
 		};
 		D70000000000000000000001 /* Config */ = {
@@ -345,6 +359,8 @@
 				B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */,
 				B10000000000000000000010 /* AddressCompleter.swift in Sources */,
 				B10000000000000000000011 /* PropertyLocationMap.swift in Sources */,
+				E10000000000000000000001 /* OnboardingContainerView.swift in Sources */,
+				E10000000000000000000002 /* OnboardingPages.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -421,6 +437,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;
@@ -455,6 +472,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;

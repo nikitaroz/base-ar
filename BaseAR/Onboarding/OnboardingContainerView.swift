@@ -1,0 +1,107 @@
+import SwiftUI
+
+/// Six-step first-launch wizard that collects the essential Home & Personal Info fields.
+/// Writes through the same `SurveyStore` setters the Home tile uses, so skipped fields
+/// stay empty and are still fillable from the tile later.
+struct OnboardingContainerView: View {
+    var store: SurveyStore
+    var onFinish: () -> Void
+
+    @State private var step: OnboardingStep = .intro
+
+    private var progress: Double {
+        Double(step.index + 1) / Double(OnboardingStep.total)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(.systemBackground))
+        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: step)
+    }
+
+    private var header: some View {
+        HStack(alignment: .center, spacing: 14) {
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(Color.accentColor)
+                .frame(height: 4)
+                .animation(.easeOut(duration: 0.35), value: progress)
+            if step != .done {
+                Button("Skip") { onFinish() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("Skip onboarding")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch step {
+        case .intro:
+            OnboardingIntroPage(onNext: advance)
+                .transition(pageTransition)
+        case .name:
+            OnboardingNamePage(store: store, onNext: advance, onSkip: advance)
+                .transition(pageTransition)
+        case .address:
+            OnboardingAddressPage(store: store, onNext: advance, onSkip: advance)
+                .transition(pageTransition)
+        case .ownership:
+            OnboardingOwnershipPage(store: store, onNext: advance, onSkip: advance)
+                .transition(pageTransition)
+        case .batteryCount:
+            OnboardingBatteryCountPage(store: store, onNext: advance, onSkip: advance)
+                .transition(pageTransition)
+        case .done:
+            OnboardingDonePage(onContinue: onFinish)
+                .transition(pageTransition)
+        }
+    }
+
+    private var pageTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
+        )
+    }
+
+    private func advance() {
+        if let next = step.next {
+            step = next
+        } else {
+            onFinish()
+        }
+    }
+}
+
+enum OnboardingStep: Int, CaseIterable, Equatable {
+    case intro
+    case name
+    case address
+    case ownership
+    case batteryCount
+    case done
+
+    static let total = OnboardingStep.allCases.count
+
+    var index: Int { rawValue }
+
+    var next: OnboardingStep? {
+        OnboardingStep(rawValue: rawValue + 1)
+    }
+}
+
+#Preview {
+    OnboardingContainerView(
+        store: try! SurveyStore(propertyIdentifier: ""),
+        onFinish: {}
+    )
+}

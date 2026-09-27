@@ -249,21 +249,26 @@ enum ScanTextParser {
         return best?.read
     }
 
-    /// The main breaker's rating on this panel, or nil. Beside "MAIN" always counts. With a detector box around the
-    /// panel, the rating printed biggest (the main handle) counts too. Never the panel's bus rating.
+    /// The main breaker's rating on this panel, or nil. Only a rating with the word MAIN on its line or on the box
+    /// right beside it counts, and never one on a line of the panel's own ratings: "Maximum per stab 125A" on the
+    /// demo wall's label is not the main breaker. Never the panel's bus rating.
     static func mainBreakerAmps(in lines: [ScanTextLine], allowLargestHandle: Bool) -> BreakerRead? {
         let usable = lines.filter { $0.confidence >= minLineConfidence }
         // A meter nameplate (CL200, 240V, kWh) is not a panel.
         guard !usable.contains(where: { isStrongMeterCue($0.text) }) else { return nil }
-        let mains = usable.filter { $0.text.lowercased().contains("main") && !isPanelRatingLabel($0.text) }
+        // OCR splits a label's table row into boxes ("Maximum per stab" | "125A"); the whole row is the line.
+        func row(_ line: ScanTextLine) -> String {
+            usable.filter { isSameRow($0.box, line.box) }.map(\.text).joined(separator: " ")
+        }
+        let mains = usable.filter { hasMainWord($0.text) && !isPanelRatingLabel(row($0)) }
         var nearMain: (height: CGFloat, read: BreakerRead)?
         var ratings: [(line: ScanTextLine, amps: Int)] = []
-        // The panel's own label ("200A MAX", "MAIN LUGS", "BUS RATING") carries the bus rating, never the breaker's.
-        for line in usable where !isPanelRatingLabel(line.text) {
+        // The panel's own label ("200A MAX", "MAIN LUGS", "BUS RATING", "per stab") carries the bus rating, never the breaker's.
+        for line in usable where !isPanelRatingLabel(row(line)) {
             for amps in ratingTokens(in: line.text) {
                 ratings.append((line, amps))
-                let onMainLine = line.text.lowercased().contains("main")
-                let neighbor = mains.first { isNear($0.box, line.box) }
+                let onMainLine = hasMainWord(line.text)
+                let neighbor = mains.first { isAdjacent($0.box, line.box) }
                 guard onMainLine || neighbor != nil else { continue }
                 let box = neighbor.map { $0.box.union(line.box) } ?? line.box
                 if nearMain == nil || line.box.height > nearMain!.height {
@@ -272,7 +277,8 @@ enum ScanTextParser {
             }
         }
         if let nearMain { return nearMain.read }
-        guard allowLargestHandle else { return nil }
+        // Off: the biggest print with no MAIN beside it took "125A" from a "Maximum per stab" row.
+        guard allowLargestHandle, largestHandleEnabled else { return nil }
         // Branch handles print 15, 20, 30…; the main handle's rating is the biggest print among the numbers.
         let numeric = usable.filter { isNumberOnly($0.text) }.sorted { $0.box.height > $1.box.height }
         guard let tallest = numeric.first,
@@ -282,12 +288,23 @@ enum ScanTextParser {
     }
 
     /// Words of the panel's nameplate, whose amps are the bus rating: those numbers never count as the main breaker.
-    private static func isPanelRatingLabel(_ text: String) -> Bool {
+    static func isPanelRatingLabel(_ text: String) -> Bool {
         let lower = text.lowercased()
         let words = ["bus", "lug", "max", "rated", "rating", "load center", "loadcenter", "catalog", "cat no", "cat.",
-                     "suitable", "service entrance", "short circuit", "interrupting", "sccr", "enclosure", "volt"]
-        return words.contains { lower.contains($0) }
+                     "suitable", "service entrance", "short circuit", "interrupting", "sccr", "enclosure", "volt",
+                     "stab", "awg", "torque", "in-lb", "lb-in", "in lb", "lb in", "kaic"]
+        if words.contains(where: { lower.contains($0) }) { return true }
+        // Short units only as their own token: "10kA", "22 AIC", "60Hz", "240VAC", "240V~" ("22kAIC" is above).
+        return lower.range(of: #"(?<![a-z])(aic|ka|hz|vac|v~)(?![a-z])"#, options: .regularExpression) != nil
     }
+
+    /// The word MAIN (MAIN, MAINS, MAIN BREAKER, MAIN DISCONNECT), not "maintenance" or "remain".
+    static func hasMainWord(_ text: String) -> Bool {
+        text.lowercased().range(of: #"(?<![a-z])mains?(?![a-z])"#, options: .regularExpression) != nil
+    }
+
+    /// The biggest print on the panel as the main handle, with no MAIN beside it. Off: it read label rows as the breaker.
+    private static let largestHandleEnabled = false
 
     static func hasMeterCue(_ text: String) -> Bool {
         let lower = text.lowercased()
@@ -325,6 +342,17 @@ enum ScanTextParser {
     private static func isNear(_ a: CGRect, _ b: CGRect) -> Bool {
         let height = max(a.height, b.height, 0.01)
         return abs(a.midY - b.midY) < height * 2.5 && abs(a.midX - b.midX) < max(a.width, b.width) / 2 + height * 4
+    }
+
+    /// Boxes on one printed row: vertical centers within half a line height.
+    private static func isSameRow(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.midY - b.midY) < max(min(a.height, b.height), 0.005) * 0.5
+    }
+
+    /// MAIN on the same row or the line directly above or below: centers under two line heights apart.
+    private static func isAdjacent(_ a: CGRect, _ b: CGRect) -> Bool {
+        let height = max(a.height, b.height, 0.01)
+        return abs(a.midY - b.midY) < height * 1.8 && abs(a.midX - b.midX) < max(a.width, b.width) / 2 + height * 4
     }
 
     private struct DigitRun {

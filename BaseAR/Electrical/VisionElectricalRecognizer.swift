@@ -72,8 +72,19 @@ enum ElectricalLabelParser {
         return singles.max(by: { $0.count < $1.count })
     }
 
+    /// Only a rating with MAIN on its line or the line right above or below counts, and never one on a line of the
+    /// panel's own ratings ("Maximum per stab 125A", bus, AIC, torque, volts): those are not the main breaker.
     static func mainBreakerAmperage(in lines: [String]) -> Int? {
-        let matches = lines.flatMap { amperageMatches(in: $0) }
+        let matches = lines.indices.flatMap { index -> [AmperageMatch] in
+            let line = lines[index]
+            guard !ScanTextParser.isPanelRatingLabel(line) else { return [] }
+            let besideMain = [index - 1, index + 1].contains { neighbor in
+                lines.indices.contains(neighbor) && ScanTextParser.hasMainWord(lines[neighbor])
+                    && !ScanTextParser.isPanelRatingLabel(lines[neighbor])
+            }
+            let found = amperageMatches(in: line)
+            return found.first?.isMainLine == true || besideMain ? found : []
+        }
         return matches.max { lhs, rhs in
             if lhs.isMainLine != rhs.isMainLine { return rhs.isMainLine }
             if lhs.hasSuffix != rhs.hasSuffix { return rhs.hasSuffix }
@@ -159,7 +170,7 @@ enum ElectricalLabelParser {
     private static func amperageMatches(in line: String) -> [AmperageMatch] {
         let chars = Array(line)
         let lower = line.lowercased()
-        let isMain = lower.contains("main") || lower.contains("disconnect")
+        let isMain = ScanTextParser.hasMainWord(lower)
         var matches: [AmperageMatch] = []
         var index = 0
         while index < chars.count {

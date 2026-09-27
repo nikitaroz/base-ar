@@ -478,6 +478,7 @@ struct PlacementARView: View {
             Button("Next", action: goForward)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(!meterIsMarked || !panelIsMarked)
             // Secondary manual controls moved below primary action
             if let missedTarget {
                 Button(missedTarget == .meter ? "Mark meter yourself" : "Mark panel yourself") {
@@ -487,20 +488,6 @@ struct PlacementARView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
             }
-            Button {
-                finishScan()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Done")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
             Button("Skip for now") {
                 cancelPendingSave()
                 commitLiveScene()
@@ -508,13 +495,6 @@ struct PlacementARView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
-            Button("Back", action: goBack)
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            Text("This is a preliminary survey, not an install measurement. Green only when every required check has measured evidence and passes. Teal means a pass relied on an attestation, not a measurement.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
         }
     }
 
@@ -947,7 +927,7 @@ struct PlacementARView: View {
         let snapshot = controller.snapshotForCapture()
         guard snapshot.batteryPosition != nil, snapshot.trackingIsNormal,
               snapshot.batteryModelID == store.session.selectedBatteryModelId else {
-            statusMessage = "Wait for tracking and place the battery on a detected surface before saving."
+            statusMessage = "Place the battery preview before saving."
             return
         }
         let token = UUID()

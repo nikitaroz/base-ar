@@ -38,6 +38,8 @@ def main() -> None:
         exist_ok=True,
         # Phones tilt and outdoor light varies; flips are fine for both classes.
         degrees=10,
+        # Strong zoom-out so panels 10+ ft away still look familiar next to the negatives.
+        scale=0.9,
         fliplr=0.5,
         hsv_v=0.5,
         plots=True,

@@ -138,10 +138,7 @@ struct ReviewView: View {
 
             detailCard(title: "Electrical evidence", symbol: "bolt.fill", isExpanded: $electricalExpanded) {
                 electricalDetails
-                HStack {
-                    editButton("Edit meter", route: .meter)
-                    editButton("Edit breaker", route: .breaker)
-                }
+                editButton("Edit electrical", route: .electrical)
             }
 
             detailCard(title: "Site measurements", symbol: "arkit", isExpanded: $placementExpanded) {
@@ -200,7 +197,6 @@ struct ReviewView: View {
     private var electricalDetails: some View {
         VStack(alignment: .leading, spacing: 10) {
             evidenceImage(store.meterImage, label: "Round electric meter")
-            evidenceImage(store.breakerImage, label: "Main disconnect or breaker")
             LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
             if let source = store.session.electrical.meterNumberSource {
                 LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
@@ -226,6 +222,8 @@ struct ReviewView: View {
             LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
             LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
             LabeledContent("3 × 3 ft footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
+            LabeledContent("Not in front of a window", value: observation(store.session.placement.clearOfWindows))
+            LabeledContent("Clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
             LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
             LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
             LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelSameWall))
@@ -234,7 +232,7 @@ struct ReviewView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if store.placementController?.hasExportableMesh == true {
-                Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Blue is wall, green is floor, gray is ceiling, orange is other.")
+                Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Blue is wall, cyan is a window, green is floor, gray is ceiling, orange is other.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -360,8 +358,7 @@ struct ReviewView: View {
     private var nextActions: [ReviewAction] {
         [
             ReviewAction(route: .home, title: "Home and personal info", symbol: "house.fill", count: homeMissingCount),
-            ReviewAction(route: .meter, title: "Electrical meter", symbol: "gauge.with.dots.needle.33percent", count: meterMissingCount),
-            ReviewAction(route: .breaker, title: "Breaker box", symbol: "bolt.fill", count: breakerMissingCount),
+            ReviewAction(route: .electrical, title: "Electrical", symbol: "bolt.fill", count: electricalMissingCount),
             ReviewAction(route: .placement, title: "Site measurements", symbol: "arkit", count: placementMissingCount)
         ].filter { $0.count > 0 }
     }
@@ -383,22 +380,16 @@ struct ReviewView: View {
         ].filter { $0 }.count
     }
 
-    private var meterMissingCount: Int {
+    private var electricalMissingCount: Int {
         [
             store.session.electrical.meterPhotoFilename == nil,
-            (store.session.electrical.meterNumber ?? "").isBlank
-        ].filter { $0 }.count
-    }
-
-    private var breakerMissingCount: Int {
-        [
-            store.session.electrical.breakerPhotoFilename == nil,
+            (store.session.electrical.meterNumber ?? "").isBlank,
             store.session.electrical.mainBreakerAmperage == nil
         ].filter { $0 }.count
     }
 
     private var placementMissingCount: Int {
-        max(0, missingCount - homeMissingCount - meterMissingCount - breakerMissingCount)
+        max(0, missingCount - homeMissingCount - electricalMissingCount)
     }
 
     private var breakerText: String {

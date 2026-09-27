@@ -52,9 +52,6 @@ enum MissingInformation {
         if session.electrical.meterPhotoFilename == nil {
             items.append("Photo of the round electric meter")
         }
-        if session.electrical.breakerPhotoFilename == nil {
-            items.append("Photo of the main disconnect or breaker")
-        }
         let meterNumber = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if meterNumber.isEmpty {
             items.append("Meter number")
@@ -97,6 +94,12 @@ enum MissingInformation {
             }
             if session.placement.footprintIsClear == nil {
                 items.append("Clearance inside the 3 ft × 3 ft planning footprint")
+            }
+            if session.placement.clearOfWindows == nil {
+                items.append("Whether the battery is in front of a window")
+            }
+            if session.placement.keepsEquipmentAccess == nil {
+                items.append("Whether the battery blocks the meter or panel working space")
             }
         }
         if session.placement.meterHeightFeet == nil {

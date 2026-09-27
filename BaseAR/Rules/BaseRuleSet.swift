@@ -22,6 +22,8 @@ enum BaseRuleSet {
         planningFootprint,
         meterDistance,
         wallDistance,
+        windowClearance,
+        equipmentAccess,
         gasMeterClearance,
         transferSwitchSpace,
         meterHeight,
@@ -121,6 +123,39 @@ enum BaseRuleSet {
                 passText: { "Measured clearance to the nearest detected wall is \($0), within 1 ft." },
                 conflictText: { "Measured clearance to the nearest detected wall is \($0), more than 1 ft." }
             )
+        }
+    )
+
+    private static let windowClearance = EligibilityRule(
+        id: "not-in-front-of-window",
+        title: "Not in front of a window",
+        requirement: "The battery cannot be placed in front of a window.",
+        isRequired: true,
+        evaluate: { session in
+            guard let clear = session.placement.clearOfWindows else {
+                return .unknown("The wall behind the battery has not been scanned, so a window there was not checked.")
+            }
+            return clear
+                ? .pass("The scanned wall behind the cabinet has no window in front of the battery.")
+                : .conflict("A detected window overlaps the cabinet, so the battery is in front of a window.")
+        }
+    )
+
+    private static let equipmentAccess = EligibilityRule(
+        id: "meter-panel-access",
+        title: "Not in front of the meter or panel",
+        requirement: "Keep the \(Int(workingSpaceWidthInches)) × \(Int(workingSpaceDepthInches)) in working space in front of the meter and the panel free of the battery.",
+        isRequired: true,
+        evaluate: { session in
+            guard session.placement.batteryPlaced else {
+                return .unknown("The battery has not been placed.")
+            }
+            guard let clear = session.placement.keepsEquipmentAccess else {
+                return .unknown("Tap the meter and the panel on the wall to check the battery stays out of their working space.")
+            }
+            return clear
+                ? .pass("The battery stays out of the working space in front of the meter and the panel.")
+                : .conflict("The battery stands in the working space in front of the meter or the panel.")
         }
     )
 

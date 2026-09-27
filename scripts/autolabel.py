@@ -4,6 +4,8 @@
 Only raw/meter/ is auto-labeled: Commons panels are European switchboards and hurt more
 than they help. Hand-labeled photos (a .txt sidecar next to the image, in training/site/
 and training/reference/) are copied as-is and repeated so they outweigh Commons.
+training/negatives/ holds photos with no meter or panel and empty labels, so the model
+learns to stay quiet on disconnects, batteries, and other gray boxes.
 Stems listed in training/exclude.txt (one per line) are skipped after human review.
 
 Writes training/dataset/{images,labels}/{train,val} and training/review/*.jpg
@@ -34,9 +36,10 @@ FOLDER_CLASS = {"meter": 0, "panel": 1}
 RAW_KINDS = ["meter"]
 OWN_CONF = 0.3
 VAL_FRACTION = 0.15
-HAND_LABELED = ["site", "reference"]
+HAND_LABELED = ["site", "reference", "negatives"]
 # Held-out site photos, so validation measures the real target look.
-VAL_STEMS = {"meter_IMG_5092", "meter_IMG_5094", "panel_IMG_5084", "panel_IMG_5096"}
+VAL_STEMS = {"meter_IMG_5092", "meter_IMG_5094", "panel_IMG_5084", "panel_IMG_5096",
+             "neg_IMG_5110", "neg_IMG_5113", "neg_IMG_5116"}
 HAND_REPEAT = 3
 COLORS = ["#2f9e44", "#e8590c"]
 
@@ -59,7 +62,7 @@ def main() -> None:
     excluded = set((ROOT / "exclude.txt").read_text().split()) if (ROOT / "exclude.txt").exists() else set()
     images = [(p, FOLDER_CLASS[kind]) for kind in RAW_KINDS for p in sorted((ROOT / "raw" / kind).glob("*.jpg"))
               if p.stem not in excluded]
-    images += [(p, FOLDER_CLASS[p.stem.split("_")[0]]) for folder in HAND_LABELED for p in sorted((ROOT / folder).glob("*.jpg"))]
+    images += [(p, FOLDER_CLASS.get(p.stem.split("_")[0], -1)) for folder in HAND_LABELED for p in sorted((ROOT / folder).glob("*.jpg"))]
     random.seed(7)
     unlabeled, drawn = [], []
 

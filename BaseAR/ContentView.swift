@@ -9,8 +9,7 @@ private enum RootPhase {
 
 enum HubRoute: Hashable {
     case home
-    case meter
-    case breaker
+    case electrical
     case placement
     case review
 }
@@ -71,10 +70,8 @@ struct ContentView: View {
                 switch route {
                 case .home:
                     HomeInformationView(store: store)
-                case .meter:
-                    ElectricalCaptureView(store: store, focus: .meter)
-                case .breaker:
-                    ElectricalCaptureView(store: store, focus: .breaker)
+                case .electrical:
+                    ElectricalCaptureView(store: store)
                 case .placement:
                     PlacementARView(store: store) {
                         path.append(HubRoute.review)
@@ -183,7 +180,7 @@ private struct WelcomeView: View {
                             .font(.largeTitle.bold())
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Add your home details, take two electrical photos, and preview where a Base Core could sit outside.")
+                        Text("Add your home details, photograph the meter, enter the breaker size, and preview where a Base Core could sit outside.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -231,9 +228,9 @@ private struct SurveyHubView: View {
                 Text("Site survey")
                     .font(.largeTitle.bold())
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(completedSectionCount) of 4 sections complete")
+                    Text("\(completedSectionCount) of 3 sections complete")
                         .font(.headline)
-                    ProgressView(value: Double(completedSectionCount), total: 4)
+                    ProgressView(value: Double(completedSectionCount), total: 3)
                         .animation(.easeOut(duration: 0.4), value: completedSectionCount)
                     Text("Complete these in any order. Your answers save as you go.")
                         .font(.subheadline)
@@ -252,26 +249,17 @@ private struct SurveyHubView: View {
                     }
                     animatedTile(index: 1) {
                         hubTile(
-                            title: "Electrical meter",
-                            subtitle: "A photo and the meter number",
-                            symbol: "gauge.with.dots.needle.33percent",
-                            progress: meterProgress,
-                            route: .meter
+                            title: "Electrical",
+                            subtitle: "Meter photo, meter number, and breaker size",
+                            symbol: "bolt.fill",
+                            progress: electricalProgress,
+                            route: .electrical
                         )
                     }
                     animatedTile(index: 2) {
                         hubTile(
-                            title: "Breaker box",
-                            subtitle: "A photo and the breaker size",
-                            symbol: "bolt.fill",
-                            progress: breakerProgress,
-                            route: .breaker
-                        )
-                    }
-                    animatedTile(index: 3) {
-                        hubTile(
                             title: "Site measurements",
-                            subtitle: "Mark the meter, panel, and gas, then measure distances.",
+                            subtitle: "Find the meter and panel, then step back.",
                             symbol: "arkit",
                             progress: placementProgress,
                             route: .placement
@@ -328,16 +316,10 @@ private struct SurveyHubView: View {
         ])
     }
 
-    private var meterProgress: StepProgress {
+    private var electricalProgress: StepProgress {
         progress(for: [
             store.session.electrical.meterPhotoFilename != nil,
-            filled(store.session.electrical.meterNumber ?? "")
-        ])
-    }
-
-    private var breakerProgress: StepProgress {
-        progress(for: [
-            store.session.electrical.breakerPhotoFilename != nil,
+            filled(store.session.electrical.meterNumber ?? ""),
             store.session.electrical.mainBreakerAmperage != nil
         ])
     }
@@ -353,7 +335,7 @@ private struct SurveyHubView: View {
     }
 
     private var sectionProgress: [StepProgress] {
-        [homeProgress, meterProgress, breakerProgress, placementProgress]
+        [homeProgress, electricalProgress, placementProgress]
     }
 
     private var completedSectionCount: Int {

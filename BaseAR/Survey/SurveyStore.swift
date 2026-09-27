@@ -7,16 +7,12 @@ import UIKit
 final class SurveyStore {
     private(set) var session: SurveySession
     var meterImage: UIImage?
-    var breakerImage: UIImage?
     var placementImage: UIImage?
     private(set) var exportURLs: [URL] = []
     private(set) var lastExportError: String?
     /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
     private(set) var meterNumberNote: String?
-    /// Shown under the amperage field after a scan or a failed read. Cleared when the user edits the rating.
-    private(set) var breakerAmperageNote: String?
     private(set) var isReadingMeterNumber = false
-    private(set) var isReadingBreakerAmperage = false
     /// Shown when the property fix failed or location access is off. Nil while waiting or after a fix.
     private(set) var locationStatusMessage: String?
     /// True from the tap until a fix or a failure. The form uses this so the tap has an immediate result.
@@ -33,7 +29,6 @@ final class SurveyStore {
     private let recognizer: any MeterNumberRecognizing
     private let locationProvider = PropertyLocationProvider()
     private var meterReadGeneration = 0
-    private var breakerReadGeneration = 0
 
     init(
         propertyIdentifier: String,
@@ -129,9 +124,8 @@ final class SurveyStore {
         refreshAssessment()
     }
 
-    func setMainBreakerAmperage(_ value: Int?, note: String? = nil) {
+    func setMainBreakerAmperage(_ value: Int?) {
         session.electrical.mainBreakerAmperage = value
-        breakerAmperageNote = note
         refreshAssessment()
     }
 
@@ -185,29 +179,6 @@ final class SurveyStore {
         }
     }
 
-    func attachBreakerPhoto(_ image: UIImage) {
-        breakerImage = image
-        let jpeg = Self.uprightJPEG(image)
-        session.electrical.breakerPhotoFilename = write(jpeg, filename: "breaker.jpg")
-        refreshAssessment()
-        guard let jpeg else { return }
-        guard session.electrical.mainBreakerAmperage == nil else { return }
-        breakerReadGeneration += 1
-        let generation = breakerReadGeneration
-        isReadingBreakerAmperage = true
-        Task {
-            let amps = await recognizer.recognizeMainBreakerAmperage(in: jpeg)
-            guard generation == breakerReadGeneration else { return }
-            isReadingBreakerAmperage = false
-            guard session.electrical.mainBreakerAmperage == nil else { return }
-            if let amps {
-                setMainBreakerAmperage(amps, note: "Read from the photo. Confirm it matches the main breaker.")
-            } else {
-                breakerAmperageNote = "Couldn't read a breaker rating from that photo. Type it, or scan the handle."
-            }
-        }
-    }
-
     func measurements(for snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {
         measurer.measure(snapshot)
     }
@@ -254,7 +225,6 @@ final class SurveyStore {
             }
             for name in [
                 session.electrical.meterPhotoFilename,
-                session.electrical.breakerPhotoFilename,
                 session.placement.screenshotFilename
             ] {
                 guard let name else { continue }

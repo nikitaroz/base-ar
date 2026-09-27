@@ -23,12 +23,11 @@ The Xcode target is `BaseAR`. The home-screen name is Base Site Survey.
 
 1. **Splash.** Brief branded start (home-screen name: Base Site Survey).
 2. **Intro.** Setup-assistant screen (“Let’s get your battery placement”) that opens a new `SurveySession`.
-3. **Hub.** Four tiles, all available at once (debug layout; a forced step-by-step wizard may come later):
+3. **Hub.** Three tiles, all available at once (debug layout; a forced step-by-step wizard may come later):
    - **Home and personal info** — name, email, phone, address or property identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, and planned battery count (1 or 2). Those choices use radio buttons. The phone’s property location fix requests precise location and is shown on a map, with the reported accuracy drawn as a circle.
-   - **Electrical Meter** — round meter photo and meter number.
-   - **Breaker box** — main disconnect/breaker photo and amperage. Meter number and amperage stay distinct fields.
+   - **Electrical** — round meter photo, meter number, and typed main-breaker amperage. Meter number and amperage stay distinct fields.
    - **Battery placement** — outdoor `ARView` with ground and wall plane detection. Tap the ground to place, move, and rotate a simple 3D Base Core placeholder at about **30.68 in W × 35.9 in H × 22 in D**, with a separately visible **3 ft × 3 ft** planning footprint. Mark the meter in the scene. Use LiDAR mesh when supported; placement must still work without LiDAR.
-4. **Review.** Reachable from the hub (and after placement). Show both images, the confirmed breaker value, the solar answer, an AR placement screenshot, and what is still missing. Save a local JSON survey and make the review screen shareable.
+4. **Review.** Reachable from the hub (and after placement). Show the meter photo, the confirmed breaker amperage, the solar answer, an AR placement screenshot, and what is still missing. Save a local JSON survey and make the review screen shareable.
 
 ## Parallel work
 
@@ -50,6 +49,7 @@ Configurable Base guidance (Austin):
 - Within 20 ft of the meter.
 - Within 1 ft of the wall.
 - At least 3 ft from a gas meter.
+- Not in front of a window.
 - Space for a transfer switch beside the meter.
 
 The placement preview is **green** only when every required check has measured evidence and passes. **Amber** means unknown. **Red** means an observed conflict.
@@ -70,7 +70,7 @@ Base splits a battery request into two steps. [Get Started](https://www.basepowe
 
 Base’s product filters stay on the survey for a person to read. Renters are waitlisted. An existing whole-home standby generator and a third-party whole-home battery are treated as incompatible. Placement color stays on measured siting checks.
 
-**Photos.** Base’s published kit is nine compositions: a meter photo with a legible number, the surrounding meter area from about 10 steps back, the area to the right, the area to the left, the adjacent wall corner to corner, behind the fence when that applies, the breaker box, the main disconnect with amperage visible, and the area around the breaker box. This app still stores one meter photo, one breaker photo, and one AR screenshot. Typed meter number and breaker amperage remain the values the user accepts.
+**Photos.** Base’s published kit is nine compositions: a meter photo with a legible number, the surrounding meter area from about 10 steps back, the area to the right, the area to the left, the adjacent wall corner to corner, behind the fence when that applies, the breaker box, the main disconnect with amperage visible, and the area around the breaker box. This app stores one meter photo, a typed main-breaker amperage, and one AR screenshot. Typed meter number and breaker amperage remain the values the user accepts.
 
 **AR owns height and spacing.** Meter height (published limit 6 ft), working space in front of the meter and panel (about 30 × 36 in), and whether the meter and panel share a wall are placement measurements. Keep them off the home form. The same workstream still owns the 3 ft × 3 ft footprint, the 20 ft meter distance, the 1 ft wall distance, the 3 ft gas-meter distance, and transfer-switch space beside the meter. Footprint clearance and transfer-switch space are still unmeasured, so the preview cannot turn green yet.
 

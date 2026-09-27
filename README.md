@@ -1,6 +1,6 @@
 # Base Site Survey
 
-A small iPhone app for a preliminary Base Power site survey. It collects meter and breaker photos, previews a Base Core in AR, and writes a local review. It is not an electrical inspection or installation approval.
+A small iPhone app for a preliminary Base Power site survey. It collects a meter photo and the breaker amperage, previews a Base Core in AR, and writes a local review. It is not an electrical inspection or installation approval.
 
 The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
 
@@ -66,9 +66,9 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 
 ## What works
 
-- One-screen welcome → four-tile hub (home and personal info, electrical meter, breaker box, site measurements). Every tile is open, shows completion progress, and saves as you go.
+- One-screen welcome → three-tile hub (home and personal info, electrical, site measurements). Every tile is open, shows completion progress, and saves as you go.
 - Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
-- Photograph the round meter and the main disconnect from separate hub tiles. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the number in a card-style frame and saves that photo. A normal photo can also fill an empty field. The typed value is the one that is kept.
+- The Electrical tile photographs the round meter and asks for the meter number and the main-breaker amperage. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the meter number in a card-style frame and saves that photo. A normal photo can also fill an empty meter number. The typed value is the one that is kept.
 - Outdoor `ARView` with horizontal and vertical plane detection. One scan: point at the electric meter, step back about 10 steps, and look left, right, and along the wall. Then point at the breaker panel and do the same around that box. Done stays off until both looks finish. Clear meter or Clear panel undoes a bad lock. Live detection boxes stay on the camera. The scan hides any battery or equipment cubes already in the scene and does not drop new ones. Meter height and whether the meter and panel share a wall still come from the locks.
 - LiDAR occlusion when the phone supports it. Placement still uses plane raycasts without LiDAR. The mesh is not drawn on screen.
 - Meter height is the vertical rise from the ground under the meter to the meter face. Whether the meter and panel share a wall comes from the two wall locks. The step-back counts distance and a pan left, right, and along the wall, so the mesh can cover the area around each lock. Opening the scan does not erase a battery, gas, or working-space position already saved on the scene.
@@ -99,7 +99,7 @@ Every panel example so far comes from one demo wall. Expect weaker panel detecti
 
 Base’s public request is two steps, researched 26 September 2026. [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. The longer comparison is in `reports/Base battery form vs app.md`.
 
-This app already asks the typed home-form questions and stores one meter photo, one breaker photo, typed meter number and amperage, and an AR screenshot. It does not yet capture Base’s wide meter-yard photos. Meter height (6 ft), working space in front of the meter and panel (about 30 × 36 in), and whether the meter and panel share a wall belong to AR placement, not the home form. The survey stays on the phone.
+This app already asks the typed home-form questions and stores one meter photo, a typed meter number, a typed breaker amperage, and an AR screenshot. It does not yet capture Base’s wide meter-yard photos. Meter height (6 ft), working space in front of the meter and panel (about 30 × 36 in), and whether the meter and panel share a wall belong to AR placement, not the home form. The survey stays on the phone.
 
 ## What is stubbed
 
@@ -109,6 +109,6 @@ This app already asks the typed home-form questions and stores one meter photo, 
 
 ## Next three tasks
 
-1. **Electrical capture / OCR.** Done. Vision reads a meter number and main-breaker amperage from a photo, and a live card-style scan can fill either field. The typed value is still the one the user accepts.
+1. **Electrical capture / OCR.** Done for the meter. Vision reads a meter number from a photo, and a live card-style scan can fill that field. Main-breaker amperage is typed. The typed value is still the one the user accepts.
 2. **AR placement and measurements.** Measure pad clearance into `footprintIsClear`, and transfer-switch space beside the meter into `transferSwitchClearanceObserved`. Add meter height, front working space, and whether the meter and panel share a wall. Tighten wall distance against the LiDAR mesh when it exists.
 3. **Rules and review export.** Extend `BaseRuleSet` only when those measurements exist. Keep each check at pass, conflict, or unknown, and keep green reserved for a full set of measured passes.

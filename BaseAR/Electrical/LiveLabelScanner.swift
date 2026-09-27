@@ -47,6 +47,7 @@ struct LiveLabelScanner: UIViewControllerRepresentable {
     var target: LabelScanTarget
     var onAccept: (LabelScanRead, UIImage?) -> Void
     var onCancel: () -> Void
+    var onManualEntry: () -> Void
 
     static var isSupported: Bool {
         DataScannerViewController.isSupported
@@ -76,12 +77,14 @@ struct LiveLabelScanner: UIViewControllerRepresentable {
         let controller = LabelScanController(target: target)
         controller.onAccept = onAccept
         controller.onCancel = onCancel
+        controller.onManualEntry = onManualEntry
         return controller
     }
 
     func updateUIViewController(_ controller: LabelScanController, context: Context) {
         controller.onAccept = onAccept
         controller.onCancel = onCancel
+        controller.onManualEntry = onManualEntry
     }
 }
 
@@ -89,6 +92,7 @@ struct LiveLabelScanner: UIViewControllerRepresentable {
 final class LabelScanController: UIViewController, DataScannerViewControllerDelegate {
     var onAccept: (LabelScanRead, UIImage?) -> Void
     var onCancel: () -> Void
+    var onManualEntry: () -> Void
 
     private let target: LabelScanTarget
     private let scanner: DataScannerViewController
@@ -98,6 +102,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     private let hintLabel = UILabel()
     private let useButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
+    private let manualButton = UIButton(type: .system)
     private var cardRect = CGRect.zero
     private var lockedRead: LabelScanRead?
     private var candidateKey: String?
@@ -105,12 +110,15 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     private var didFinish = false
     private var didStart = false
     private var didHaptic = false
+    /// Photo taken the moment a number locks, so it shows the meter even if the phone moves before the tap.
+    private var lockedPhoto: Task<UIImage?, Never>?
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
     init(target: LabelScanTarget) {
         self.target = target
         self.onAccept = { _, _ in }
         self.onCancel = {}
+        self.onManualEntry = {}
         scanner = DataScannerViewController(
             recognizedDataTypes: [.text(languages: ["en-US"])],
             qualityLevel: .balanced,
@@ -168,6 +176,12 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         cancelButton.configuration = cancelConfig
         cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
 
+        var manualConfig = UIButton.Configuration.plain()
+        manualConfig.title = "Enter number manually"
+        manualConfig.baseForegroundColor = .white
+        manualButton.configuration = manualConfig
+        manualButton.addTarget(self, action: #selector(manualTapped), for: .touchUpInside)
+
         addChild(scanner)
         scanner.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scanner.view)
@@ -180,7 +194,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         scanner.didMove(toParent: self)
 
         // Controls sit above the camera. Inside the scanner they lose taps to its gestures.
-        for item in [dimView, instructionLabel, candidateLabel, hintLabel, useButton, cancelButton] {
+        for item in [dimView, instructionLabel, candidateLabel, hintLabel, useButton, manualButton, cancelButton] {
             item.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(item)
         }
@@ -200,7 +214,10 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
 
             useButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             useButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            useButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            useButton.bottomAnchor.constraint(equalTo: manualButton.topAnchor, constant: -4),
+
+            manualButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            manualButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
 
             hintLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
             hintLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
@@ -235,7 +252,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         do {
             try scanner.startScanning()
         } catch {
-            hintLabel.text = "Live scan couldn't start. Close this and type the number."
+            hintLabel.text = "Live scan couldn't start. Enter the number manually."
         }
     }
 
@@ -263,6 +280,11 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     func dataScanner(_ dataScanner: DataScannerViewController, didTapOn item: RecognizedItem) {
         guard case .text(let text) = item else { return }
         if let read = target.read(from: [text.transcript]) {
+            if read != lockedRead {
+                // The camera is on this number right now; the lock photo may show a different one.
+                lockedRead = read
+                lockedPhoto = capturePhoto()
+            }
             finish(read)
         } else {
             hintLabel.text = target == .meterNumber
@@ -272,7 +294,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     }
 
     func dataScanner(_ dataScanner: DataScannerViewController, becameUnavailableWithError error: DataScannerViewController.ScanningUnavailable) {
-        hintLabel.text = "Live scan stopped. Close this and type the number."
+        hintLabel.text = "Live scan stopped. Enter the number manually."
     }
 
     private func consider(_ items: [RecognizedItem]) {
@@ -291,6 +313,8 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             candidateSince = Date()
             didHaptic = false
             lockedRead = nil
+            lockedPhoto?.cancel()
+            lockedPhoto = nil
             setUseTitle("Save photo")
             candidateLabel.text = read.display
             hintLabel.text = "Hold steady…"
@@ -299,6 +323,7 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         let elapsed = Date().timeIntervalSince(candidateSince ?? Date())
         guard elapsed >= 0.45 else { return }
         lockedRead = read
+        lockedPhoto = capturePhoto()
         candidateLabel.text = read.display
         hintLabel.text = "Tap a highlighted number to pick a different one."
         setUseTitle("Use this number")
@@ -313,6 +338,10 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             x: (bounds.topLeft.x + bounds.topRight.x + bounds.bottomLeft.x + bounds.bottomRight.x) / 4,
             y: (bounds.topLeft.y + bounds.topRight.y + bounds.bottomLeft.y + bounds.bottomRight.y) / 4
         )
+    }
+
+    private func capturePhoto() -> Task<UIImage?, Never> {
+        Task { [scanner] in try? await scanner.capturePhoto() }
     }
 
     @objc private func useTapped() {
@@ -331,14 +360,22 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
         onCancel()
     }
 
+    @objc private func manualTapped() {
+        guard !didFinish else { return }
+        didFinish = true
+        onManualEntry()
+    }
+
     private func finish(_ read: LabelScanRead?) {
         guard !didFinish else { return }
         didFinish = true
         useButton.isEnabled = false
         candidateLabel.text = "Saving photo…"
         let accepted = read ?? LabelScanRead(meterNumber: nil, amperage: nil)
+        // With a locked number, keep the photo from the lock. Otherwise the frame at the tap is all there is.
+        let photo = read != nil && read == lockedRead ? (lockedPhoto ?? capturePhoto()) : capturePhoto()
         Task {
-            let image = try? await scanner.capturePhoto()
+            let image = await photo.value
             onAccept(accepted, image)
         }
     }

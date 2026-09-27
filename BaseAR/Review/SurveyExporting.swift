@@ -11,10 +11,15 @@ struct MeshPointCloudChunk: Sendable {
     var positions: [SIMD3<Float>]
     var colors: [SIMD3<UInt8>]
     var triangles: [UInt32]
+    /// One ARKit mesh classification per triangle. Empty for overlay geometry, which writes `unlabeledFace`.
+    var faceLabels: [UInt8] = []
 }
 
 /// ASCII PLY of the reconstructed mesh. Vertices are the point cloud; triangles keep the surface.
 enum PointCloudPLY {
+    /// Face label for overlay geometry and for faces on devices without mesh classification.
+    static let unlabeledFace: UInt8 = 255
+
     static func data(from chunks: [MeshPointCloudChunk], comments: [String] = []) -> Data? {
         var vertexCount = 0
         var faceCount = 0
@@ -34,6 +39,7 @@ enum PointCloudPLY {
         comment units meters
         comment frame ARKit world
         comment colors: camera RGB, light gray where the camera never saw the surface
+        comment face label: ARKit mesh classification 0 none, 1 wall, 2 floor, 3 ceiling, 4 table, 5 seat, 6 window, 7 door, 255 overlay or unclassified
         \(extraComments)element vertex \(vertexCount)
         property float x
         property float y
@@ -43,6 +49,7 @@ enum PointCloudPLY {
         property uchar blue
         element face \(faceCount)
         property list uchar int vertex_indices
+        property uchar label
         end_header
 
         """
@@ -68,7 +75,9 @@ enum PointCloudPLY {
                 let a = Int(chunk.triangles[face]) + offset
                 let b = Int(chunk.triangles[face + 1]) + offset
                 let c = Int(chunk.triangles[face + 2]) + offset
-                text += "3 \(a) \(b) \(c)\n"
+                let index = face / 3
+                let label = index < chunk.faceLabels.count ? chunk.faceLabels[index] : unlabeledFace
+                text += "3 \(a) \(b) \(c) \(label)\n"
                 face += 3
             }
             offset += chunk.positions.count

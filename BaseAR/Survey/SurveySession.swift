@@ -101,7 +101,6 @@ struct GeoFix: Codable, Sendable, Equatable {
 
 struct ElectricalEvidence: Codable, Sendable, Equatable {
     var meterPhotoFilename: String?
-    var breakerPhotoFilename: String?
     /// Distinct from mainBreakerAmperage. A scan can fill this; the typed value is the one that is saved.
     var meterNumber: String?
     /// How the meter number was captured. Nil until a value is set.
@@ -196,6 +195,10 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var distanceToGasMeterFeet: Double?
     /// Set by the placement workstream after a real clearance measurement. Nil stays unknown.
     var footprintIsClear: Bool?
+    /// False when a classified window overlaps the cabinet. Nil until the wall behind the battery has been scanned.
+    var clearOfWindows: Bool?
+    /// False when the battery stands in the meter's or panel's 30 × 36 in working space. Nil until both are tapped on the wall.
+    var keepsEquipmentAccess: Bool?
     /// Set after transfer-switch space beside the meter is actually measured. Nil stays unknown.
     var transferSwitchClearanceObserved: Bool?
     /// User attestation (not measurement) that the 3 ft × 3 ft pad is clear. Rule engine falls back to this only if the measured field is nil.

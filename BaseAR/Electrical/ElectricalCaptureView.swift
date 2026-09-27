@@ -4,41 +4,37 @@ import UIKit
 
 enum PhotoSlot: String, Identifiable {
     case meter
-    case breaker
 
     var id: String { rawValue }
 }
 
 struct ElectricalCaptureView: View {
     var store: SurveyStore
-    var focus: PhotoSlot
 
     @State private var activeSlot: PhotoSlot?
     @State private var scanTarget: LabelScanTarget?
     @State private var scanMessage: String?
     @State private var amperageText = ""
     @State private var showCameraDeniedAlert = false
-    @FocusState private var fieldIsFocused: Bool
+    @State private var showsManualMeterEntry = false
+    @FocusState private var focusedField: Field?
+
+    private enum Field { case meterNumber, amperage }
 
     var body: some View {
         Form {
-            switch focus {
-            case .meter:
-                meterSection
-            case .breaker:
-                breakerSection
-            }
-
+            meterSection
+            breakerSection
         }
-        .navigationTitle(focus == .meter ? "Electrical Meter" : "Breaker box")
+        .navigationTitle("Electrical")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if focus == .breaker, amperageText.isEmpty, let amps = store.session.electrical.mainBreakerAmperage {
+            if amperageText.isEmpty, let amps = store.session.electrical.mainBreakerAmperage {
                 amperageText = String(amps)
             }
         }
         .onChange(of: store.session.electrical.mainBreakerAmperage) { _, amps in
-            guard focus == .breaker, let amps else { return }
+            guard let amps else { return }
             let text = String(amps)
             if amperageText != text {
                 amperageText = text
@@ -47,7 +43,7 @@ struct ElectricalCaptureView: View {
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") { fieldIsFocused = false }
+                Button("Done") { focusedField = nil }
             }
         }
         .fullScreenCover(item: $activeSlot) { slot in
@@ -55,8 +51,6 @@ struct ElectricalCaptureView: View {
                 switch slot {
                 case .meter:
                     store.attachMeterPhoto(image)
-                case .breaker:
-                    store.attachBreakerPhoto(image)
                 }
             }
             .ignoresSafeArea()
@@ -67,6 +61,13 @@ struct ElectricalCaptureView: View {
                 scanTarget = nil
             } onCancel: {
                 scanTarget = nil
+            } onManualEntry: {
+                scanTarget = nil
+                showsManualMeterEntry = true
+                // Focus once the cover has gone, or the keyboard request is dropped.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    focusedField = .meterNumber
+                }
             }
             .ignoresSafeArea()
         }
@@ -113,41 +114,41 @@ struct ElectricalCaptureView: View {
                 target: .meterNumber,
                 unavailableText: "Live scan needs an iPhone camera. The photo can still fill the number."
             )
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Meter number")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                TextField("Enter the number shown on the meter", text: meterNumberBinding)
-                    .textInputAutocapitalization(.characters)
-                    .autocorrectionDisabled()
-                    .focused($fieldIsFocused)
+            if showsMeterNumberField {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Meter number")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TextField("Enter the number shown on the meter", text: meterNumberBinding)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                        .focused($focusedField, equals: .meterNumber)
+                }
+            } else {
+                Button("Enter number manually") {
+                    showsManualMeterEntry = true
+                    focusedField = .meterNumber
+                }
+                .frame(maxWidth: .infinity)
             }
             if store.isReadingMeterNumber {
                 Label("Reading the photo…", systemImage: "text.viewfinder")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Text(store.meterNumberNote ?? "The meter number is different from the breaker amperage. Confirm the number before leaving this screen.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            if showsMeterNumberField {
+                Text(store.meterNumberNote ?? "The meter number is different from the breaker amperage. Confirm the number before leaving this screen.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
     private var breakerSection: some View {
-        Section("Main disconnect / breaker") {
-            Text(capturePrompt(
-                scan: "Scan the main breaker. It reads the amperage and saves a photo.",
-                photo: "Take a photo of the main disconnect with the number on the main breaker clearly visible."
-            ))
+        Section("Main breaker") {
+            Text("Enter the amperage printed on the main breaker.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            captureControl(
-                image: store.breakerImage,
-                scanTitle: "Scan breaker",
-                slot: .breaker,
-                target: .breakerAmperage,
-                unavailableText: "Live scan needs an iPhone camera. The photo can still fill the rating."
-            )
             VStack(alignment: .leading, spacing: 6) {
                 Text("Main breaker amperage")
                     .font(.subheadline)
@@ -155,7 +156,7 @@ struct ElectricalCaptureView: View {
                 HStack {
                     TextField("Enter amperage", text: $amperageText)
                         .keyboardType(.numberPad)
-                        .focused($fieldIsFocused)
+                        .focused($focusedField, equals: .amperage)
                         .onChange(of: amperageText) { _, newValue in
                             let digits = newValue.filter(\.isNumber)
                             if digits != newValue {
@@ -171,11 +172,6 @@ struct ElectricalCaptureView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if store.isReadingBreakerAmperage {
-                Label("Reading the photo…", systemImage: "text.viewfinder")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             if let amps = store.session.electrical.mainBreakerAmperage {
                 if (150...200).contains(amps) {
                     Label("Confirmed: \(amps) A", systemImage: "checkmark.circle.fill")
@@ -185,16 +181,16 @@ struct ElectricalCaptureView: View {
                         .font(.footnote)
                         .foregroundStyle(.orange)
                 }
-            } else if store.breakerAmperageNote == nil {
-                Text("Enter the number printed on the main breaker.")
-                    .foregroundStyle(.secondary)
-            }
-            if let note = store.breakerAmperageNote {
-                Text(note)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// Scan comes first, like adding a payment card. The typed field appears once there is a number or the user asks for it.
+    private var showsMeterNumberField: Bool {
+        !LiveLabelScanner.isSupported
+            || showsManualMeterEntry
+            || !(store.session.electrical.meterNumber ?? "").isEmpty
+            || store.meterImage != nil
     }
 
     private var meterNumberBinding: Binding<String> {
@@ -214,13 +210,7 @@ struct ElectricalCaptureView: View {
                 store.attachMeterPhoto(image)
             }
         case .breakerAmperage:
-            if let amps = read.amperage {
-                store.setMainBreakerAmperage(amps, note: "Scanned from the camera. Confirm it matches the main breaker.")
-                amperageText = String(amps)
-            }
-            if let image {
-                store.attachBreakerPhoto(image)
-            }
+            break
         }
     }
 

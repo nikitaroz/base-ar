@@ -1,0 +1,6 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2048 2048" width="1024" height="1024">
+  <!-- Envelope silhouette: rounded rectangle body + triangular flap. One solid dark-green shape. -->
+  <path fill="rgb(15,76,58)" d="M 320 720 C 320 640 384 576 464 576 L 1584 576 C 1664 576 1728 640 1728 720 L 1728 720 L 1024 1216 L 320 720 Z M 320 848 L 1024 1344 L 1728 848 L 1728 1584 C 1728 1664 1664 1728 1584 1728 L 464 1728 C 384 1728 320 1664 320 1584 Z"/>
+  <!-- Teal 4-point sparkle overlapping the upper-right corner of the envelope. -->
+  <path fill="rgb(46,139,111)" d="M 1728 384 C 1728 464 1808 544 1888 544 C 1808 544 1728 624 1728 704 C 1728 624 1648 544 1568 544 C 1648 544 1728 464 1728 384 Z"/>
+</svg>

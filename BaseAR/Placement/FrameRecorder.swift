@@ -7,8 +7,8 @@
 //  - Only DEBUG builds record. A Release build compiles every call to a no-op.
 //  - Frames stay on this device, under Documents/FrameLog. Nothing uploads, syncs, or leaves the app on its own.
 //    The folder is excluded from iCloud device backup.
-//  - Getting frames off the phone is a deliberate act: the Files app (On My iPhone > Base Site Survey > FrameLog),
-//    Finder (iPhone > Files > Base Site Survey), or
+//  - Getting frames off the phone is a deliberate act: in a Debug build, the Files app (On My iPhone > Base Site
+//    Survey > FrameLog) or Finder (iPhone > Files > Base Site Survey); in any build,
 //    `xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer
 //     --domain-identifier <bundle id> --source Documents/FrameLog --destination ./FrameLog`.
 //  - Frames can show a house, a street, and people. Treat an exported FrameLog like any site photo.
@@ -17,6 +17,8 @@
 //  Off by default, even in DEBUG. The UserDefaults bool "FrameRecorderEnabled" turns it on: the DEBUG-only
 //  "Save test frames on this phone" toggle in Review writes it, or use the scheme launch argument
 //  `-FrameRecorderEnabled YES`. It is read at `begin`, so a change starts with the next Live Survey.
+//  The Files app and Finder see Documents only in Debug builds: the Debug configuration uses BaseAR/Info-Debug.plist
+//  (UIFileSharingEnabled, LSSupportsOpeningDocumentsInPlace). Release uses BaseAR/Info.plist, which sets neither.
 //
 //  API (every call is safe from any thread, and returns quickly)
 //

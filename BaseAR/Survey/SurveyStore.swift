@@ -13,6 +13,11 @@ final class SurveyStore {
     /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
     private(set) var meterNumberNote: String?
     private(set) var isReadingMeterNumber = false
+    /// True while the meter photo is only the AR scan's crop of the locked meter. Any other photo replaces it,
+    /// and a redone meter lock drops it.
+    private(set) var meterPhotoIsScanCrop = false
+    /// True while the meter number is what OCR read from that crop, so dropping the crop drops the number too.
+    private var meterNumberFromScanCrop = false
     /// Shown when the property fix failed or location access is off. Nil while waiting or after a fix.
     private(set) var locationStatusMessage: String?
     /// True from the tap until a fix or a failure. The form uses this so the tap has an immediate result.
@@ -121,6 +126,7 @@ final class SurveyStore {
         session.electrical.meterNumber = value
         session.electrical.meterNumberSource = trimmed.isEmpty ? nil : source
         meterNumberNote = note
+        meterNumberFromScanCrop = false
         refreshAssessment()
     }
 
@@ -161,6 +167,7 @@ final class SurveyStore {
 
     func attachMeterPhoto(_ image: UIImage) {
         meterImage = image
+        meterPhotoIsScanCrop = false
         let jpeg = Self.uprightJPEG(image)
         session.electrical.meterPhotoFilename = write(jpeg, filename: "meter.jpg")
         refreshAssessment()
@@ -178,10 +185,43 @@ final class SurveyStore {
             guard current.isEmpty else { return }
             if let number {
                 setMeterNumber(number, source: .ocr, note: "Read from the photo. Confirm it matches the meter.")
+                meterNumberFromScanCrop = meterPhotoIsScanCrop
             } else {
                 meterNumberNote = "Couldn't read a meter number from that photo. Type it, or scan the nameplate."
             }
         }
+    }
+
+    /// The scan's crop of the locked meter, as a fallback photo. Kept only when the survey has no meter photo:
+    /// from where the meter locks the number is seldom legible, so the live number scan up close replaces it.
+    func attachScanMeterPhotoIfMissing(_ image: UIImage) {
+        guard meterImage == nil, session.electrical.meterPhotoFilename == nil else { return }
+        attachMeterPhoto(image)
+        meterPhotoIsScanCrop = true
+    }
+
+    /// "Not the meter", Redo meter, or Start over: a photo that was only that lock's crop goes with the lock, so the
+    /// survey never keeps a picture of the wrong thing. A number OCR read from it goes too. Real photos stay.
+    func dropScanMeterPhoto() {
+        guard meterPhotoIsScanCrop else { return }
+        meterPhotoIsScanCrop = false
+        meterImage = nil
+        if let name = session.electrical.meterPhotoFilename {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
+        session.electrical.meterPhotoFilename = nil
+        // An OCR pass still reading the crop must not fill the number afterwards.
+        meterReadGeneration += 1
+        isReadingMeterNumber = false
+        if meterNumberFromScanCrop {
+            setMeterNumber("")
+            return
+        }
+        // "Couldn't read a meter number from that photo" would point at a photo that is gone.
+        if (session.electrical.meterNumber ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            meterNumberNote = nil
+        }
+        refreshAssessment()
     }
 
     func measurements(for snapshot: PlacementSceneSnapshot) -> PlacementMeasurements {

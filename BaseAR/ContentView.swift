@@ -73,9 +73,11 @@ struct ContentView: View {
                 case .electrical:
                     ElectricalCaptureView(store: store)
                 case .placement:
-                    PlacementARView(store: store) {
-                        path.append(HubRoute.review)
-                    }
+                    PlacementARView(
+                        store: store,
+                        onContinue: { path.append(HubRoute.review) },
+                        onReturnToSurvey: { path = NavigationPath() }
+                    )
                 case .review:
                     ReviewView(
                         store: store,

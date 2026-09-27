@@ -217,6 +217,9 @@ struct EquipmentScanFrame: Sendable {
     /// Media time when the frame was captured, so a packet held past a stalled inference is not read as current.
     var capturedAt: CFTimeInterval = 0
     var status: EquipmentObservationStatus = .ok
+    /// The camera image the boxes came from. Kept only when a meter box is in it, so a meter lock can crop its
+    /// fallback photo from this same frame instead of a later one.
+    var pixels: CopiedPixels?
 
     var displayTransform: CGAffineTransform {
         CGAffineTransform(a: displayA, b: displayB, c: displayC, d: displayD, tx: displayTX, ty: displayTY)
@@ -301,6 +304,9 @@ final class EquipmentScanBridge: @unchecked Sendable {
             let result = detector.detectResult(in: copied.buffer, orientation: visionOrientation)
             packet.detections = result.detections
             packet.status = result.status
+            if result.detections.contains(where: { $0.kind == .electricMeter }) {
+                packet.pixels = copied
+            }
             let finished = packet
             latest.withLock { $0 = finished }
             gate.withLock { $0.busy = false }
@@ -319,8 +325,8 @@ final class EquipmentScanBridge: @unchecked Sendable {
     }
 }
 
-/// The copy is owned by one inference job, so handing it across queues is safe.
-private struct CopiedPixels: @unchecked Sendable {
+/// The copy is owned by one inference job and never written after it, so handing it across queues is safe.
+struct CopiedPixels: @unchecked Sendable {
     let buffer: CVPixelBuffer
 }
 

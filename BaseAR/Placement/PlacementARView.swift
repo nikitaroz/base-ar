@@ -1,4 +1,5 @@
 import ARKit
+import CoreImage
 import os
 import RealityKit
 import SwiftUI
@@ -31,19 +32,38 @@ private struct LookAround: Equatable {
     var done: Bool { movedFarther && lookedLeft && lookedRight }
 }
 
-/// Meter, panel, gas, look-around, then the battery. `ready` means the battery is placed and Submit is on.
-private enum ScanCue: Equatable {
+/// The Live Survey, in order. The screen shows the first step that is not done, so it resumes there on appear.
+/// Locks, the gas answer, the look-around, and the battery come from the scene. `readMeter` is done once the user
+/// accepts, types, or skips a number; `readBreaker` once the survey has a main-breaker size or the user skipped it.
+private enum LiveStep: Equatable {
     case findMeter
+    case readMeter
     case findPanel
+    case readBreaker
     case gas
     case lookAround
     case placeBattery
-    case ready
+    case confirm
+
+    /// The top line: the one job for this step.
+    var task: String {
+        switch self {
+        case .findMeter: "Find the electric meter"
+        case .readMeter: "Read the meter number"
+        case .findPanel: "Find the breaker panel"
+        case .readBreaker: "Main breaker size?"
+        case .gas: "Is there a gas meter?"
+        case .lookAround: "Step back and look around"
+        case .placeBattery: "Place the battery"
+        case .confirm: "Save your scan"
+        }
+    }
 }
 
-/// One phone-motion cue for the meter or panel search, drawn as an SF Symbol plus short copy.
-/// Raw values match the ux branch's CoachTip so its other cues can be added here.
+/// One cue for the bottom line, drawn as an animated SF Symbol plus short copy. The raw value is the copy, so the
+/// session's tracking text maps back to its graphic. Copy never carries a distance.
 private enum CoachTip: String {
+    // Detector hints for the meter or panel search.
     case lookUp = "Look up at it"
     case pointDown = "Point your phone down"
     case stepBack = "Take a few steps back"
@@ -52,6 +72,29 @@ private enum CoachTip: String {
     case zoomIn = "Get closer"
     case aimAtWall = "Aim at the wall"
     case holdStill = "Hold still"
+    // Step motion.
+    case pointAtMeter = "Point at the meter"
+    case pointAtPanel = "Point at the panel"
+    case markIt = "Put the dot on it, then tap Mark it myself"
+    case scanNumber = "Scan the number up close"
+    case typeNumber = "Type the number on the meter"
+    case readingNumber = "Reading the number…"
+    case tapBreaker = "Main breaker amps, not the panel bus rating"
+    case tapGas = "Tap the gas meter, or say there isn’t one"
+    case lookLeft = "Turn to look left"
+    case lookRight = "Turn to look right"
+    // Tracking, from the AR session.
+    case slowDown = "Slow down"
+    case moveSlowly = "Move the phone slowly"
+    case moreDetail = "Aim at something with more detail"
+    case paused = "Paused"
+    // Confirmations, shown for a moment.
+    case foundMeter = "Found the meter"
+    case foundPanel = "Found the panel"
+    case gotNumber = "Got the number"
+    case breakerSaved = "Main breaker saved"
+    case gasMarked = "Gas meter marked"
+    case scanned = "Scanned"
 
     var symbol: String {
         switch self {
@@ -61,8 +104,26 @@ private enum CoachTip: String {
         case .scootLeft: "arrow.left.circle.fill"
         case .scootRight: "arrow.right.circle.fill"
         case .zoomIn: "plus.magnifyingglass"
-        case .aimAtWall: "viewfinder"
+        case .aimAtWall, .pointAtMeter, .pointAtPanel: "viewfinder"
         case .holdStill: "hand.raised.fill"
+        case .markIt, .tapBreaker, .tapGas: "hand.tap.fill"
+        case .scanNumber, .readingNumber: "text.viewfinder"
+        case .typeNumber: "keyboard"
+        case .lookLeft: "arrow.turn.up.left"
+        case .lookRight: "arrow.turn.up.right"
+        case .slowDown: "tortoise.fill"
+        case .moveSlowly: "iphone.gen3.radiowaves.left.and.right"
+        case .moreDetail: "sparkle.magnifyingglass"
+        case .paused: "pause.circle.fill"
+        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned: "checkmark.seal.fill"
+        }
+    }
+
+    /// Motion cues keep pulsing so the phone movement reads at a glance. Confirmations and Paused do not.
+    var pulses: Bool {
+        switch self {
+        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned, .paused: false
+        default: true
         }
     }
 }
@@ -74,6 +135,62 @@ private struct ScanFeedback: Equatable {
     /// Set when "Mark it myself" should show for this target: about 12 s without a lock, or the detector is down.
     var manualTarget: EquipmentKind?
     var detector: EquipmentObservationStatus = .ok
+}
+
+/// The bottom line: short copy, an SF Symbol, and a tint. The words always carry the message; the tint only adds
+/// the placement tone or a warning.
+private struct Feedback: Equatable {
+    var text: String
+    var symbol: String
+    var tint: Color
+    var pulses: Bool
+    var isError = false
+
+    init(_ tip: CoachTip, tint: Color = .primary) {
+        text = tip.rawValue
+        symbol = tip.symbol
+        self.tint = tint
+        pulses = tip.pulses
+    }
+
+    init(text: String, symbol: String, tint: Color, pulses: Bool = false, isError: Bool = false) {
+        self.text = text
+        self.symbol = symbol
+        self.tint = tint
+        self.pulses = pulses
+        self.isError = isError
+    }
+}
+
+/// A value typed over the running scan.
+private enum ValueEntry: String, Identifiable {
+    case meterNumber
+    case breakerAmps
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .meterNumber: "Meter number"
+        case .breakerAmps: "Main breaker"
+        }
+    }
+
+    var placeholder: String {
+        switch self {
+        case .meterNumber: "Number on the meter"
+        case .breakerAmps: "Amps on the main breaker"
+        }
+    }
+
+    var footer: String {
+        switch self {
+        case .meterNumber:
+            "The long number on the meter’s nameplate. It is not the breaker size."
+        case .breakerAmps:
+            "The number on the big breaker at the top of the panel. This is the main breaker, not the panel bus rating. Don’t remove any covers."
+        }
+    }
 }
 
 /// The controller's view of the scan step. `battery` shows the suggested spot beside the meter; `finish` keeps
@@ -109,12 +226,15 @@ private extension PlacementSceneSnapshot {
     }
 }
 
+/// Step 2, the Live Survey: the camera with one task line on top and one live-feedback line at the bottom.
+/// Buttons show only when the step needs them; everything else is in the ••• menu.
 struct PlacementARView: View {
     var store: SurveyStore
     var onContinue: () -> Void
+    /// Leaves the scan for the rest of the survey. The unsupported-device screen uses it, so it never dead-ends.
+    var onReturnToSurvey: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dismiss) private var dismiss
     @State private var scene: PlacementSceneSnapshot
     @State private var lookAround = LookAround()
     @State private var yawRadians: Float
@@ -127,14 +247,31 @@ struct PlacementARView: View {
     @State private var scanFeedback = ScanFeedback()
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
+    /// Steps the user accepted or skipped. Mirrored on the controller, so coming back to the scan does not ask again.
+    @State private var passed: Set<LiveStep>
+    /// A confirmation that holds the bottom line for a moment.
+    @State private var flashTip: CoachTip?
+    /// A confirmation earned while a cover hid the screen, shown once it closes.
+    @State private var flashAfterCapture: CoachTip?
+    @State private var valueEntry: ValueEntry?
+    @State private var showsNumberScanner = false
+    @State private var showsElectrical = false
+    /// "Enter number manually" in the scanner opens the typed sheet once the scanner's cover is gone.
+    @State private var typeNumberAfterScan = false
+    /// The session is paused for the number scanner or the Electrical sheet. Neither fires `onDisappear`.
+    @State private var pausedForCapture = false
 
-    init(store: SurveyStore, onContinue: @escaping () -> Void) {
+    private static let breakerChips = [100, 125, 150, 200]
+
+    init(store: SurveyStore, onContinue: @escaping () -> Void, onReturnToSurvey: @escaping () -> Void) {
         self.store = store
         self.onContinue = onContinue
+        self.onReturnToSurvey = onReturnToSurvey
         let existing = store.placementController
         _scene = State(initialValue: existing?.scene ?? PlacementSceneSnapshot())
         _lookAround = State(initialValue: existing?.lookAround ?? LookAround())
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
+        _passed = State(initialValue: existing?.passedLiveSteps ?? [])
     }
 
     private var isSaving: Bool { pendingSave != nil }
@@ -160,32 +297,41 @@ struct PlacementARView: View {
         scene.batteryPosition == nil && scene.suggestedBatteryPosition != nil
     }
 
-    private var cue: ScanCue {
+    private var recordedMeterNumber: String? {
+        let number = store.session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return number.isEmpty ? nil : number
+    }
+
+    private var step: LiveStep {
         if !meterMarked { return .findMeter }
+        // Waits for the user: a scan, a typed number, "Looks right", or Skip. A number OCR read from the scan's own
+        // crop of the meter is not accepted by itself.
+        if !passed.contains(.readMeter) { return .readMeter }
         if !panelMarked { return .findPanel }
+        if store.session.electrical.mainBreakerAmperage == nil && !passed.contains(.readBreaker) { return .readBreaker }
         if !gasResolved { return .gas }
         if !lookAround.done { return .lookAround }
         // Only "Put it here" sets batteryPosition; the ghost is `suggestedBatteryPosition`.
         if scene.batteryPosition == nil { return .placeBattery }
-        return .ready
+        return .confirm
     }
 
     private var lockTarget: EquipmentKind? {
-        switch cue {
+        switch step {
         case .findMeter: .electricMeter
         case .findPanel: .breakerPanel
-        case .gas, .lookAround, .placeBattery, .ready: nil
+        default: nil
         }
     }
 
-    /// Controller step for the current cue. The battery ghost only exists in `battery`; `finish` keeps the placed
+    /// Controller step for the current one. The battery ghost only exists in `battery`; `finish` keeps the placed
     /// battery and its transfer-switch box. Any other step drops an unconfirmed ghost.
     private var guideStep: WalkStep {
-        switch cue {
-        case .findMeter, .findPanel, .lookAround: .scan
+        switch step {
+        case .findMeter, .readMeter, .findPanel, .readBreaker, .lookAround: .scan
         case .gas: .gas
         case .placeBattery: .battery
-        case .ready: .finish
+        case .confirm: .finish
         }
     }
 
@@ -220,6 +366,13 @@ struct PlacementARView: View {
         .navigationTitle("Scan")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            if arSupported {
+                ToolbarItem(placement: .topBarTrailing) {
+                    moreMenu
+                }
+            }
+        }
         .onAppear {
             guard arSupported else { return }
             isVisible = true
@@ -228,17 +381,29 @@ struct PlacementARView: View {
             scene = controller.scene
             lookAround = controller.lookAround
             yawRadians = controller.yawRadians
+            // The controller reports tracking only on change, so a view pushed again picks up the current state.
+            trackingMessage = controller.trackingBlockedMessage
+            passed = controller.passedLiveSteps
+            passRecordedSteps()
             syncGuide()
         }
-        .onChange(of: cue) { _, _ in
+        .onChange(of: step) { _, _ in
             statusMessage = nil
             syncGuide()
         }
         .onChange(of: meterMarked) { _, marked in
             noteLockChange(.electricMeter, marked: marked)
+            if marked { flashTip = .foundMeter }
         }
         .onChange(of: panelMarked) { _, marked in
             noteLockChange(.breakerPanel, marked: marked)
+            if marked { flashTip = .foundPanel }
+        }
+        .onChange(of: scene.gasMeterPosition != nil) { _, marked in
+            if marked { flashTip = .gasMarked }
+        }
+        .onChange(of: lookAround.done) { _, done in
+            if done { flashTip = .scanned }
         }
         .onDisappear {
             isVisible = false
@@ -247,192 +412,380 @@ struct PlacementARView: View {
             store.placementController?.pauseIfIdle()
         }
         .onChange(of: scenePhase) { _, phase in
-            guard isVisible, arSupported else { return }
+            // Under the number scanner or the Electrical sheet the session stays paused until that closes.
+            guard isVisible, arSupported, !pausedForCapture else { return }
             if phase == .active {
                 store.placementController?.resume()
             } else if phase == .background {
                 store.placementController?.pauseIfIdle()
             }
         }
+        .task(id: flashTip) {
+            guard flashTip != nil, (try? await Task.sleep(for: .seconds(1.5))) != nil else { return }
+            flashTip = nil
+        }
+        // One line is shared, so an old error must not hide live feedback for long.
+        .task(id: statusMessage) {
+            guard statusMessage != nil, (try? await Task.sleep(for: .seconds(4))) != nil else { return }
+            statusMessage = nil
+        }
+        .sheet(item: $valueEntry) { entry in
+            ValueEntrySheet(entry: entry, initial: initialValue(for: entry)) { save(entry, $0) }
+        }
+        .sheet(isPresented: $showsElectrical, onDismiss: finishElectrical) {
+            NavigationStack {
+                ElectricalCaptureView(store: store)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showsElectrical = false }
+                        }
+                    }
+            }
+        }
+        .fullScreenCover(isPresented: $showsNumberScanner, onDismiss: finishNumberScan) {
+            LiveLabelScanner(target: .meterNumber) { read, image in
+                acceptNumberScan(read, image: image)
+                showsNumberScanner = false
+            } onCancel: {
+                showsNumberScanner = false
+            } onManualEntry: {
+                typeNumberAfterScan = true
+                showsNumberScanner = false
+            }
+            .ignoresSafeArea()
+        }
     }
 
     private var arScreen: some View {
         // One assessment per update: it tints the battery and writes the tone line.
         let assessment = liveAssessment
-        return VStack(spacing: 0) {
-            ZStack {
-                if let controller = store.placementController {
-                    PlacementARRepresentable(
-                        controller: controller,
-                        mode: cue == .gas ? .gasMeter : .battery,
-                        measurementMode: false,
-                        measurementKind: .batteryToMeter,
-                        editingWorkingSpace: false,
-                        // Battery step: one finger slides it along the meter wall, a tap on the ground moves it there,
-                        // two fingers turn it. After "Put it here" it stays put until "Move it".
-                        inputEnabled: cue == .gas || cue == .placeBattery,
-                        aimEnabled: cue == .gas && scene.gasMeterPosition == nil,
-                        tapEnabled: (cue == .gas && scene.gasMeterPosition == nil) || cue == .placeBattery,
-                        scanning: true,
-                        lockTarget: lockTarget,
-                        yawRadians: yawRadians,
-                        tone: assessment?.placementTone ?? .incomplete,
-                        screenshotToken: screenshotToken,
-                        onSceneChange: acceptScene,
-                        onYawChange: { yawRadians = $0 },
-                        onLiveFeet: { _ in },
-                        onScreenshot: handleScreenshot,
-                        onFailure: { statusMessage = $0 },
-                        onTrackingStatus: { trackingMessage = $0 },
-                        onCoachingActiveChange: { coachingIsActive = $0 },
-                        onLookAround: { lookAround = $0 },
-                        onScanFeedback: { scanFeedback = $0 }
-                    )
-                }
+        return ZStack {
+            if let controller = store.placementController {
+                PlacementARRepresentable(
+                    controller: controller,
+                    mode: step == .gas ? .gasMeter : .battery,
+                    measurementMode: false,
+                    measurementKind: .batteryToMeter,
+                    editingWorkingSpace: false,
+                    // Battery step: one finger slides it along the meter wall, a tap on the ground moves it there,
+                    // two fingers turn it. After "Put it here" it stays put until "Move it".
+                    inputEnabled: step == .gas || step == .placeBattery,
+                    aimEnabled: step == .gas && scene.gasMeterPosition == nil,
+                    tapEnabled: (step == .gas && scene.gasMeterPosition == nil) || step == .placeBattery,
+                    // Boxes draw for both kinds until each locks, so the detector rests once both are found.
+                    scanning: !meterMarked || !panelMarked,
+                    lockTarget: lockTarget,
+                    yawRadians: yawRadians,
+                    tone: assessment?.placementTone ?? .incomplete,
+                    screenshotToken: screenshotToken,
+                    onSceneChange: acceptScene,
+                    onYawChange: { yawRadians = $0 },
+                    onLiveFeet: { _ in },
+                    onScreenshot: handleScreenshot,
+                    onFailure: { statusMessage = $0 },
+                    onTrackingStatus: { trackingMessage = $0 },
+                    onCoachingActiveChange: { coachingIsActive = $0 },
+                    onLookAround: { lookAround = $0 },
+                    onScanFeedback: { scanFeedback = $0 },
+                    onMeterCrop: { store.attachScanMeterPhotoIfMissing($0) }
+                )
             }
+            // The coaching overlay has the camera to itself. The two lines come back when it finishes.
             if !coachingIsActive {
-                bottomBar(assessment)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 8)
+                VStack(spacing: 0) {
+                    taskLineView
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                    Spacer(minLength: 0)
+                    bottomBar(assessment)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
             }
         }
     }
 
+    private var taskLineView: some View {
+        Text(step.task)
+            .font(.title3.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .animation(.easeInOut(duration: 0.25), value: step)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private func bottomBar(_ assessment: SurveyAssessment?) -> some View {
         VStack(spacing: 12) {
-            Text(instruction)
-                .font(.body)
-                .multilineTextAlignment(.center)
-            if let hint = activeHint {
-                Label(hint.rawValue, systemImage: hint.symbol)
-                    .font(.subheadline.weight(.semibold))
-                    .symbolEffect(.pulse)
-            }
-            if cue == .placeBattery || cue == .ready, let assessment {
-                // Words and an icon with the tint, never color alone, and no distances on the camera.
-                Label(toneLine(assessment), systemImage: ToneStyle.symbol(assessment.placementTone))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(ToneStyle.color(assessment.placementTone))
-                    .multilineTextAlignment(.center)
-            }
-            if let trackingMessage {
-                Text(trackingMessage)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-            }
-            if lockTarget != nil, scanFeedback.detector == .inferenceFailed {
-                Text("The equipment detector stopped responding.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-            }
-            if let statusMessage {
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-            }
-            if manualTargetForCue != nil || rejectableLock != nil {
-                HStack(spacing: 12) {
-                    if manualTargetForCue != nil {
-                        Button {
-                            store.placementController?.markTargetAtDot()
-                        } label: {
-                            Text("Mark it myself")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                    if let wrong = rejectableLock {
-                        Button {
-                            recentLock = nil
-                            store.placementController?.rejectLock(wrong)
-                        } label: {
-                            Text("Not the \(wrong.title.lowercased())")
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-            if cue == .gas {
-                Button("No gas meter") {
-                    store.setGasMeterNotVisible(true)
-                    store.placementController?.clearGasMarker()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-            if cue == .lookAround {
-                Button("Can't move farther") {
-                    store.placementController?.skipLookAround()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-            }
-            if cue == .placeBattery {
-                if hasBatteryGhost {
-                    Button("Other side") {
-                        store.placementController?.flipBatterySide()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .disabled(isSaving)
-                } else {
-                    // No ground found beside the meter yet. Saving still works; the battery checks stay unknown (amber).
-                    Button("Save without battery") {
-                        submit(withoutBattery: true)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .disabled(isSaving)
-                }
-            }
-            if cue == .ready {
-                Button("Move it") {
-                    store.placementController?.unconfirmBatterySpot()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(isSaving)
-            }
-            if cue == .placeBattery, hasBatteryGhost {
-                Button {
-                    store.placementController?.confirmBatterySpot()
-                } label: {
-                    Text("Put it here")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isSaving)
-            } else {
-                Button {
-                    submit()
-                } label: {
-                    if isSaving {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Text("Submit")
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isSaving || cue != .ready)
-            }
-            if panelMarked || meterMarked || gasResolved {
-                Button("Start over") { restart() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-            }
+            feedbackLine(feedback(assessment))
+            stepControls
         }
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// Animated SF Symbol plus short copy, one cue at a time. The height stays fixed so the buttons do not jump.
+    private func feedbackLine(_ feedback: Feedback?) -> some View {
+        HStack(spacing: 12) {
+            if let feedback {
+                Image(systemName: feedback.symbol)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(feedback.tint)
+                    .symbolEffect(.pulse, options: .repeating, isActive: feedback.pulses)
+                    .symbolEffect(.bounce, value: feedback.symbol)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
+                Text(feedback.text)
+                    .font(.headline)
+                    .foregroundStyle(feedback.isError ? feedback.tint : Color.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .animation(.easeInOut(duration: 0.2), value: feedback)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    /// One bottom line at a time: an error, then tracking, then a fresh confirmation, then the detector, then the step.
+    private func feedback(_ assessment: SurveyAssessment?) -> Feedback? {
+        if let statusMessage {
+            return Feedback(
+                text: statusMessage,
+                symbol: "exclamationmark.octagon.fill",
+                tint: ToneStyle.color(.conflict),
+                isError: true
+            )
+        }
+        let warning = ToneStyle.color(.incomplete)
+        if pausedForCapture {
+            return Feedback(.paused, tint: warning)
+        }
+        if let trackingMessage {
+            return CoachTip(rawValue: trackingMessage).map { Feedback($0, tint: warning) }
+                ?? Feedback(text: trackingMessage, symbol: "exclamationmark.triangle.fill", tint: warning)
+        }
+        if let flashTip {
+            return Feedback(flashTip)
+        }
+        if lockTarget != nil {
+            if scanFeedback.detector == .inferenceFailed {
+                return Feedback(text: "The detector stopped. Tap Mark it myself", symbol: "exclamationmark.triangle.fill", tint: warning)
+            }
+            if let hint = scanFeedback.hint {
+                return Feedback(hint)
+            }
+        }
+        return stepFeedback(assessment)
+    }
+
+    private func stepFeedback(_ assessment: SurveyAssessment?) -> Feedback? {
+        switch step {
+        case .findMeter:
+            return Feedback(manualTargetForCue == nil ? .pointAtMeter : .markIt)
+        case .findPanel:
+            return Feedback(manualTargetForCue == nil ? .pointAtPanel : .markIt)
+        case .readMeter:
+            if store.isReadingMeterNumber { return Feedback(.readingNumber) }
+            if let number = recordedMeterNumber {
+                return Feedback(text: "Meter number \(number). Right?", symbol: "number.circle.fill", tint: .primary)
+            }
+            return Feedback(LiveLabelScanner.isSupported ? .scanNumber : .typeNumber)
+        case .readBreaker:
+            return Feedback(.tapBreaker)
+        case .gas:
+            return Feedback(.tapGas)
+        case .lookAround:
+            if !lookAround.movedFarther { return Feedback(.stepBack) }
+            if !lookAround.lookedLeft { return Feedback(.lookLeft) }
+            if !lookAround.lookedRight { return Feedback(.lookRight) }
+            return Feedback(.stepBack)
+        case .placeBattery, .confirm:
+            // No ghost yet means no ground beside the meter.
+            guard let assessment else { return Feedback(.pointDown) }
+            return toneFeedback(assessment)
+        }
+    }
+
+    /// Only the buttons this step needs, plus "Mark it myself" or "Not the …" while they apply.
+    private var stepControls: some View {
+        VStack(spacing: 8) {
+            stepActions
+            lockControls
+        }
+    }
+
+    @ViewBuilder
+    private var stepActions: some View {
+        switch step {
+        case .findMeter, .findPanel:
+            EmptyView()
+        case .readMeter:
+            if recordedMeterNumber != nil {
+                primaryButton("Looks right") { pass(.readMeter) }
+                HStack(spacing: 8) {
+                    if LiveLabelScanner.isSupported {
+                        secondaryButton("Scan again") { beginNumberScan() }
+                    }
+                    secondaryButton("Type it") { valueEntry = .meterNumber }
+                }
+            } else {
+                if LiveLabelScanner.isSupported {
+                    primaryButton("Scan meter number") { beginNumberScan() }
+                }
+                HStack(spacing: 8) {
+                    secondaryButton("Type it") { valueEntry = .meterNumber }
+                    secondaryButton("Skip") { pass(.readMeter) }
+                }
+            }
+        case .readBreaker:
+            HStack(spacing: 8) {
+                ForEach(Self.breakerChips, id: \.self) { amps in
+                    Button {
+                        saveBreaker(amps)
+                    } label: {
+                        Text("\(amps) A")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("\(amps) amp main breaker")
+                }
+            }
+            HStack(spacing: 8) {
+                secondaryButton("Other…") { valueEntry = .breakerAmps }
+                secondaryButton("Skip") { pass(.readBreaker) }
+            }
+        case .gas:
+            secondaryButton("No gas meter") {
+                store.setGasMeterNotVisible(true)
+                store.placementController?.clearGasMarker()
+            }
+        case .lookAround:
+            secondaryButton("Can’t step back") {
+                store.placementController?.skipLookAround()
+            }
+        case .placeBattery:
+            if hasBatteryGhost {
+                primaryButton("Put it here") {
+                    store.placementController?.confirmBatterySpot()
+                }
+                .disabled(isSaving)
+                secondaryButton("Other side") {
+                    store.placementController?.flipBatterySide()
+                }
+                .disabled(isSaving)
+            } else {
+                // No ground found beside the meter yet. Saving still works; the battery checks stay unknown (amber).
+                secondaryButton("Save without battery") {
+                    submit(withoutBattery: true)
+                }
+                .disabled(isSaving)
+            }
+        case .confirm:
+            Button {
+                submit()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Save and review")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isSaving)
+            secondaryButton("Move it") {
+                store.placementController?.unconfirmBatterySpot()
+            }
+            .disabled(isSaving)
+        }
+    }
+
+    @ViewBuilder
+    private var lockControls: some View {
+        if manualTargetForCue != nil || rejectableLock != nil {
+            HStack(spacing: 8) {
+                if manualTargetForCue != nil {
+                    secondaryButton("Mark it myself") {
+                        store.placementController?.markTargetAtDot()
+                    }
+                }
+                if let wrong = rejectableLock {
+                    secondaryButton("Not the \(wrong.title.lowercased())") {
+                        dropLock(wrong)
+                    }
+                }
+            }
+        }
+    }
+
+    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+    }
+
+    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Section {
+                Button(role: .destructive) {
+                    restart()
+                } label: {
+                    Label("Start the scan over", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(!(meterMarked || panelMarked || gasResolved))
+                Button {
+                    dropLock(.electricMeter)
+                } label: {
+                    Label("Redo meter", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(!meterMarked)
+                Button {
+                    dropLock(.breakerPanel)
+                } label: {
+                    Label("Redo panel", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(!panelMarked)
+            }
+            Section {
+                if LiveLabelScanner.isSupported {
+                    Button {
+                        beginNumberScan()
+                    } label: {
+                        Label("Scan meter number", systemImage: "text.viewfinder")
+                    }
+                }
+                Button {
+                    openElectrical()
+                } label: {
+                    Label("Type electrical numbers", systemImage: "keyboard")
+                }
+            }
+            Button {
+                finishLater()
+            } label: {
+                Label("Finish later", systemImage: "clock")
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+        }
+        .disabled(isSaving)
     }
 
     private var unsupportedScreen: some View {
@@ -443,10 +796,15 @@ struct PlacementARView: View {
                 description: Text("Use a physical iPhone to scan the meter and the panel. You can complete the other survey sections here.")
             )
             Button("Return to survey") {
-                dismiss()
+                onReturnToSurvey()
             }
             .frame(maxWidth: .infinity)
             .buttonStyle(.borderedProminent)
+            Button("Type electrical numbers") {
+                openElectrical()
+            }
+            .frame(maxWidth: .infinity)
+            .buttonStyle(.bordered)
             Button("Review missing items") {
                 onContinue()
             }
@@ -457,11 +815,6 @@ struct PlacementARView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// Detector cue for the meter or panel search only.
-    private var activeHint: CoachTip? {
-        lockTarget == nil ? nil : scanFeedback.hint
-    }
-
     /// "Mark it myself" for the object this step is asking for, once the controller offers it.
     private var manualTargetForCue: EquipmentKind? {
         guard let lockTarget, scanFeedback.manualTarget == lockTarget else { return nil }
@@ -469,9 +822,9 @@ struct PlacementARView: View {
     }
 
     /// A lock "Not the …" may still undo: for 5 s after it locks, and while the next item is being searched for.
-    /// It clears the lock and keeps it from relocking on the same spot. Later, only Start over (or a Redo) undoes it.
+    /// It clears the lock and keeps it from relocking on the same spot. Later, Redo in the ••• menu does the same.
     private var rejectableLock: EquipmentKind? {
-        switch cue {
+        switch step {
         case .findPanel where meterMarked: return .electricMeter
         case .gas where panelMarked: return .breakerPanel
         default: break
@@ -480,61 +833,102 @@ struct PlacementARView: View {
         return (kind == .electricMeter ? meterMarked : panelMarked) ? kind : nil
     }
 
-    /// Answered on the Home and Electrical screens, not by where the battery sits. They still count toward the tone;
-    /// the tone line names a siting rule first, since that is what moving the battery can change.
-    private static let electricalRuleIDs: Set<String> = ["austin-main-breaker", "solar-or-two-batteries"]
-
-    /// Words for the tone line: the tone's title, plus the first rule holding it there.
-    private func toneLine(_ assessment: SurveyAssessment) -> String {
-        let required = assessment.results.filter(\.isRequired)
-        func first(_ status: CheckStatus) -> RuleResult? {
-            required.first { $0.status == status && !Self.electricalRuleIDs.contains($0.id) }
-                ?? required.first { $0.status == status }
-        }
-        switch assessment.placementTone {
+    /// The tone as words, an icon, and its color: what the spot needs next, never a distance.
+    private func toneFeedback(_ assessment: SurveyAssessment) -> Feedback {
+        let tone = assessment.placementTone
+        let text: String
+        switch tone {
         case .clear:
-            return "\(ToneStyle.title(.clear)). Preview only, not approval."
+            text = "Fits here. An engineer still confirms."
         case .attested:
-            return "\(ToneStyle.title(.attested)). Some passes are your answers, not measurements."
+            text = "Fits, but some checks are your answers"
         case .conflict:
-            guard let rule = first(.conflict) else { return ToneStyle.title(.conflict) }
-            return "\(ToneStyle.title(.conflict)): \(rule.title)"
+            text = firstRule(.conflict, in: assessment).map(Self.fix(for:)) ?? ToneStyle.title(.conflict)
         case .incomplete:
-            guard let rule = first(.unknown) else { return ToneStyle.title(.incomplete) }
-            return "\(ToneStyle.title(.incomplete)): \(rule.title)"
+            text = firstRule(.unknown, in: assessment).map { nextAction(for: $0) } ?? "Still checking…"
+        }
+        // Confirmations hold still. A fix or a next action is a motion cue.
+        return Feedback(
+            text: text,
+            symbol: ToneStyle.symbol(tone),
+            tint: ToneStyle.color(tone),
+            pulses: tone == .conflict || tone == .incomplete
+        )
+    }
+
+    /// The rule the tone line speaks for: first what moving the battery changes, then what the scan found at the
+    /// meter and panel, then answers from the other screens. All of them still count toward the tone.
+    private func firstRule(_ status: CheckStatus, in assessment: SurveyAssessment) -> RuleResult? {
+        func tier(_ id: String) -> Int {
+            switch id {
+            case "austin-main-breaker", "solar-or-two-batteries": 2
+            case "meter-height", "meter-panel-same-wall": 1
+            default: 0
+            }
+        }
+        let matching = assessment.results.filter { $0.isRequired && $0.status == status }
+        for level in 0...2 {
+            if let rule = matching.first(where: { tier($0.id) == level }) { return rule }
+        }
+        return nil
+    }
+
+    /// A conflicting rule as the fix to try. What moving the battery cannot fix says what was found.
+    private static func fix(for rule: RuleResult) -> String {
+        switch rule.id {
+        case "wall-distance": "Slide it closer to the wall"
+        case "meter-distance": "Move it closer to the meter"
+        case "gas-meter-clearance": "Too close to the gas meter"
+        case "not-in-front-of-window": "It’s in front of a window"
+        case "meter-panel-access": "It blocks the meter or panel"
+        case "planning-footprint": "Something is in the way"
+        case "transfer-switch-space": "Something blocks the wall beside the meter"
+        case "front-working-space": "Something blocks the space in front of the meter"
+        case "meter-height": "The meter is outside Base’s height range"
+        case "meter-panel-same-wall": "The meter and panel are on different walls"
+        case "austin-main-breaker": "The main breaker is outside Austin’s range"
+        case "solar-or-two-batteries": "The panel bus rating is too low for this plan"
+        // Rule titles carry thresholds in feet, and the camera never shows a distance.
+        default: "Something doesn’t fit here. Review lists it."
         }
     }
 
-    private var instruction: String {
-        switch cue {
-        case .findMeter:
-            return manualTargetForCue == nil
-                ? "Looking for the meter."
-                : "Put the dot on the meter, then tap Mark it myself."
-        case .findPanel:
-            return manualTargetForCue == nil
-                ? "Looking for the panel."
-                : "Put the dot on the panel, then tap Mark it myself."
-        case .gas:
-            return scene.gasMeterPosition == nil
-                ? "Gas meter? Tap it, or say there isn’t one."
-                : "Gas meter marked."
-        case .lookAround:
-            if !lookAround.movedFarther { return "Move farther away." }
-            if !lookAround.lookedLeft { return "Look left." }
-            if !lookAround.lookedRight { return "Look right." }
-            return "Move farther away."
-        case .placeBattery:
-            return hasBatteryGhost
-                ? "Drag or tap the ground to slide the battery along the wall. Then tap Put it here."
-                : "Point your phone at the ground beside the meter, or tap the ground there."
-        case .ready:
-            return "Tap Submit."
+    /// An unknown rule as the next thing to do. Mesh checks cannot finish on an iPhone without LiDAR.
+    private func nextAction(for rule: RuleResult) -> String {
+        let meshChecks: Set<String> = ["planning-footprint", "not-in-front-of-window", "transfer-switch-space", "front-working-space"]
+        if meshChecks.contains(rule.id), !scene.lidarMeshAvailable {
+            return "This iPhone can’t scan that. Review lists it."
+        }
+        switch rule.id {
+        case "wall-distance", "not-in-front-of-window": return "Aim at the wall behind it"
+        case "planning-footprint": return "Point down at the ground under it"
+        case "transfer-switch-space": return "Look at the wall beside the meter"
+        case "front-working-space": return "Point down in front of the meter"
+        case "meter-panel-access", "meter-panel-same-wall": return "Mark the meter and panel on the wall"
+        case "meter-distance": return "Keep the meter in view"
+        case "meter-height": return "Point down at the ground under the meter"
+        case "gas-meter-clearance": return "Mark the gas meter, or say there isn’t one"
+        case "austin-main-breaker": return "Add the main breaker size from the menu"
+        case "solar-or-two-batteries":
+            return store.session.electrical.needsPanelBusRating
+                ? "Add the panel bus rating from the menu"
+                : "Answer solar and battery count in Home info"
+        default: return "Still checking…"
         }
     }
 
     private func syncGuide() {
         store.placementController?.syncGuide(step: guideStep, gasResolved: gasResolved)
+    }
+
+    private func pass(_ liveStep: LiveStep) {
+        passed.insert(liveStep)
+        store.placementController?.passedLiveSteps = passed
+    }
+
+    /// A number the survey already has counts as read, so the scan resumes past that step.
+    private func passRecordedSteps() {
+        if recordedMeterNumber != nil { pass(.readMeter) }
     }
 
     /// Opens the 5 s "Not the …" window when a lock appears, and closes it if that lock goes away.
@@ -551,6 +945,102 @@ struct PlacementARView: View {
         }
     }
 
+    /// "Not the …" and Redo: the scan asks for that item again. A meter photo that was only this lock's crop goes too.
+    private func dropLock(_ kind: EquipmentKind) {
+        recentLock = nil
+        store.placementController?.rejectLock(kind)
+        if kind == .electricMeter {
+            store.dropScanMeterPhoto()
+        }
+    }
+
+    private func saveBreaker(_ amps: Int) {
+        store.setMainBreakerAmperage(amps)
+        flashTip = .breakerSaved
+    }
+
+    private func initialValue(for entry: ValueEntry) -> String {
+        switch entry {
+        case .meterNumber: store.session.electrical.meterNumber ?? ""
+        case .breakerAmps: store.session.electrical.mainBreakerAmperage.map(String.init) ?? ""
+        }
+    }
+
+    private func save(_ entry: ValueEntry, _ value: String) {
+        switch entry {
+        case .meterNumber:
+            store.setMeterNumber(value, source: .manual)
+            pass(.readMeter)
+        case .breakerAmps:
+            guard let amps = Int(value), amps > 0 else { return }
+            saveBreaker(amps)
+        }
+    }
+
+    /// Main's live number scan, the one that reads up close. The AR session lets go of the camera first.
+    private func beginNumberScan() {
+        Task {
+            if let reason = await LiveLabelScanner.prepare() {
+                statusMessage = reason
+                return
+            }
+            pauseForCapture()
+            showsNumberScanner = true
+        }
+    }
+
+    /// Same order as the Electrical screen: the number first, so the photo's own OCR does not run over it.
+    private func acceptNumberScan(_ read: LabelScanRead, image: UIImage?) {
+        if let number = read.meterNumber {
+            store.setMeterNumber(number, source: .ocr, note: "Scanned from the camera. Confirm it matches the meter.")
+            flashAfterCapture = .gotNumber
+        }
+        if let image {
+            store.attachMeterPhoto(image)
+        }
+        pass(.readMeter)
+    }
+
+    private func finishNumberScan() {
+        resumeAfterCapture()
+        if let flash = flashAfterCapture {
+            flashAfterCapture = nil
+            flashTip = flash
+        }
+        if typeNumberAfterScan {
+            typeNumberAfterScan = false
+            valueEntry = .meterNumber
+        }
+    }
+
+    private func openElectrical() {
+        pauseForCapture()
+        showsElectrical = true
+    }
+
+    /// A number typed or scanned on the Electrical sheet counts as read.
+    private func finishElectrical() {
+        resumeAfterCapture()
+        passRecordedSteps()
+    }
+
+    /// A full-screen cover or a sheet does not fire `onDisappear`, so the scan pauses itself: the number scanner
+    /// needs the camera ARKit holds, and a frozen camera should not keep locking or measuring.
+    private func pauseForCapture() {
+        guard arSupported, !pausedForCapture else { return }
+        pausedForCapture = true
+        commitLiveScene()
+        store.placementController?.pauseIfIdle()
+    }
+
+    private func resumeAfterCapture() {
+        guard pausedForCapture else { return }
+        pausedForCapture = false
+        // Backgrounded meanwhile: the scene-phase change resumes it instead.
+        guard isVisible, scenePhase == .active else { return }
+        store.placementController?.resume()
+    }
+
     private func acceptScene(_ snapshot: PlacementSceneSnapshot) {
         var incoming = snapshot
         var current = scene
@@ -565,13 +1055,23 @@ struct PlacementARView: View {
         store.placementController?.restartScan()
         // The live scene is empty now, so it would never be committed over the old marks, height, and photo.
         store.resetPlacementEvidence()
+        store.dropScanMeterPhoto()
+        passed = store.placementController?.passedLiveSteps ?? []
+        passRecordedSteps()
         statusMessage = nil
+        flashTip = nil
         recentLock = nil
     }
 
-    /// Submit once the battery is placed. "Save without battery" saves from the battery step when no spot showed up.
+    /// Keeps the scan as it is and opens Review. Coming back resumes at the first step that is not done.
+    private func finishLater() {
+        commitLiveScene()
+        onContinue()
+    }
+
+    /// Save once the battery is placed. "Save without battery" saves from the battery step when no spot showed up.
     private func submit(withoutBattery: Bool = false) {
-        guard !isSaving, cue == .ready || (withoutBattery && cue == .placeBattery) else { return }
+        guard !isSaving, step == .confirm || (withoutBattery && step == .placeBattery) else { return }
         commitLiveScene()
         let token = UUID()
         pendingSave = token
@@ -607,7 +1107,70 @@ struct PlacementARView: View {
         guard let token, token == pendingSave else { return }
         pendingSave = nil
         screenshotToken = nil
-        statusMessage = "The scan photo did not capture. Tap Submit again."
+        statusMessage = "The scan photo did not capture. Tap Save again."
+    }
+}
+
+/// One typed value over the running scan: the meter number, or a main-breaker size that is not a chip.
+private struct ValueEntrySheet: View {
+    var entry: ValueEntry
+    var initial: String
+    var onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        TextField(entry.placeholder, text: $text)
+                            .keyboardType(entry == .breakerAmps ? .numberPad : .default)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                            .focused($focused)
+                            .onChange(of: text) { _, newValue in
+                                guard entry == .breakerAmps else { return }
+                                let digits = newValue.filter(\.isNumber)
+                                if digits != newValue { text = digits }
+                            }
+                        if entry == .breakerAmps {
+                            Text("A")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } footer: {
+                    Text(entry.footer)
+                }
+            }
+            .navigationTitle(entry.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(trimmed)
+                        dismiss()
+                    }
+                    .disabled(trimmed.isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .onAppear { text = initial }
+        // Focus once the sheet is up, or the keyboard request is dropped.
+        .task {
+            try? await Task.sleep(for: .milliseconds(400))
+            focused = true
+        }
     }
 }
 
@@ -717,6 +1280,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onCoachingActiveChange: (Bool) -> Void
     var onLookAround: (LookAround) -> Void
     var onScanFeedback: (ScanFeedback) -> Void
+    var onMeterCrop: (UIImage) -> Void
 
     func makeUIView(context: Context) -> ARView {
         controller.prepareIfNeeded()
@@ -745,7 +1309,8 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             onTrackingStatus: onTrackingStatus,
             onCoachingActiveChange: onCoachingActiveChange,
             onLookAround: onLookAround,
-            onScanFeedback: onScanFeedback
+            onScanFeedback: onScanFeedback,
+            onMeterCrop: onMeterCrop
         )
     }
 }
@@ -765,6 +1330,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     var yawRadians: Float = 0
     fileprivate var walkStep: WalkStep = .scan
     fileprivate var hasChosenWalkStep = false
+    /// Live Survey steps the user accepted or skipped. Kept here so the answer survives leaving the scan screen.
+    fileprivate var passedLiveSteps: Set<LiveStep> = []
 
     private var mode: PlacementTarget = .battery
     private var measurementMode = false
@@ -848,6 +1415,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var manualMarkOffered = false
         private var onScanFeedback: ((ScanFeedback) -> Void)?
         private var lastScanFeedback: ScanFeedback?
+        private var onMeterCrop: ((UIImage) -> Void)?
+        /// Renders the fallback meter photo off the main thread. Core Image contexts are thread-safe.
+        private nonisolated static let cropContext = CIContext()
         private var batterySlide: BatterySlide?
         private var batteryConfirmed = false
         private var gasResolved = false
@@ -957,7 +1527,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onTrackingStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void,
             onLookAround: @escaping (LookAround) -> Void,
-            onScanFeedback: @escaping (ScanFeedback) -> Void
+            onScanFeedback: @escaping (ScanFeedback) -> Void,
+            onMeterCrop: @escaping (UIImage) -> Void
         ) {
             self.mode = mode
             if self.measurementKind != measurementKind {
@@ -972,6 +1543,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.requestedLock = lockTarget
             self.onLookAround = onLookAround
             self.onScanFeedback = onScanFeedback
+            self.onMeterCrop = onMeterCrop
             hideWorldBoxesIfNeeded()
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
@@ -1045,6 +1617,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onTrackingStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
+            onMeterCrop = nil
             screenshotInFlight = false
             pauseRequested = false
             if isPrepared {
@@ -2256,11 +2829,61 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             case .electricMeter:
                 meterGroundPosition = ground
                 meterLockSource = source
+                sendMeterCrop(source: source)
             case .breakerPanel:
                 panelGroundPosition = ground
                 panelLockSource = source
             }
             resetHold()
+        }
+
+        /// The locked meter cut from the same frame as its box, for a fallback meter photo. From 1–3 m the number is
+        /// seldom legible, so the store keeps it only when the survey has no meter photo; the number scan up close is
+        /// the real one. The detector's own box for a detector lock; for a hold or "Mark it myself", only a meter box
+        /// under the dot. No box, no crop.
+        private func sendMeterCrop(source: EquipmentLockSource) {
+            guard onMeterCrop != nil, let packet = freshScan, let pixels = packet.pixels else { return }
+            let meterBoxes = pendingDetections.filter { $0.kind == .electricMeter }
+            let detection: EquipmentDetection?
+            if source == .detector {
+                detection = meterBoxes.first
+            } else {
+                let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+                detection = meterBoxes.first {
+                    Self.viewRect(for: $0.boundingBox, in: packet).insetBy(dx: -32, dy: -32).contains(center)
+                }
+            }
+            guard let box = detection?.boundingBox else { return }
+            let orientation = packet.visionOrientation
+            Task.detached(priority: .utility) { [weak self] in
+                guard let image = PlacementSceneController.meterCrop(pixels, box: box, orientation: orientation) else { return }
+                await self?.deliverMeterCrop(image)
+            }
+        }
+
+        private func deliverMeterCrop(_ image: UIImage) {
+            onMeterCrop?(image)
+        }
+
+        private nonisolated static func meterCrop(
+            _ pixels: CopiedPixels,
+            box: CGRect,
+            orientation: CGImagePropertyOrientation
+        ) -> UIImage? {
+            let upright = CIImage(cvPixelBuffer: pixels.buffer).oriented(orientation)
+            let extent = upright.extent
+            // Vision boxes are normalized to the upright image with the origin at the lower left, as Core Image is.
+            let rect = CGRect(
+                x: extent.minX + box.minX * extent.width,
+                y: extent.minY + box.minY * extent.height,
+                width: box.width * extent.width,
+                height: box.height * extent.height
+            )
+            // A quarter more around the box, so the meter's collar and nameplate edge stay in the photo.
+            let padded = rect.insetBy(dx: -rect.width * 0.125, dy: -rect.height * 0.125).integral.intersection(extent)
+            guard !padded.isNull, padded.width >= 32, padded.height >= 32,
+                  let image = cropContext.createCGImage(upright, from: padded) else { return nil }
+            return UIImage(cgImage: image)
         }
 
         /// Live boxes for both kinds, until that kind locks. A lock is a position, not a box left on the camera.
@@ -2295,8 +2918,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return locked ? nil : requestedLock
         }
 
-        /// Clears the scan's marks, battery, and look-around. The view also resets the survey's saved placement evidence.
+        /// Clears the scan's marks, battery, look-around, and skipped steps. The view also resets the survey's saved
+        /// placement evidence.
         fileprivate func restartScan() {
+            passedLiveSteps = []
             clearBattery()
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
@@ -2826,24 +3451,23 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return false
         }
 
+        /// Short copy that matches a CoachTip, so the bottom line draws its graphic. It is also what a blocked tap reports.
         private nonisolated static func trackingMessage(for state: ARCamera.TrackingState) -> String? {
             switch state {
             case .normal:
                 return nil
             case .notAvailable:
-                return "Tracking isn’t available yet. Move the phone slowly until the scene settles."
+                return CoachTip.moveSlowly.rawValue
             case .limited(let reason):
                 switch reason {
-                case .initializing:
-                    return "Tracking is starting. Hold still a moment before placing a point."
+                case .initializing, .relocalizing:
+                    return CoachTip.holdStill.rawValue
                 case .excessiveMotion:
-                    return "Tracking is limited by excessive motion. Slow down, then place the point."
+                    return CoachTip.slowDown.rawValue
                 case .insufficientFeatures:
-                    return "Tracking is limited by insufficient features. Aim at a surface with more detail."
-                case .relocalizing:
-                    return "Tracking is relocalizing. Hold the phone steady, then place the point."
+                    return CoachTip.moreDetail.rawValue
                 @unknown default:
-                    return "Tracking is limited. Wait for a steadier view before placing a point."
+                    return CoachTip.holdStill.rawValue
                 }
             }
         }

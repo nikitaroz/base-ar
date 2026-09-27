@@ -33,6 +33,7 @@
 		B10000000000000000000014 /* LiveLabelScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* LiveLabelScanner.swift */; };
 		B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* VisionElectricalRecognizer.swift */; };
 		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
+		FB0000000000000000000001 /* FrameRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0000000000000000000001 /* FrameRecorder.swift */; };
 		C10000000000000000000001 /* EquipmentDetecting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* EquipmentDetecting.swift */; };
 		C10000000000000000000002 /* EquipmentScan.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* EquipmentScan.mlpackage */; };
 		E10000000000000000000001 /* OnboardingContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* OnboardingContainerView.swift */; };
@@ -79,6 +80,7 @@
 		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
 		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
 		B20000000000000000000016 /* BatteryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCatalog.swift; sourceTree = "<group>"; };
+		FC0000000000000000000001 /* FrameRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameRecorder.swift; sourceTree = "<group>"; };
 		C20000000000000000000001 /* EquipmentDetecting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquipmentDetecting.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* EquipmentScan.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = EquipmentScan.mlpackage; sourceTree = "<group>"; };
 		D20000000000000000000001 /* BaseAR.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BaseAR.xcconfig; sourceTree = "<group>"; };
@@ -188,6 +190,7 @@
 			children = (
 				B20000000000000000000007 /* BatteryGeometry.swift */,
 				B20000000000000000000016 /* BatteryCatalog.swift */,
+				FC0000000000000000000001 /* FrameRecorder.swift */,
 				B20000000000000000000008 /* PlacementMeasuring.swift */,
 				C20000000000000000000001 /* EquipmentDetecting.swift */,
 				C20000000000000000000002 /* EquipmentScan.mlpackage */,
@@ -348,6 +351,7 @@
 				B10000000000000000000006 /* ElectricalCaptureView.swift in Sources */,
 				B10000000000000000000007 /* BatteryGeometry.swift in Sources */,
 				B10000000000000000000016 /* BatteryCatalog.swift in Sources */,
+				FB0000000000000000000001 /* FrameRecorder.swift in Sources */,
 				B10000000000000000000008 /* PlacementMeasuring.swift in Sources */,
 				B10000000000000000000009 /* PlacementARView.swift in Sources */,
 				C10000000000000000000001 /* EquipmentDetecting.swift in Sources */,
@@ -442,6 +446,7 @@
 				INFOPLIST_FILE = BaseAR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Base Site Survey";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Base Site Survey uses the camera to read and photograph the electric meter number, find the meter and electrical panel during the site scan, and preview battery placement.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Base Site Survey uses your precise location to show this property on a map. This is not the battery position.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "If the camera is unavailable, Base Site Survey can choose a photo from the library.";
@@ -476,6 +481,7 @@
 				INFOPLIST_FILE = BaseAR/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Base Site Survey";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Base Site Survey uses the camera to read and photograph the electric meter number, find the meter and electrical panel during the site scan, and preview battery placement.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Base Site Survey uses your precise location to show this property on a map. This is not the battery position.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "If the camera is unavailable, Base Site Survey can choose a photo from the library.";

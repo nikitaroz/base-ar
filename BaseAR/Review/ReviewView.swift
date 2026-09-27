@@ -478,7 +478,7 @@ struct ReviewView: View {
         case .incomplete:
             missingCount == 0
                 ? "Some required checks are still unknown. Open Eligibility checks to see which. You can still share the current draft."
-                : "Use the next actions below to finish the survey. You can still share the current draft."
+                : "Use What’s missing below to finish the survey. You can still share the current draft."
         case .conflict:
             "Captured evidence includes a conflict. Review the flagged checks and missing information."
         }

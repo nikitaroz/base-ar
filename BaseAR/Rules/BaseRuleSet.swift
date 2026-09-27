@@ -46,7 +46,9 @@ enum BaseRuleSet {
                 return .unknown("Read by scan as \(amps)A. Check it against the main breaker and confirm it.")
             }
             if austinMainBreakerRange.contains(amps) {
-                return .pass("Confirmed main breaker is \(amps)A, inside 150–200A.")
+                // Typed, or a scan read the user confirmed: their reading of the label, not a measurement, the same
+                // as the panel bus rating. It passes as attested, so the tone can't read green on it alone.
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "You confirmed the main breaker is \(amps)A, inside 150–200A. Your reading of the breaker, not a measurement.")
             }
             return .conflict("Confirmed main breaker is \(amps)A, outside the 150–200A Austin range.")
         }

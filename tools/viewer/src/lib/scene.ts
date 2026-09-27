@@ -341,14 +341,15 @@ export class SiteScene {
       return nearest?.cell ?? null
     }
     // A click only selects when the pointer barely moved: releasing an orbit or a battery drag is not a click.
-    let down = { x: 0, y: 0 }
+    // A finger drifts more than a mouse during a tap, so touch gets a wider slop.
+    let down = { x: 0, y: 0, slop: 4 }
     const endDrag = () => {
       if (!this.dragging) return
       this.dragging = false
       this.controls.enabled = true
     }
     el.addEventListener("pointerdown", (e) => {
-      down = { x: e.clientX, y: e.clientY }
+      down = { x: e.clientX, y: e.clientY, slop: e.pointerType === "touch" ? 12 : 4 }
       if (!this.battery?.visible || !this.parts) return
       aim(e)
       if (this.ray.intersectObject(this.parts.body).length) {
@@ -380,7 +381,7 @@ export class SiteScene {
     el.addEventListener("pointerleave", () => this.handlers.onHover(null, 0, 0))
     el.addEventListener("click", (e) => {
       const a = this.analysis
-      if (!a?.grid || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return
+      if (!a?.grid || Math.hypot(e.clientX - down.x, e.clientY - down.y) > down.slop) return
       aim(e)
       const cell = cellAt()
       if (!cell || cell.status === "offwall") return

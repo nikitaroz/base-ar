@@ -287,8 +287,11 @@ function electrical(survey, rules) {
   const amps = e.mainBreakerAmperage, bus = e.panelBusRatingAmps, solar = e.hasSolar, count = e.plannedBatteryCount;
   const out = {};
   const [lo, hi] = rules.main_breaker_amps;
+  // A scan's read of the breaker is a suggestion until the user confirms it, the same as the app's rule.
   out.main_breaker = amps == null
     ? { status: "unknown", kind: "input", detail: "Breaker amperage not in survey.json" }
+    : e.mainBreakerAmperageSource === "ocr"
+    ? { status: "unknown", kind: "input", detail: `${amps} A read by scan, not confirmed by the user` }
     : { status: amps >= lo && amps <= hi ? "pass" : "conflict", kind: "input", detail: `${amps} A stated, against ${lo}–${hi} A` };
   // Decided only from the panel bus rating read off the label. Never inferred from the main breaker.
   const need = rules.panel_amps_for_solar_or_two_batteries;

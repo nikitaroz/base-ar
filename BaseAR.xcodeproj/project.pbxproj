@@ -225,15 +225,6 @@
 			path = Location;
 			sourceTree = "<group>";
 		};
-		E70000000000000000000001 /* Onboarding */ = {
-			isa = PBXGroup;
-			children = (
-				E20000000000000000000001 /* OnboardingContainerView.swift */,
-				E20000000000000000000002 /* OnboardingPages.swift */,
-			);
-			path = Onboarding;
-			sourceTree = "<group>";
-		};
 		D70000000000000000000001 /* Config */ = {
 			isa = PBXGroup;
 			children = (
@@ -241,6 +232,15 @@
 				D20000000000000000000002 /* Local.xcconfig.example */,
 			);
 			path = Config;
+			sourceTree = "<group>";
+		};
+		E70000000000000000000001 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				E20000000000000000000001 /* OnboardingContainerView.swift */,
+				E20000000000000000000002 /* OnboardingPages.swift */,
+			);
+			path = Onboarding;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -437,7 +437,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = AGWR7PG3MN;
+				DEVELOPMENT_TEAM = 62JVG6DVVU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;
@@ -472,7 +472,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = AGWR7PG3MN;
+				DEVELOPMENT_TEAM = 62JVG6DVVU;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;

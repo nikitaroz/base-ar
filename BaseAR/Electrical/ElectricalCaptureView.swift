@@ -127,7 +127,10 @@ struct ElectricalCaptureView: View {
             } else {
                 Button("Enter number manually") {
                     showsManualMeterEntry = true
-                    focusedField = .meterNumber
+                    // Focus after the field is in the form, or the keyboard request is dropped.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        focusedField = .meterNumber
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }

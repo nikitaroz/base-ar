@@ -147,13 +147,11 @@ extension PlacementMeasuring {
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
         updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
-        // A missing mesh leaves the previous measured result in place. Yes/No answers are not a measurement.
-        if let footprint = measured.footprintIsClear {
-            updated.footprintIsClear = footprint
-        }
-        if let windows = measured.clearOfWindows {
-            updated.clearOfWindows = windows
-        }
+        // A missing mesh leaves the previous measured result in place, but only for the same spot.
+        // With a mesh, nil means this spot is not measured, so an old answer must not carry over. Yes/No answers are not a measurement.
+        let keepBatteryChecks = !measured.lidarMeshAvailable && measured.batteryPosition == placement.batteryPosition
+        updated.footprintIsClear = measured.footprintIsClear ?? (keepBatteryChecks ? placement.footprintIsClear : nil)
+        updated.clearOfWindows = measured.clearOfWindows ?? (keepBatteryChecks ? placement.clearOfWindows : nil)
         updated.keepsEquipmentAccess = measured.keepsEquipmentAccess
         updated.batteryPosition = measured.batteryPosition
         updated.meterPosition = measured.meterPosition
@@ -161,9 +159,11 @@ extension PlacementMeasuring {
         updated.gasMeterPosition = measured.gasMeterPosition
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
-        if let working = measured.frontWorkingSpaceIsClear {
-            updated.frontWorkingSpaceIsClear = working
-        }
+        let keepWorkingSpace = !measured.lidarMeshAvailable
+            && measured.batteryPosition == placement.batteryPosition
+            && measured.workingSpacePosition == placement.workingSpacePosition
+        updated.frontWorkingSpaceIsClear = measured.frontWorkingSpaceIsClear
+            ?? (keepWorkingSpace ? placement.frontWorkingSpaceIsClear : nil)
         if let transfer = measured.transferSwitchClearanceObserved {
             updated.transferSwitchClearanceObserved = transfer
         }

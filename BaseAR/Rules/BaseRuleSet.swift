@@ -132,6 +132,9 @@ enum BaseRuleSet {
         requirement: "The battery cannot be placed in front of a window.",
         isRequired: true,
         evaluate: { session in
+            guard session.placement.batteryPlaced else {
+                return .unknown("The battery has not been placed.")
+            }
             guard let clear = session.placement.clearOfWindows else {
                 return .unknown("The wall behind the battery has not been scanned, so a window there was not checked.")
             }

@@ -21,9 +21,10 @@ enum EquipmentKind: String, Sendable {
 
 /// One box from the EquipmentScan detector. The rect is Vision-normalized, origin at the lower left of the upright image.
 struct EquipmentDetection: Sendable {
-    /// Provisional cutoffs on the true detector score. On 18 Commons photos real meters scored 0.25–0.95 and
-    /// AC condensers reached 0.93, so neither number separates them. Tune both from the DEBUG `EquipmentScan` log on a device.
-    static let drawConfidence: Float = 0.30
+    /// Provisional cutoffs on the true detector score. On held-out site photos the YOLO26s model scores real meters
+    /// and panels 0.77+, even shrunk to 20% size, while a laptop keyboard reads as a panel at about 0.35. Tune both
+    /// from the DEBUG `EquipmentScan` log on a device.
+    static let drawConfidence: Float = 0.40
     static let lockConfidence: Float = 0.45
 
     var kind: EquipmentKind

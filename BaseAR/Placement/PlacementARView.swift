@@ -396,6 +396,8 @@ struct PlacementARView: View {
     /// The finish saves by itself only when the scan reached it on this visit, or the battery moved since. Coming
     /// back from Review to a finished scan must not bounce straight back to Review.
     @State private var autoFinishArmed = false
+    /// The battery was slid on a finished scan opened again: that save waits for the slide to settle.
+    @State private var finishWaitsForSlide = false
     /// Screenshot tries for this save. After a couple of misses Review opens without the scan photo.
     @State private var saveAttempts = 0
     @State private var lastSaveWithoutBattery = false
@@ -413,7 +415,7 @@ struct PlacementARView: View {
     /// A tight side yard can keep the user from stepping back far enough.
     private static let lookAroundWait: Duration = .seconds(40)
     /// No ground beside the meter by then: the survey goes on without a battery, and its checks stay unknown.
-    private static let batterySpotWait: Duration = .seconds(20)
+    private static let batterySpotWait: Duration = .seconds(3)
     private static let batterySteady: Duration = .seconds(2)
     /// The placed battery and its tone stay on screen this long before the scan photo is taken.
     private static let finishDwell: Duration = .seconds(1.5)
@@ -609,6 +611,7 @@ struct PlacementARView: View {
             isLeaving = false
             dragOffset = 0
             autoFinishArmed = false
+            finishWaitsForSlide = false
             saveAttempts = 0
             let controller = store.requirePlacementController()
             // A camera that cannot run must say so and stop the clocks, not time every step out over a dead feed.
@@ -671,7 +674,10 @@ struct PlacementARView: View {
         }
         .onChange(of: scene.batteryPosition) { old, new in
             // A battery slid on a finished scan saves again once it settles.
-            if step == .confirm, old != nil, new != nil { autoFinishArmed = true }
+            if step == .confirm, old != nil, new != nil {
+                autoFinishArmed = true
+                finishWaitsForSlide = true
+            }
         }
         .onDisappear {
             isVisible = false
@@ -861,8 +867,8 @@ struct PlacementARView: View {
     private var taskText: String {
         if let cameraProblem { return cameraProblem.task }
         if step == .confirm, !autoFinishArmed, !isSaving { return "Scan done" }
-        // A finish without a battery saves from the battery step.
-        if isSaving { return LiveStep.confirm.task }
+        // The battery spot is taken by itself in the background: the line says only that the scan is saving.
+        if isSaving || step == .placeBattery { return LiveStep.confirm.task }
         return step.task
     }
 
@@ -1000,6 +1006,8 @@ struct PlacementARView: View {
         case .placeBattery, .confirm:
             // A finished scan opened again ("Scan done") does not save by itself until the battery moves.
             if step == .confirm, !autoFinishArmed, !isSaving { return Feedback(.swipeBack) }
+            // The save right after the look-around gives no battery instructions.
+            if step == .placeBattery || (autoFinishArmed || isSaving) && !finishWaitsForSlide { return Feedback(.scanned) }
             // No ghost yet means no ground beside the meter.
             guard let assessment else { return Feedback(.pointDown) }
             return toneFeedback(assessment)
@@ -1394,17 +1402,14 @@ struct PlacementARView: View {
         flashTip = detectorDown ? .cantRecognize : .movingOn
     }
 
-    /// Battery and finish, both hands-free. The suggested spot is accepted once its tone is on screen and the phone
-    /// has held still; with no spot for a while the survey goes on without a battery (amber). The finish takes the
-    /// scan photo and opens Review.
+    /// Battery and finish, both hands-free and instant. The suggested spot is accepted as soon as it exists; with
+    /// no spot within `batterySpotWait` the survey goes on without a battery (amber). The finish takes the scan
+    /// photo and opens Review at once. (`batterySteady` and `phoneHeldSteady` are no longer used.)
     private func runBatteryClock() async {
         guard !clockHeld, !isSaving else { return }
         switch step {
         case .placeBattery:
             if hasBatteryGhost {
-                // A drag moves the ghost, which restarts this clock, so it settles where the user left it.
-                guard liveAssessment != nil, await phoneHeldSteady(for: Self.batterySteady),
-                      step == .placeBattery, hasBatteryGhost else { return }
                 store.placementController?.confirmBatterySpot()
             } else {
                 // The spot is suggested beside the meter, so with no meter there is none to wait for.
@@ -1413,7 +1418,11 @@ struct PlacementARView: View {
                 submit(withoutBattery: true)
             }
         case .confirm:
-            guard autoFinishArmed, await waitFor(Self.finishDwell), step == .confirm, !isSaving else { return }
+            guard autoFinishArmed, step == .confirm, !isSaving else { return }
+            // Reached right after the look-around, it saves at once; a slide on a reopened scan settles first.
+            if finishWaitsForSlide {
+                guard await waitFor(Self.finishDwell), step == .confirm, !isSaving else { return }
+            }
             submit()
         default:
             return

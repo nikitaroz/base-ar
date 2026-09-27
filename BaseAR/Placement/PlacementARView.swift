@@ -33,12 +33,6 @@ private struct LookAround: Equatable {
     var done: Bool { movedFarther && lookedLeft && lookedRight }
 }
 
-/// The Live Survey, in order. The screen shows the first step that is not done, so it resumes there on appear.
-/// Locks, the gas mark, the look-around, and the battery come from the scene. `readMeter` and `readBreaker` are the
-/// capture right after each lock: done once the photo of the locked item arrives, or after a short grace. A lock the
-/// scan captured by itself already carries its photo and read, so it skips that step. A find step that runs out of
-/// time moves on with the item unmarked (its checks stay unknown) and looks again on the next visit. The gas
-/// step is done once marked, answered "No" on Home Info, or not seen before its timeout.
 /// Why the Live Survey's camera cannot run. It stays on screen, unlike an error line that clears after 4 s.
 private enum CameraProblem: Equatable {
     /// Camera access is off for the app (denied or restricted).
@@ -61,6 +55,13 @@ private enum CameraProblem: Equatable {
     }
 }
 
+/// The Live Survey, in order. The screen shows the first step that is not done, so it resumes there on appear.
+/// Locks, the gas mark, and the look-around come from the scene. `readMeter` and `readBreaker` are the capture right
+/// after each lock: done once the photo of the locked item arrives, or after a short grace. A lock the scan captured
+/// by itself already carries its photo and read, so it skips that step. A find step that runs out of time moves on
+/// with the item unmarked (its checks stay unknown) and looks again on the next visit. The gas step is done once
+/// shown, answered "No" on Home Info, or not shown before its timeout. There is no battery step: the controller
+/// suggests the spot in the background, and `finish` places it, saves the scan photo, and opens Review.
 private enum LiveStep: Equatable {
     case findMeter
     case readMeter
@@ -68,22 +69,18 @@ private enum LiveStep: Equatable {
     case readBreaker
     case gas
     case lookAround
-    case placeBattery
-    case confirm
     /// The scan is over: the look-around is done and the battery spot is chosen in the background.
     case finish
 
-    /// The top line: the one job for this step.
+    /// The top line: the one job for this step. The gas line also depends on the Home Info answer (`taskText`).
     var task: String {
         switch self {
         case .findMeter: "Find the electric meter"
         case .readMeter: "Keep the meter in view"
         case .findPanel: "Find the breaker panel"
         case .readBreaker: "Keep the panel in view"
-        case .gas: "Find the gas meter"
+        case .gas: "Show the gas meter"
         case .lookAround: "Step back and look around"
-        case .placeBattery: "Place the battery"
-        case .confirm: "Saving your scan"
         case .finish: "Scan done"
         }
     }
@@ -329,8 +326,9 @@ private enum ValueEntry: String, Identifiable {
     }
 }
 
-/// The controller's view of the scan step. `battery` shows the suggested spot beside the meter; `finish` keeps
-/// the placed battery and its transfer-switch box on screen through Submit.
+/// The controller's view of the scan step. `finish` keeps the placed battery and its transfer-switch box on screen
+/// through the scan photo. The view no longer sends `battery` (the spot is suggested in the background); it stays
+/// declared until the integration commit removes it.
 private enum WalkStep: Equatable {
     case scan
     case gas
@@ -418,14 +416,14 @@ struct PlacementARView: View {
     /// The controller's capture feedback (the photo of a locked item), below confirmations and above detector hints.
     /// Set it from the controller's capture callback; any CoachTip case shows, nil says nothing.
     @State private var captureTip: CoachTip?
-    /// The finish saves by itself only when the scan reached it on this visit, or the battery moved since. Coming
-    /// back from Review to a finished scan must not bounce straight back to Review.
+    /// The finish saves by itself only when the scan reached it on this visit. Coming back from Review to a finished
+    /// scan must not bounce straight back to Review.
     @State private var autoFinishArmed = false
-    /// The battery was slid on a finished scan opened again: that save waits for the slide to settle.
-    @State private var finishWaitsForSlide = false
     /// Screenshot tries for this save. After a couple of misses Review opens without the scan photo.
     @State private var saveAttempts = 0
-    @State private var lastSaveWithoutBattery = false
+    /// The gas step has run long enough without a spot that the bottom line says where gas meters sit, or that the
+    /// step moves on by itself.
+    @State private var gasNudgeDue = false
     /// Camera access is off or the AR session failed. Holds the step clocks and keeps its message up.
     @State private var cameraProblem: CameraProblem?
 
@@ -434,15 +432,19 @@ struct PlacementARView: View {
     private static let edgeWidth: CGFloat = 24
     /// How long a locked meter or panel waits for its photo before the scan moves on. Review lists a missing photo.
     private static let captureGrace: Duration = .seconds(3)
-    /// A gas meter not marked by then is left unknown. "Yes" on Home Info waits longer, since there is one to find.
-    private static let gasWaitUnsure: Duration = .seconds(25)
-    private static let gasWaitYes: Duration = .seconds(45)
+    /// A panel locked from a close or label-only read waits this long for the controller's wider panel photo.
+    private static let widePanelPhotoWait: Duration = .seconds(4)
+    /// A gas meter not shown by then is left unknown ("Review asks"). "Yes" on Home Info waits longer, since there
+    /// is one to show. Tune on device.
+    private static let gasWaitUnsure: Duration = .seconds(15)
+    private static let gasWaitYes: Duration = .seconds(40)
+    /// The gas spot is being held steady at the deadline ("Hold still"): it gets this much longer to save.
+    private static let gasHoldGrace: Duration = .seconds(3)
+    /// With no spot yet by then, the bottom line says where gas meters sit (Yes) or that the step moves on by itself.
+    private static let gasNudgeDelay: Duration = .seconds(10)
     /// A tight side yard can keep the user from stepping back far enough.
     private static let lookAroundWait: Duration = .seconds(40)
-    /// No ground beside the meter by then: the survey goes on without a battery, and its checks stay unknown.
-    private static let batterySpotWait: Duration = .seconds(3)
-    private static let batterySteady: Duration = .seconds(2)
-    /// The placed battery and its tone stay on screen this long before the scan photo is taken.
+    /// The suggested battery and its tone stay on screen this long before the scan photo is taken.
     private static let finishDwell: Duration = .seconds(1.5)
     private static let blindCameraDelay: Duration = .seconds(5)
     /// A meter or panel the scan cannot capture by then is left unmarked, so the scan still ends (amber) instead
@@ -451,8 +453,6 @@ struct PlacementARView: View {
     private static let findWaitNoDetector: Duration = .seconds(10)
     /// A label mid-read at the deadline gets this much longer.
     private static let findReadingGrace: Duration = .seconds(10)
-    /// No meter means no battery spot beside it: the finish comes after this short pause.
-    private static let noMeterDwell: Duration = .seconds(1.5)
     private static let screenshotRetries = 2
 
     init(
@@ -507,11 +507,6 @@ struct PlacementARView: View {
         gasResolved || passed.contains(.gas)
     }
 
-    /// The suggested spot beside the meter is showing and has not been accepted yet.
-    private var hasBatteryGhost: Bool {
-        scene.batteryPosition == nil && scene.suggestedBatteryPosition != nil
-    }
-
     /// The scan's own capture locked it, so its photo and label read arrived with the lock.
     private var meterCapturedByScan: Bool {
         meterMarked && scene.meterLockSource == .scanCapture
@@ -539,19 +534,20 @@ struct PlacementARView: View {
         return number.isEmpty ? nil : number
     }
 
-    /// meter found → meter captured → panel found → panel captured → gas → look around → battery → save.
+    /// meter found → meter captured → panel found → panel captured → gas → look around → finish.
     /// Numbers are not asked for on the camera; a number read by the scan is a suggestion the user confirms in Review.
+    /// There is no battery step: the controller suggests the spot in the background and `finish` places it.
     private var step: LiveStep {
         // `passed` holding a find step means it ran out of time: the item stays unmarked and the scan goes on.
         if !meterMarked, !passed.contains(.findMeter) { return .findMeter }
         if meterMarked, !meterCapturedByScan, !passed.contains(.readMeter) { return .readMeter }
         if !panelMarked, !passed.contains(.findPanel) { return .findPanel }
-        if panelMarked, !panelCapturedByScan, !passed.contains(.readBreaker) { return .readBreaker }
+        // A panel captured from a close or label-only read still waits a moment for the wider panel photo.
+        if panelMarked, !panelCapturedByScan || scanFeedback.widePanelPhotoPending,
+           !passed.contains(.readBreaker) { return .readBreaker }
         if !gasStepDone { return .gas }
         if !lookAround.done { return .lookAround }
-        // The suggested spot is `suggestedBatteryPosition` until it is accepted; only then is it `batteryPosition`.
-        if scene.batteryPosition == nil { return .placeBattery }
-        return .confirm
+        return .finish
     }
 
     private var lockTarget: EquipmentKind? {
@@ -562,35 +558,22 @@ struct PlacementARView: View {
         }
     }
 
-    /// Controller step for the current one. The battery ghost only exists in `battery`; `finish` keeps the placed
-    /// battery and its transfer-switch box. Any other step drops an unconfirmed ghost.
+    /// Controller step for the current one. `finish` keeps the placed battery and its transfer-switch box on screen
+    /// through the scan photo. `WalkStep.battery` is never sent: the spot is suggested in the background.
     private var guideStep: WalkStep {
         switch step {
         case .findMeter, .readMeter, .findPanel, .readBreaker, .lookAround: .scan
         case .gas: .gas
-        case .placeBattery: .battery
-        case .confirm, .finish: .finish
+        case .finish: .finish
         }
     }
 
-    /// Confirmed battery wins. Until the spot is accepted, the ghost stands in as the battery, so its tone is the
-    /// tone the spot would get if placed there.
-    private var guidedScene: PlacementSceneSnapshot {
-        var preview = scene
-        if preview.batteryPosition == nil, let suggested = preview.suggestedBatteryPosition {
-            preview.batteryPosition = suggested
-            preview.batteryYawRadians = preview.suggestedBatteryYawRadians
-        }
-        return preview
-    }
-
-    /// The full survey assessment with the ghost or placed battery applied: every required rule, including the
-    /// breaker and panel-rating ones, so the preview is green only when the survey itself would be.
-    /// Nil with no battery on screen, since there is nothing to tint.
+    /// The full survey assessment with the placed battery applied: every required rule, including the breaker and
+    /// panel-rating ones, so the tint is green only when the survey itself would be. Nil with no battery on screen,
+    /// which is the whole scan until the finish places the suggested spot.
     private var liveAssessment: SurveyAssessment? {
-        let preview = guidedScene
-        guard preview.batteryPosition != nil else { return nil }
-        return store.assessment(applying: preview)
+        guard scene.batteryPosition != nil else { return nil }
+        return store.assessment(applying: scene)
     }
 
     /// The step clocks stop while the user cannot see the two lines or the scan is not running.
@@ -602,15 +585,8 @@ struct PlacementARView: View {
         StepClock(step: step, held: clockHeld)
     }
 
-    private var batteryClock: BatteryClock {
-        BatteryClock(
-            step: step,
-            spot: scene.suggestedBatteryPosition,
-            placed: scene.batteryPosition,
-            armed: autoFinishArmed,
-            saving: isSaving,
-            held: clockHeld
-        )
+    private var finishClock: FinishClock {
+        FinishClock(step: step, armed: autoFinishArmed, saving: isSaving, held: clockHeld)
     }
 
     /// ARKit's "initializing" and "not enough detail". Either one for a while means the lens sees nothing to track.
@@ -636,7 +612,6 @@ struct PlacementARView: View {
             isLeaving = false
             dragOffset = 0
             autoFinishArmed = false
-            finishWaitsForSlide = false
             saveAttempts = 0
             let controller = store.requirePlacementController()
             // A camera that cannot run must say so and stop the clocks, not time every step out over a dead feed.
@@ -660,14 +635,23 @@ struct PlacementARView: View {
         }
         .onChange(of: step) { _, newStep in
             statusMessage = nil
-            // Reached on this visit, so it saves by itself.
-            if newStep == .confirm { autoFinishArmed = true }
+            gasNudgeDue = false
             syncGuide()
+            // Reached on this visit, so it finishes by itself: the controller places its best battery spot (or
+            // records why there is none), and the scan is saved before the photo. A finished scan opened again
+            // never gets here, so it does not bounce straight back to Review.
+            if newStep == .finish, !isLeaving {
+                autoFinishArmed = true
+                store.placementController?.finalizeBatterySuggestion()
+                commitLiveScene()
+            }
         }
         .onChange(of: meterMarked) { _, marked in
             noteLockChange(.electricMeter, marked: marked)
             if marked {
                 flashTip = .foundMeter
+                // The meter height and the working space are measured at the lock, so save them now.
+                commitLiveScene()
             } else {
                 // A new lock gets its own capture.
                 unpass(.readMeter)
@@ -677,12 +661,14 @@ struct PlacementARView: View {
             noteLockChange(.breakerPanel, marked: marked)
             if marked {
                 flashTip = .foundPanel
+                // Same wall is measured at the panel lock.
+                commitLiveScene()
             } else {
                 unpass(.readBreaker)
             }
         }
         .onChange(of: scene.gasMeterPosition != nil) { _, marked in
-            if marked { flashTip = .gasMarked }
+            if marked { flashTip = .gasSaved }
         }
         .onChange(of: lookAround.done) { _, done in
             if done { flashTip = .scanned }
@@ -695,13 +681,6 @@ struct PlacementARView: View {
             // The panel capture's read of the main breaker, also a suggestion until confirmed in Review.
             if isVisible, new != nil, new != old, store.session.electrical.mainBreakerAmperageSource == .ocr {
                 flashTip = .gotBreaker
-            }
-        }
-        .onChange(of: scene.batteryPosition) { old, new in
-            // A battery slid on a finished scan saves again once it settles.
-            if step == .confirm, old != nil, new != nil {
-                autoFinishArmed = true
-                finishWaitsForSlide = true
             }
         }
         .onDisappear {
@@ -739,8 +718,8 @@ struct PlacementARView: View {
         .task(id: stepClock) {
             await runStepClock()
         }
-        .task(id: batteryClock) {
-            await runBatteryClock()
+        .task(id: finishClock) {
+            await runFinishClock()
         }
         .sheet(item: $valueEntry) { entry in
             ValueEntrySheet(entry: entry, initial: initialValue(for: entry)) { save(entry, $0) }
@@ -820,11 +799,12 @@ struct PlacementARView: View {
                     measurementMode: false,
                     measurementKind: .batteryToMeter,
                     editingWorkingSpace: false,
-                    // Battery: one finger slides it along the meter wall and two fingers turn it, before and after
-                    // it settles. The gas step's hold needs input too.
-                    inputEnabled: step == .gas || step == .placeBattery || (step == .confirm && !isSaving),
+                    // No gestures on the camera: nothing is dragged, turned, or tapped. The battery spot is
+                    // suggested in the background and placed by the finish.
+                    inputEnabled: false,
+                    // The gas step samples the middle of the view while no gas spot is saved. No ring, no dot.
                     aimEnabled: step == .gas && scene.gasMeterPosition == nil,
-                    // Nothing is marked by a tap: the scan locks, holds, and places by itself.
+                    // Nothing is marked by a tap: the scan locks, captures, and places by itself.
                     tapEnabled: false,
                     // Scanning stays on for the whole scan screen, as on main. The controller's detector gate rests
                     // the detector once both are locked, and the keyframe gate records from the panel lock through
@@ -888,12 +868,10 @@ struct PlacementARView: View {
         }
     }
 
-    /// The top line: the one job now. A finished scan opened again says so instead of "Saving".
+    /// The top line: the one job now. The gas line follows the Home Info answer: "Yes" means there is one to show.
     private var taskText: String {
         if let cameraProblem { return cameraProblem.task }
-        if step == .confirm, !autoFinishArmed, !isSaving { return "Scan done" }
-        // The battery spot is taken by itself in the background: the line says only that the scan is saving.
-        if isSaving || step == .placeBattery { return LiveStep.confirm.task }
+        if step == .gas, gasAnswer != .yes { return "Show the gas meter, if there is one" }
         return step.task
     }
 
@@ -1004,8 +982,9 @@ struct PlacementARView: View {
                 return Feedback(hint)
             }
         }
-        // The gas hold's cue ("Hold still" while the ring rests on a spot it can mark).
-        if step == .gas, let hint = scanFeedback.hint {
+        // The gas step's cue from the controller: how to frame the spot, or "Hold still" while it saves one.
+        // "Point your phone at it" is the default and gives way to the nudge below.
+        if step == .gas, let hint = scanFeedback.hint, hint != .pointAtIt {
             return Feedback(hint)
         }
         return stepFeedback(assessment)
@@ -1018,26 +997,25 @@ struct PlacementARView: View {
         case .findMeter:
             return Feedback(manualTargetForCue == nil ? .pointAtMeter : .closerToLabel)
         case .findPanel:
-            return Feedback(manualTargetForCue == nil ? .pointAtPanel : .openPanelDoor)
-        case .readMeter, .readBreaker:
+            return Feedback(manualTargetForCue == nil ? .pointAtPanel : .stepBackWholePanel)
+        case .readMeter:
             return Feedback(.holdStill)
+        case .readBreaker:
+            // The lock came from a close or label-only read: the scan wants one wider photo of the panel.
+            return Feedback(scanFeedback.widePanelPhotoPending ? .stepBackWholePanel : .holdStill)
         case .gas:
-            return Feedback(.holdOnGas)
+            // No spot yet after a while: "Yes" says where gas meters sit; otherwise the step says it moves on.
+            guard gasNudgeDue else { return Feedback(.pointAtIt) }
+            return Feedback(gasAnswer == .yes ? .gasLooksLow : .gasNoneMovesOn)
         case .lookAround:
             if !lookAround.movedFarther { return Feedback(.stepBack) }
             if !lookAround.lookedLeft { return Feedback(.lookLeft) }
             if !lookAround.lookedRight { return Feedback(.lookRight) }
             return Feedback(.stepBack)
-        case .placeBattery, .confirm:
-            // A finished scan opened again ("Scan done") does not save by itself until the battery moves.
-            if step == .confirm, !autoFinishArmed, !isSaving { return Feedback(.swipeBack) }
-            // The save right after the look-around gives no battery instructions.
-            if step == .placeBattery || (autoFinishArmed || isSaving) && !finishWaitsForSlide { return Feedback(.scanned) }
-            // No ghost yet means no ground beside the meter.
-            guard let assessment else { return Feedback(.pointDown) }
-            return toneFeedback(assessment)
         case .finish:
-            return Feedback(.scanDone)
+            // Reached on this visit: it is saving on its own, with no battery instructions. A finished scan opened
+            // again has nothing left to do but go back.
+            return Feedback(autoFinishArmed || isSaving ? .scanned : .scanDone)
         }
     }
 
@@ -1098,42 +1076,6 @@ struct PlacementARView: View {
             secondaryButton("Can’t step back") {
                 store.placementController?.skipLookAround()
             }
-        case .placeBattery:
-            if hasBatteryGhost {
-                primaryButton("Put it here") {
-                    store.placementController?.confirmBatterySpot()
-                }
-                .disabled(isSaving)
-                secondaryButton("Other side") {
-                    store.placementController?.flipBatterySide()
-                }
-                .disabled(isSaving)
-            } else {
-                // No ground found beside the meter yet. Saving still works; the battery checks stay unknown (amber).
-                secondaryButton("Save without battery") {
-                    submit(withoutBattery: true)
-                }
-                .disabled(isSaving)
-            }
-        case .confirm:
-            Button {
-                submit()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Save and review")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isSaving)
-            secondaryButton("Move it") {
-                store.placementController?.unconfirmBatterySpot()
-            }
-            .disabled(isSaving)
         case .finish:
             EmptyView()
         }
@@ -1389,14 +1331,15 @@ struct PlacementARView: View {
         let waiting = step
         switch waiting {
         case .readMeter, .readBreaker:
-            // No photo from the lock: move on. Review lists a missing photo.
-            guard await waitFor(Self.captureGrace), step == waiting else { return }
+            // No photo from the lock: move on. Review lists a missing photo. A panel waiting for its wider photo
+            // gets the controller's whole window for it.
+            let grace = waiting == .readBreaker && scanFeedback.widePanelPhotoPending
+                ? Self.widePanelPhotoWait
+                : Self.captureGrace
+            guard await waitFor(grace), step == waiting else { return }
             pass(waiting)
         case .gas:
-            // "Not seen" is no answer. The gas check stays unknown; only "No" on Home Info says there is none.
-            guard await waitFor(gasAnswer == .yes ? Self.gasWaitYes : Self.gasWaitUnsure),
-                  step == .gas, scene.gasMeterPosition == nil else { return }
-            pass(.gas)
+            await runGasClock()
         case .lookAround:
             // The look-around is measured from the meter or panel wall. With neither found there is nothing to
             // look around from, so it is skipped at once.
@@ -1407,9 +1350,28 @@ struct PlacementARView: View {
             store.placementController?.skipLookAround()
         case .findMeter, .findPanel:
             await runFindClock(waiting)
-        case .placeBattery, .confirm, .finish:
+        case .finish:
+            // `runFinishClock` saves a scan that reached the finish on this visit.
             return
         }
+    }
+
+    /// "Show the gas meter" never waits forever. After `gasNudgeDelay` without a spot the bottom line says where gas
+    /// meters sit ("Yes") or that the step moves on by itself; at the deadline the step moves on unmarked. A spot
+    /// being held still at the deadline gets `gasHoldGrace` to save. Not shown is no answer: the gas check stays
+    /// unknown and Review asks. It never sets `gasMeterNotPresent`; only "No" on Home Info says there is none.
+    private func runGasClock() async {
+        let answeredYes = gasAnswer == .yes
+        let wait = answeredYes ? Self.gasWaitYes : Self.gasWaitUnsure
+        guard await waitFor(Self.gasNudgeDelay), step == .gas else { return }
+        gasNudgeDue = true
+        guard await waitFor(wait - Self.gasNudgeDelay), step == .gas, scene.gasMeterPosition == nil else { return }
+        if scanFeedback.hint == .holdStill {
+            guard await waitFor(Self.gasHoldGrace), step == .gas, scene.gasMeterPosition == nil else { return }
+        }
+        pass(.gas)
+        store.setGasStepOutcome(.timedOut)
+        flashTip = answeredYes ? .movingOn : .gasNotShown
     }
 
     /// A meter or panel that never captures must not trap the user: after `findWait` (short with the detector
@@ -1431,63 +1393,13 @@ struct PlacementARView: View {
         flashTip = detectorDown ? .cantRecognize : .movingOn
     }
 
-    /// Battery and finish, both hands-free and instant. The suggested spot is accepted as soon as it exists; with
-    /// no spot within `batterySpotWait` the survey goes on without a battery (amber). The finish takes the scan
-    /// photo and opens Review at once. (`batterySteady` and `phoneHeldSteady` are no longer used.)
-    private func runBatteryClock() async {
-        guard !clockHeld, !isSaving else { return }
-        switch step {
-        case .placeBattery:
-            if hasBatteryGhost {
-                store.placementController?.confirmBatterySpot()
-            } else {
-                // The spot is suggested beside the meter, so with no meter there is none to wait for.
-                guard await waitFor(meterMarked ? Self.batterySpotWait : Self.noMeterDwell),
-                      step == .placeBattery, !hasBatteryGhost, !isSaving else { return }
-                submit(withoutBattery: true)
-            }
-        case .confirm:
-            guard autoFinishArmed, step == .confirm, !isSaving else { return }
-            // Reached right after the look-around, it saves at once; a slide on a reopened scan settles first.
-            if finishWaitsForSlide {
-                guard await waitFor(Self.finishDwell), step == .confirm, !isSaving else { return }
-            }
-            submit()
-        default:
-            return
-        }
-    }
-
-    /// True once the camera has stayed within 3 cm and 4° for `duration` with tracking normal. False if cancelled.
-    private func phoneHeldSteady(for duration: Duration) async -> Bool {
-        let clock = ContinuousClock()
-        var anchor: CameraPose?
-        var since = clock.now
-        while true {
-            guard await waitFor(.milliseconds(200)) else { return false }
-            guard trackingMessage == nil, let pose = cameraPose() else {
-                anchor = nil
-                continue
-            }
-            if let start = anchor, pose.isNear(start) {
-                if clock.now - since >= duration { return true }
-            } else {
-                anchor = pose
-                since = clock.now
-            }
-        }
-    }
-
-    private func cameraPose() -> CameraPose? {
-        guard let controller = store.placementController else { return nil }
-        let matrix = controller.arView.cameraTransform.matrix
-        let forward = -SIMD3<Float>(matrix.columns.2.x, matrix.columns.2.y, matrix.columns.2.z)
-        let length = simd_length(forward)
-        guard length > 0.001 else { return nil }
-        return CameraPose(
-            position: SIMD3(matrix.columns.3.x, matrix.columns.3.y, matrix.columns.3.z),
-            forward: forward / length
-        )
+    /// The finish, reached on this visit: `onChange(of: step)` already placed the suggested battery and saved the
+    /// scene. The placed battery and its tone stay on screen for `finishDwell`, then the scan photo is taken and
+    /// Review opens. The dwell pauses with the other clocks. A finished scan opened again is not armed and waits.
+    private func runFinishClock() async {
+        guard step == .finish, autoFinishArmed, !isSaving, !clockHeld else { return }
+        guard await waitFor(Self.finishDwell), step == .finish, autoFinishArmed, !isSaving, !clockHeld else { return }
+        submit()
     }
 
     /// Sleeps for `duration`. False when the task was cancelled.
@@ -1496,7 +1408,8 @@ struct PlacementARView: View {
     }
 
     /// The left-edge swipe and VoiceOver's escape: keep the scan, pause the camera, and leave. The swipe slides the
-    /// screen out first, so the navigation itself runs without an animation.
+    /// screen out first, so the navigation itself runs without an animation. The scan's files (scene.ply, the
+    /// capture manifest, survey.json) are written once the slide is done, so an unfinished run keeps them too.
     private func leave(slidingOut width: CGFloat? = nil) {
         guard !isLeaving else { return }
         isLeaving = true
@@ -1504,12 +1417,14 @@ struct PlacementARView: View {
         commitLiveScene()
         store.placementController?.pauseIfIdle()
         guard let width else {
+            store.checkpointScan()
             exitNow()
             return
         }
         withAnimation(.easeOut(duration: 0.2)) { dragOffset = width }
         Task {
             try? await Task.sleep(for: .milliseconds(200))
+            store.checkpointScan()
             exitNow()
         }
     }
@@ -1684,11 +1599,10 @@ struct PlacementARView: View {
         onContinue()
     }
 
-    /// Takes the scan photo and opens Review: from the finish, or from the battery step when no spot showed up.
-    private func submit(withoutBattery: Bool = false) {
-        guard !isSaving, !isLeaving, step == .confirm || (withoutBattery && step == .placeBattery) else { return }
+    /// Takes the scan photo and opens Review. Only the finish saves; the suggested battery is already placed.
+    private func submit() {
+        guard !isSaving, !isLeaving, step == .finish else { return }
         commitLiveScene()
-        lastSaveWithoutBattery = withoutBattery
         let token = UUID()
         pendingSave = token
         screenshotToken = token
@@ -1713,10 +1627,12 @@ struct PlacementARView: View {
         }
     }
 
+    /// The scan photo is saved: write the scan's files, then open Review.
     private func advance(_ token: UUID?) {
         guard let token, token == pendingSave else { return }
         pendingSave = nil
         saveAttempts = 0
+        store.checkpointScan()
         onContinue()
     }
 
@@ -1727,10 +1643,11 @@ struct PlacementARView: View {
         screenshotToken = nil
         saveAttempts += 1
         if saveAttempts <= Self.screenshotRetries {
-            submit(withoutBattery: lastSaveWithoutBattery)
+            submit()
         } else {
             saveAttempts = 0
             commitLiveScene()
+            store.checkpointScan()
             onContinue()
         }
     }
@@ -1742,23 +1659,12 @@ private struct StepClock: Equatable {
     var held: Bool
 }
 
-private struct BatteryClock: Equatable {
+/// What the finish clock keys on: it runs only while the finish is armed, not saving, and not held.
+private struct FinishClock: Equatable {
     var step: LiveStep
-    var spot: PlacementAnchor?
-    var placed: PlacementAnchor?
     var armed: Bool
     var saving: Bool
     var held: Bool
-}
-
-/// Where the camera is and which way it faces, for the battery's hold-still check.
-private struct CameraPose {
-    var position: SIMD3<Float>
-    var forward: SIMD3<Float>
-
-    func isNear(_ other: CameraPose) -> Bool {
-        simd_distance(position, other.position) < 0.03 && simd_dot(forward, other.forward) > cos(4 * Float.pi / 180)
-    }
 }
 
 /// One typed value over the running scan: the meter number, or a main-breaker size that is not a chip.

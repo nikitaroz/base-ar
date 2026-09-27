@@ -111,6 +111,10 @@ struct PlacementARView: View {
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
     @State private var measureMode: Bool = true
+    @State private var step: WalkStep = .scan
+    @State private var manualMark: PlacementTarget? = nil
+    @State private var liveReadout: (text: String?) = (nil)
+    @State private var hasStartedAR = false
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -122,6 +126,8 @@ struct PlacementARView: View {
     }
 
     private var isSaving: Bool { pendingSave != nil }
+    
+    private let progressSteps: [WalkStep] = [.scan, .gas, .battery, .finish]
 
     private var arSupported: Bool {
         ARWorldTrackingConfiguration.isSupported
@@ -377,17 +383,6 @@ struct PlacementARView: View {
             Text(instruction)
                 .font(.body)
                 .multilineTextAlignment(.center)
-            if let progressLine {
-                Text(progressLine)
-                    .font(.footnote.weight(.semibold))
-                    .multilineTextAlignment(.center)
-            }
-            if let measurementLine {
-                Text(measurementLine)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
             if let trackingMessage {
                 Label(trackingMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -402,7 +397,7 @@ struct PlacementARView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.orange, in: RoundedRectangle(cornerRadius: 8))
+                    .background(.green, in: RoundedRectangle(cornerRadius: 8))
                     .multilineTextAlignment(.center)
             }
             if let statusMessage {
@@ -862,10 +857,10 @@ struct PlacementARView: View {
 
     private var scanInstruction: String {
         switch (meterIsMarked, panelIsMarked) {
-        case (false, false): "Point the camera at the electric meter, then the breaker panel."
-        case (true, false): "Point at the breaker panel."
+        case (false, false): "Point at the electric meter — it will detect automatically."
+        case (true, false): "Now point at the breaker panel."
         case (false, true): "Point at the electric meter."
-        case (true, true): "Got it! Tap Next."
+        case (true, true): "Both found! Tap Next."
         }
     }
 
@@ -2645,6 +2640,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterWallHit = (sample.point, sample.normal)
                 meterWallNormalIsMeasured = sample.normalIsMeasured
                 meterGroundPosition = ground
+                // Auto-advance coaching: "Got it — now the breaker box"
+                publishEquipmentStatus("Got it — now the breaker box")
             case .breakerPanel:
                 panelWallMarker?.removeFromParent()
                 panelWallMarker = nil
@@ -2653,6 +2650,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelWallHit = (sample.point, sample.normal)
                 panelWallNormalIsMeasured = sample.normalIsMeasured
                 panelGroundPosition = ground
+                // Auto-advance coaching: "Got the panel"
+                publishEquipmentStatus("Got the panel")
             }
         }
 

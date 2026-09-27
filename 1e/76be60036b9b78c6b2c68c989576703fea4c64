@@ -1,0 +1,41 @@
+BaseAR/Rules/SurveyEvaluating.swift
+  s_535a502178fe4f::t_3763a5710d53eb 62-64
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_875144999c0781 205-207,238,332-339,341-349,353-363,368-372,376,409-410
+BaseAR/Electrical/ElectricalCaptureView.swift
+  s_535a502178fe4f::t_8ee7299acb97b0 18,23,36-38,182,184-186,189,192-200,202-228,251
+  s_535a502178fe4f::t_83abc767328260 201
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_33aadc4b514151 7-8,121-128
+BaseAR/Placement/PlacementMeasuring.swift
+  s_535a502178fe4f::t_40b877409bd0c4 167-170
+BaseAR/ContentView.swift
+  s_535a502178fe4f::t_875144999c0781 320-330
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_3763a5710d53eb 132-136
+BaseAR/Electrical/LiveLabelScanner.swift
+  s_535a502178fe4f::t_44dc8b3e254c9b 115-116,315-316,345,347-357,367,405-406
+  s_535a502178fe4f::t_ace462ea56729c 308,310-314,343-344,346,358-366
+  s_535a502178fe4f::t_125cef966564be 368
+BaseAR/Rules/BaseRuleSet.swift
+  s_535a502178fe4f::t_40b877409bd0c4 199
+  s_535a502178fe4f::t_3763a5710d53eb 200
+  s_535a502178fe4f::t_1f87b418cfd191 14,56,58-68,70-71,73-74,76,177-178,268
+  s_535a502178fe4f::t_14a9fa987d39b2 201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1e76be60036b9b78c6b2c68c989576703fea4c64",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

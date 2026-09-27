@@ -85,15 +85,15 @@ Siting numbers follow Base’s published guidance: Austin main breakers 150–20
 
 ## Equipment detector
 
-`BaseAR/Placement/EquipmentScan.mlpackage` is YOLO26n fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). Training data lives in `training/`, which is gitignored, so each machine rebuilds it:
+`BaseAR/Placement/EquipmentScan.mlpackage` is YOLO26n fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). The tooling now also labels `gas_meter` (class 2), which the app ignores until `kind(at:)` maps it. Training data lives outside git: web photos in `~/base-ar-data/open-images/` (override with `BASE_AR_DATA`), hand-labeled site photos in `training/`.
 
-1. `uv venv --python 3.12 training/.venv && uv pip install --python training/.venv/bin/python ultralytics coremltools "git+https://github.com/ultralytics/CLIP.git"`
-2. `python3 scripts/fetch_commons.py`: about 400 CC-licensed Wikimedia Commons photos, with credits in `training/raw/sources.csv`.
-3. Put hand-labeled site photos in `training/site/`, each with a YOLO `.txt` label beside it. They are repeated three times in training, and four are held out for validation (`VAL_STEMS` in `autolabel.py`).
-4. `training/.venv/bin/python scripts/autolabel.py`: YOLOE-26l drafts meter boxes for the Commons photos. Check `training/review/` and list bad images in `training/exclude.txt`. Commons panels are skipped because they are European switchboards.
-5. `training/.venv/bin/python scripts/train_equipment.py`: trains on the Apple GPU and writes the Core ML package into the app.
+1. `uv venv --python 3.12 ~/base-ar-data/.venv && uv pip install --python ~/base-ar-data/.venv/bin/python -r scripts/requirements-training.txt`
+2. `fetch_commons.py` and `fetch_openverse.py` (run both at once; each takes `--minutes`): openly licensed photos only (CC0, PD, CC BY, CC BY-SA; no NC/ND) of meters, panels, gas meters and seven negative kinds (AC condensers, junction boxes/disconnects, mailboxes, hose bibs, pool equipment, water meters, telecom boxes). Every file's source, author and license goes in `manifest-<source>.csv`; photos are deduped by SHA-1 and perceptual hash.
+3. Put hand-labeled site photos in `training/site/`, each with a YOLO `.txt` label beside it. They are repeated three times in training, and the stems in `VAL_STEMS` are held out.
+4. `autolabel.py --out ~/base-ar-data/open-images/dataset`: OWLv2 (Apache-2.0) drafts boxes for the photo's known class (`--labeler yoloe` for the old YOLOE-26l path), negatives get empty labels, and train/val is split by uploader. Check the sheets in `open-images/review/`, list bad stems in `open-images/exclude.txt`, and re-run (detections are cached, so it is instant). It also writes the attribution list `dataset/open-images-manifest.csv`, which is committed; the images are not.
+5. `train_equipment.py --data ~/base-ar-data/open-images/dataset/data.yaml` trains YOLO26s on the Apple GPU and writes the Core ML package into the app (`--no-export` to only train).
 
-Every panel example so far comes from one demo wall. Expect weaker panel detection at other houses until more site photos are added.
+Web photos skew European (DIN-rail boards, diaphragm gas meters). Phone frames from real houses still matter most; split them by house.
 
 ## How this maps to Base
 

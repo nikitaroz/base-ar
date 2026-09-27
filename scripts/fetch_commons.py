@@ -1,91 +1,103 @@
 #!/usr/bin/env python3
-"""Download freely licensed meter and panel photos from Wikimedia Commons.
+"""Download openly licensed equipment photos from Wikimedia Commons.
 
-Images land in training/raw/{meter,panel}/ at 1280 px on the long edge, with
-training/raw/sources.csv recording URL, author and license for each file.
-Standard library only. Re-running skips files that already exist.
+Commons has few US residential photos: "Electricity meters in the United States"
+and "Distribution boards in the United States" do not exist (checked 2026-09-26),
+so this crawls the real categories below plus full-text file search for US brand
+and product names. Every file's license comes from imageinfo extmetadata; files
+without a free license short name are skipped.
+
+Classes are fetched round-robin so a time limit leaves every class partly filled.
+Writes <data>/images/<class>/commons_<pageid>.jpg and <data>/manifest-commons.csv
+(see open_images.py). Re-running skips files already in the manifest.
+
+Usage: python scripts/fetch_commons.py [--minutes 30]
 """
 
 from __future__ import annotations
 
-import csv
+import argparse
 import json
 import re
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
+
+from open_images import OFF_TOPIC, Manifest, fetch, log
 
 API = "https://commons.wikimedia.org/w/api.php"
-AGENT = "BaseAR-hackathon/0.1 (training data fetch; contact nikitaroz@gmail.com)"
-ROOT = Path(__file__).resolve().parents[1] / "training" / "raw"
-PER_CLASS = 200
-MAX_DEPTH = 3
+DOWNLOAD_GAP = 0.4
+FREE = re.compile(r"^(cc0|cc[ -]by|cc-by|public domain|pd|attribution|copyrighted free use|gfdl|fal|"
+                  r"no restrictions|usgov)", re.I)
 
-# US categories come first so the cap favours North American hardware.
-SEEDS = {
-    "meter": [
-        "Electricity meters in the United States",
-        "Smart meters",
-        "Electricity meter mounts",
-        "Electronic electricity meters",
-        "Electricity meters (kWh)",
-        "Electricity meters by country",
-    ],
-    "panel": [
-        "Distribution boards in the United States",
-        "Distribution boards",
-        "Fuse boxes",
-        "Distribution boards by country",
-    ],
+# class -> (target, categories as (name, depth), searches). Category names verified via the API.
+PLAN = {
+    "electric_meter": (220, [
+        ("Electricity meters in Canada", 1), ("Smart meters", 1), ("Electronic electricity meters", 1),
+        ("Electricity meter mounts", 0), ("Automatic meter reading", 0), ("Landis & Gyr electricity meters", 0),
+        ("Electricity meters (kWh)", 0), ("Electricity meters with liquid crystal displays", 0),
+    ], ["Itron electricity meter", "Landis+Gyr meter", "Aclara meter", "Elster meter", "Sensus meter",
+        "smart meter house", "electric meter house", "electric meter wall", "watthour meter", "meter socket",
+        "electricity meter United States", "electric meter Texas", "electric meter California"]),
+    "breaker_panel": (240, [
+        ("Main distribution boards", 0), ("Fuse boxes with DIN rail", 0), ("Distribution boards in Germany", 1),
+        ("Distribution boards in the Netherlands", 0), ("Distribution boards", 0),
+    ], ["load center breaker", "breaker panel", "circuit breaker panel", "electrical panel breakers",
+        "breaker box", "electrical service panel", "Square D panel", "Cutler-Hammer panel", "Stab-Lok",
+        "Zinsco", "main breaker panel", "meter main combination", "service entrance panel",
+        "residential electrical panel", "consumer unit"]),
+    "gas_meter": (160, [("Gas meters", 2)],
+                  ["gas meter house", "natural gas meter", "gas meter regulator", "gas service regulator"]),
+    "air_conditioner_condenser": (22, [("Split type air conditioners - condenser in the United States", 0),
+                                       ("Air source heat pumps", 0)],
+                                  ["air conditioner condenser", "central air conditioning unit"]),
+    "electrical_junction_box": (22, [], ["junction box electrical", "disconnect switch air conditioner",
+                                         "electrical box wall"]),
+    "mailbox": (22, [("Letter boxes in the United States", 1)], ["mailbox house"]),
+    "hose_bib": (22, [], ["hose bib", "outdoor faucet", "spigot wall", "garden tap wall"]),
+    "pool_equipment": (22, [], ["pool pump", "swimming pool filter", "pool equipment"]),
+    "water_meter": (22, [("Water meters", 1)], ["water meter"]),
+    "telecom_box": (22, [], ["telephone junction box", "network interface device telephone",
+                             "telecommunications cabinet", "cable tv box wall"]),
 }
-SEARCHES = {
-    "meter": ["electric meter house", "electricity meter wall", "smart meter house"],
-    "panel": ["breaker panel", "electrical panel breakers", "circuit breaker box", "load center"],
+NEGATIVE_KINDS = [k for k in PLAN if k not in ("electric_meter", "breaker_panel", "gas_meter")]
+SKIP_CATEGORY = re.compile(r"disassembl|diagram|wiring|manufacturer|motor control|nh fused|cabling|accessor|"
+                           r"introduction device|painted|street light|vehicle|factory|museum|logo|employees|"
+                           r"utility cabinets|by city|by municipality|by district", re.I)
+EXCLUDE = {
+    "electric_meter": re.compile(r"\b(gas|water|parking)\b", re.I),
+    "breaker_panel": re.compile(r"\b(solar|control panel|instrument)\b", re.I),
+    "gas_meter": re.compile(r"\b(water|station|pump)\b", re.I),
+    "water_meter": re.compile(r"\b(electric|electricity|gas|kwh)\b", re.I),
 }
-SKIP = re.compile(
-    r"vehicle|street light|disassembl|din rail|diagram|factory|locomotive|employees|"
-    r"wiring|manufacturer|motor control|nh fused|cabling|accessor|introduction device|"
-    r"logo|icon|svg|drawing|schematic|museum|antique|historic",
-    re.IGNORECASE,
-)
+NEGATIVE_EXCLUDE = re.compile(r"\b(meters?|breakers?|electrical panel|fuse box|load center)\b", re.I)
 
 
 def api(**params) -> dict:
     params |= {"format": "json", "formatversion": "2"}
-    request = urllib.request.Request(f"{API}?{urllib.parse.urlencode(params)}", headers={"User-Agent": AGENT})
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.load(response)
-        except Exception:  # noqa: BLE001 - retry transient network errors
-            time.sleep(2 * (attempt + 1))
-    return {}
+    data = fetch(f"{API}?{urllib.parse.urlencode(params)}", timeout=30, attempts=4)
+    return json.loads(data) if data else {}
 
 
 def category_files(title: str, depth: int, seen: set[str]) -> list[str]:
-    if title in seen or SKIP.search(title):
+    if title in seen or SKIP_CATEGORY.search(title):
         return []
     seen.add(title)
-    files: list[str] = []
-    subcats: list[str] = []
-    cont: dict = {}
+    files, subcats, cont = [], [], {}
     while True:
         data = api(action="query", list="categorymembers", cmtitle=f"Category:{title}",
                    cmtype="file|subcat", cmlimit="500", **cont)
         for member in data.get("query", {}).get("categorymembers", []):
             name = member["title"]
-            if name.startswith("Category:"):
-                subcats.append(name.removeprefix("Category:"))
-            else:
-                files.append(name)
+            (subcats if name.startswith("Category:") else files).append(name.removeprefix("Category:"))
         cont = data.get("continue", {})
         if not cont:
             break
-    if depth < MAX_DEPTH:
-        subcats.sort(key=lambda name: "United States" not in name)
+    if depth > 0:
+        # North American hardware first.
+        subcats.sort(key=lambda name: not re.search(r"United States|Canada|America", name))
         for sub in subcats:
-            files += category_files(sub, depth + 1, seen)
+            files += category_files(sub, depth - 1, seen)
     return files
 
 
@@ -94,75 +106,104 @@ def search_files(query: str) -> list[str]:
     return [hit["title"] for hit in data.get("query", {}).get("search", [])]
 
 
-def image_info(titles: list[str]) -> list[dict]:
-    infos = []
+def image_info(titles: list[str]):
     for start in range(0, len(titles), 50):
         data = api(action="query", titles="|".join(titles[start:start + 50]), prop="imageinfo",
-                   iiprop="url|size|mime|extmetadata", iiurlwidth="1280")
+                   iiprop="url|size|mime|extmetadata|user", iiurlwidth="1280")
         for page in data.get("query", {}).get("pages", []):
             if page.get("imageinfo"):
-                infos.append({"title": page["title"], **page["imageinfo"][0]})
-    return infos
+                yield {"title": page["title"], "pageid": page.get("pageid", 0), **page["imageinfo"][0]}
 
 
 def clean(value: str) -> str:
-    return re.sub(r"<[^>]+>", "", value or "").strip()
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", value or "")).strip()
+
+
+def keep(kind: str, title: str) -> bool:
+    if OFF_TOPIC.search(title) or (kind in EXCLUDE and EXCLUDE[kind].search(title)):
+        return False
+    return not (kind in NEGATIVE_KINDS and kind != "water_meter" and NEGATIVE_EXCLUDE.search(title))
+
+
+def stream(kind: str, categories: list[tuple[str, int]], searches: list[str], seen_titles: set[str]):
+    """Yield (query, imageinfo) for one class, category members first, then search hits."""
+    seen_categories: set[str] = set()
+    sources = [(f"Category:{name}", lambda n=name, d=depth: category_files(n, d, seen_categories))
+               for name, depth in categories]
+    sources += [(f"search:{q}", lambda q=q: search_files(q)) for q in searches]
+    for label, load in sources:
+        titles = [t for t in dict.fromkeys(load()) if t not in seen_titles and keep(kind, t)]
+        seen_titles.update(titles)
+        for info in image_info(titles):
+            yield label, info
 
 
 def main() -> None:
-    rows = []
-    for kind in ("meter", "panel"):
-        folder = ROOT / kind
-        folder.mkdir(parents=True, exist_ok=True)
-        titles: list[str] = []
-        seen: set[str] = set()
-        for seed in SEEDS[kind]:
-            titles += category_files(seed, 0, seen)
-        for query in SEARCHES[kind]:
-            titles += search_files(query)
-        titles = [t for t in dict.fromkeys(titles) if not SKIP.search(t)]
-        print(f"{kind}: {len(titles)} candidates")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--minutes", type=float, default=30)
+    args = parser.parse_args()
+    deadline = time.time() + args.minutes * 60
 
-        kept = 0
-        for info in image_info(titles):
-            if kept >= PER_CLASS:
-                break
-            if info.get("mime") not in ("image/jpeg", "image/png") or min(info["width"], info["height"]) < 480:
+    manifest = Manifest("commons")
+    done_titles = {row["title"] for row in manifest.rows}
+    seen_titles: set[str] = set(done_titles)
+    streams = {kind: stream(kind, cats, searches, seen_titles) for kind, (_, cats, searches) in PLAN.items()}
+    active, logged = list(PLAN), 0
+    while active and time.time() < deadline:
+        for kind in list(active):
+            if manifest.count(kind) >= PLAN[kind][0]:
+                active.remove(kind)
+                continue
+            item = next(streams[kind], None)
+            if item is None:
+                active.remove(kind)
+                continue
+            query, info = item
+            if info.get("mime") not in ("image/jpeg", "image/png", "image/webp"):
+                manifest.reject("not a bitmap photo")
+                continue
+            if min(info["width"], info["height"]) < 480:
+                manifest.reject("short edge < 480")
                 continue
             meta = info.get("extmetadata", {})
             license_name = clean(meta.get("LicenseShortName", {}).get("value", ""))
-            if not license_name:
+            if not FREE.search(license_name):
+                manifest.reject(f"license {license_name or 'missing'}")
                 continue
-            # Commons only serves standard thumb widths; tall images use 960 so the long edge stays reasonable.
+            # Commons serves standard thumb widths; portrait images use 960 so the long edge stays ~1280.
             url = info.get("thumburl") or info["url"]
             if info["height"] > info["width"] and info["width"] > 960:
                 url = url.replace("/1280px-", "/960px-")
-            name = f"{kind}_{kept:04d}.jpg"
-            path = folder / name
-            if not path.exists():
-                request = urllib.request.Request(url, headers={"User-Agent": AGENT})
-                try:
-                    with urllib.request.urlopen(request, timeout=60) as response:
-                        path.write_bytes(response.read())
-                except Exception as error:  # noqa: BLE001
-                    print(f"  skip {info['title']}: {error}")
-                    continue
-                time.sleep(0.2)
-            kept += 1
-            rows.append({
-                "file": f"{kind}/{name}",
+            data = fetch(url)
+            time.sleep(DOWNLOAD_GAP)
+            if data is None:
+                manifest.reject("download failed")
+                continue
+            negative = kind in NEGATIVE_KINDS
+            uploader = info.get("user", "")
+            manifest.add(data, {
+                "class": "negative" if negative else kind,
+                "subclass": kind if negative else "",
+                "source": "commons",
+                "source_id": str(info["pageid"]),
                 "title": info["title"],
-                "page": info.get("descriptionurl", ""),
-                "author": clean(meta.get("Artist", {}).get("value", "")),
+                "page_url": info.get("descriptionurl", ""),
+                "file_url": info["url"],
                 "license": license_name,
+                "license_version": "",
+                "license_url": clean(meta.get("LicenseUrl", {}).get("value", "")),
+                "author": clean(meta.get("Artist", {}).get("value", ""))[:200],
+                "author_url": "",
+                "uploader": uploader,
+                "group": f"commons:{uploader or info['title']}",
+                "query": query,
             })
-        print(f"{kind}: kept {kept}")
+            if len(manifest.rows) >= logged + 25:
+                logged = len(manifest.rows)
+                log(f"commons kept {logged}: " + ", ".join(f"{k}={manifest.count(k)}" for k in PLAN))
 
-    with (ROOT / "sources.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["file", "title", "page", "author", "license"])
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"wrote {ROOT / 'sources.csv'} ({len(rows)} rows)")
+    log("commons per class: " + ", ".join(f"{k}={manifest.count(k)}" for k in PLAN))
+    log(f"commons kept {len(manifest.rows)}; rejected {manifest.rejected}")
 
 
 if __name__ == "__main__":

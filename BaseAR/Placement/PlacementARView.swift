@@ -273,6 +273,129 @@ private struct FeedbackPacer {
     }
 }
 
+/// A locked world-space anchor the user can lose sight of once they walk past it. The screen-edge indicator points
+/// back to it while it is off-screen.
+private struct AnchorPointer: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let worldPoint: SIMD3<Float>
+}
+
+/// A small chevron pinned to the nearest viewport edge for each locked anchor that is currently off-screen. It is a
+/// passive locator: no motion cue, no bottom-line copy, no taps. The two-line coach still owns the top and bottom
+/// bars; this overlay sits between them.
+private struct OffScreenAnchorIndicator: View {
+    var pointers: [AnchorPointer]
+    weak var arView: ARView?
+
+    /// Space kept between a chevron and the edge of the viewport. Vertical inset is larger so chevrons never crowd
+    /// the top task line or the bottom feedback bar.
+    private let horizontalInset: CGFloat = 44
+    private let verticalInset: CGFloat = 96
+
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
+                ZStack {
+                    ForEach(pointers) { pointer in
+                        indicator(for: pointer, in: geo.size)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func indicator(for pointer: AnchorPointer, in viewportSize: CGSize) -> some View {
+        if let placement = placement(for: pointer, in: viewportSize) {
+            chevron(placement: placement, label: pointer.label)
+        }
+    }
+
+    private func placement(for pointer: AnchorPointer, in viewportSize: CGSize) -> Placement? {
+        guard let arView, viewportSize.width > 2, viewportSize.height > 2 else { return nil }
+        let center = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
+        if let projected = arView.project(pointer.worldPoint) {
+            let inFrame = projected.x >= horizontalInset
+                && projected.x <= viewportSize.width - horizontalInset
+                && projected.y >= verticalInset
+                && projected.y <= viewportSize.height - verticalInset
+            if inFrame { return nil }
+            let dx = projected.x - center.x
+            let dy = projected.y - center.y
+            return clamped(dx: dx, dy: dy, viewportSize: viewportSize, center: center)
+        }
+        guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return nil }
+        let cameraPos = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        let right = SIMD3<Float>(
+            cameraTransform.columns.0.x,
+            cameraTransform.columns.0.y,
+            cameraTransform.columns.0.z
+        )
+        let up = SIMD3<Float>(
+            cameraTransform.columns.1.x,
+            cameraTransform.columns.1.y,
+            cameraTransform.columns.1.z
+        )
+        let toAnchor = pointer.worldPoint - cameraPos
+        let rightAmount = simd_dot(toAnchor, right)
+        let upAmount = simd_dot(toAnchor, up)
+        let dx = CGFloat(rightAmount)
+        let dy = CGFloat(-upAmount)
+        return clamped(dx: dx, dy: dy, viewportSize: viewportSize, center: center)
+    }
+
+    private func clamped(dx: CGFloat, dy: CGFloat, viewportSize: CGSize, center: CGPoint) -> Placement? {
+        let halfW = viewportSize.width / 2 - horizontalInset
+        let halfH = viewportSize.height / 2 - verticalInset
+        guard halfW > 0, halfH > 0 else { return nil }
+        let absX = abs(dx)
+        let absY = abs(dy)
+        guard absX > 0.001 || absY > 0.001 else { return nil }
+        let sx = absX > 0.001 ? halfW / absX : .infinity
+        let sy = absY > 0.001 ? halfH / absY : .infinity
+        let scale = min(sx, sy)
+        let position = CGPoint(x: center.x + dx * scale, y: center.y + dy * scale)
+        let angle = atan2(dy, dx)
+        return Placement(position: position, angle: angle)
+    }
+
+    private func chevron(placement: Placement, label: String) -> some View {
+        let ux = cos(placement.angle)
+        let uy = sin(placement.angle)
+        let labelOffset: CGFloat = 30
+        let labelPosition = CGPoint(
+            x: placement.position.x - ux * labelOffset,
+            y: placement.position.y - uy * labelOffset
+        )
+        return ZStack {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.45), in: Capsule())
+                .position(labelPosition)
+            Image(systemName: "chevron.up.circle.fill")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                .rotationEffect(.radians(Double(placement.angle) + .pi / 2))
+                .position(placement.position)
+        }
+    }
+
+    private struct Placement {
+        var position: CGPoint
+        var angle: CGFloat
+    }
+}
+
 /// A value typed over the running scan.
 private enum ValueEntry: String, Identifiable {
     case meterNumber
@@ -526,6 +649,28 @@ struct PlacementARView: View {
         case .findMeter: .electricMeter
         case .findPanel: .breakerPanel
         default: nil
+        }
+    }
+
+    /// Locked anchors that a screen-edge chevron should point back to whenever they leave the frame. Empty on the
+    /// find-meter step (nothing marked yet) and on confirm (the save screen has nothing to re-orient toward). The
+    /// chevron itself decides visibility per-frame; this list only says which anchors are eligible.
+    private var activeAnchorPointers: [AnchorPointer] {
+        switch step {
+        case .findMeter, .confirm:
+            return []
+        case .readMeter, .findPanel, .readBreaker, .gas, .lookAround, .placeBattery:
+            var pointers: [AnchorPointer] = []
+            if let meter = scene.meterWallPosition {
+                pointers.append(AnchorPointer(id: "meter", label: "Meter", worldPoint: meter.simd))
+            }
+            if step != .findPanel, step != .readMeter, let panel = scene.panelWallPosition {
+                pointers.append(AnchorPointer(id: "panel", label: "Panel", worldPoint: panel.simd))
+            }
+            if step == .placeBattery, let gas = scene.gasMeterPosition {
+                pointers.append(AnchorPointer(id: "gas", label: "Gas", worldPoint: gas.simd))
+            }
+            return pointers
         }
     }
 
@@ -812,6 +957,14 @@ struct PlacementARView: View {
                     }
                 )
                 .ignoresSafeArea()
+            }
+            // Chevrons at the screen edge for locked anchors that have drifted out of frame. Same coaching gate as
+            // the two lines: while ARKit's coaching overlay is up, the camera is its own; nothing else draws.
+            if !coachingIsActive {
+                OffScreenAnchorIndicator(
+                    pointers: activeAnchorPointers,
+                    arView: store.placementController?.arView
+                )
             }
             // The coaching overlay has the camera to itself. The two lines come back when it finishes. A lens that
             // sees nothing keeps the coaching up, so the blind-camera line shows over it: "move the phone" won't help.

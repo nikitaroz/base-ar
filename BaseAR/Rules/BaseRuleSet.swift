@@ -274,7 +274,7 @@ private func distanceOutcome(
     passText: (String) -> String,
     conflictText: (String) -> String
 ) -> RuleOutcome {
-    guard let feet, feet.isFinite, feet >= 0 else { return .unknown(missing) }
+    guard let feet, feet.isFinite, feet > 0 else { return .unknown(missing) }
     let formatted = String(format: "%.1f ft", feet)
     return passes(feet) ? .pass(passText(formatted)) : .conflict(conflictText(formatted))
 }

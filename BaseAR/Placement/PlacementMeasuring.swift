@@ -512,13 +512,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return deltaMeters / 0.3048
     }
 
-    /// Both taps must face the same way and lie on nearly the same plane. Opposite walls fail. Yes/No is not a fallback.
+    /// Base allows the meter and panel on the same exterior wall or on opposite sides of it (a garage panel behind an
+    /// outdoor meter, [H705]). The two normals must be parallel — same direction or opposed — and the taps must sit
+    /// on nearly the same plane. Yes/No is not a fallback.
     private func meterAndPanelSameWall(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard let meterNormal = unit(snapshot.meterWallNormal?.simd ?? .zero),
               let panelNormal = unit(snapshot.panelWallNormal?.simd ?? .zero),
               let meterPoint = snapshot.meterWallPosition?.simd,
               let panelPoint = snapshot.panelWallPosition?.simd else { return nil }
-        guard simd_dot(meterNormal, panelNormal) >= wallSameDirectionDotThreshold else { return false }
+        guard abs(simd_dot(meterNormal, panelNormal)) >= wallSameDirectionDotThreshold else { return false }
         let separation = abs(simd_dot(panelPoint - meterPoint, meterNormal))
         return separation <= sameWallPlaneToleranceMeters
     }

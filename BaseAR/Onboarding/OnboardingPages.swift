@@ -200,7 +200,10 @@ struct OnboardingEmailPage: View {
     }
 
     private var emailLooksValid: Bool {
-        !trimmed.isEmpty && trimmed.contains("@") && trimmed.contains(".")
+        // Local-part @ domain.tld with a 2+ character TLD. Case-insensitive; matches the setter's guard in SurveyStore.
+        guard !trimmed.isEmpty else { return false }
+        let pattern = #"^[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,}$"#
+        return trimmed.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }
 

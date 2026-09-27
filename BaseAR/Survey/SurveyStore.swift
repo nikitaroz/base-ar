@@ -122,12 +122,12 @@ final class SurveyStore {
     }
 
     func setEmail(_ value: String) {
-        session.email = value
+        session.email = value.trimmingCharacters(in: .whitespacesAndNewlines)
         refreshAssessment()
     }
 
     func setPhone(_ value: String) {
-        session.phone = value
+        session.phone = value.trimmingCharacters(in: .whitespacesAndNewlines)
         refreshAssessment()
     }
 
@@ -138,7 +138,7 @@ final class SurveyStore {
 
     func setMeterNumber(_ value: String, source: MeterNumberSource = .manual, note: String? = nil) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        session.electrical.meterNumber = value
+        session.electrical.meterNumber = trimmed.isEmpty ? nil : trimmed
         session.electrical.meterNumberSource = trimmed.isEmpty ? nil : source
         meterNumberNote = note
         meterNumberFromScanCrop = false
@@ -146,9 +146,12 @@ final class SurveyStore {
     }
 
     /// `source` is `.manual` for anything the user typed or tapped. Only the scan's own read passes `.ocr`.
+    /// Values outside the residential range (60–400 A) are dropped — a negative or four-digit read is either OCR noise
+    /// or a typo, and shipping either downstream would break the Austin 150–200 A rule.
     func setMainBreakerAmperage(_ value: Int?, source: MeterNumberSource = .manual, note: String? = nil) {
-        session.electrical.mainBreakerAmperage = value
-        session.electrical.mainBreakerAmperageSource = value == nil ? nil : source
+        let bounded = value.flatMap { (60...400).contains($0) ? $0 : nil }
+        session.electrical.mainBreakerAmperage = bounded
+        session.electrical.mainBreakerAmperageSource = bounded == nil ? nil : source
         mainBreakerNote = note
         mainBreakerFromScan = false
         refreshAssessment()
@@ -191,8 +194,10 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// The UI only offers 1 or 2 (see `BatteryCountChoice`). Anything outside 1...2 is dropped so the `solar-or-two-batteries`
+    /// rule never sees a zero or a stray large value.
     func setPlannedBatteryCount(_ value: Int?) {
-        session.electrical.plannedBatteryCount = value
+        session.electrical.plannedBatteryCount = value.flatMap { (1...2).contains($0) ? $0 : nil }
         refreshAssessment()
     }
 

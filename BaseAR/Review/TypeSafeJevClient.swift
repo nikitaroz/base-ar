@@ -171,13 +171,31 @@ struct JevResponse: Decodable, Sendable {
     let answers: [String: JevAnswer]
 }
 
+/// The live API (jev-1.13.0, checked 26 Sep 2026) returns `noul` as the probability of "yes" (e.g. 0.12)
+/// and `score` as a fractional scale value (e.g. 1.07). Older docs showed strings and integers, so both decode.
 struct JevAnswer: Decodable, Sendable {
-    let noul: String?
+    let noul: Double?
     let choice: String?
-    let score: Int?
+    let score: Double?
     let confidence: Double?
     let probabilities: [String: Double]?
-    let distribution: [Int]?
+
+    enum CodingKeys: String, CodingKey { case noul, choice, score, confidence, probabilities }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let probability = try? container.decode(Double.self, forKey: .noul) {
+            noul = probability
+        } else if let word = try? container.decode(String.self, forKey: .noul) {
+            noul = word.lowercased() == "yes" ? 1 : (word.lowercased() == "no" ? 0 : nil)
+        } else {
+            noul = nil
+        }
+        choice = try? container.decode(String.self, forKey: .choice)
+        score = try? container.decode(Double.self, forKey: .score)
+        confidence = try? container.decode(Double.self, forKey: .confidence)
+        probabilities = try? container.decode([String: Double].self, forKey: .probabilities)
+    }
 }
 
 struct JevAdvisory: Sendable {
@@ -190,10 +208,13 @@ struct JevAdvisory: Sendable {
     var reason: String? = nil
     var answers: [String: JevAnswer]? = nil
 
-    var visitReady: String? { answers?["visit_ready"]?.noul }
+    /// "yes" / "no" from the probability of yes; the probability itself is `visitReadyProbability`.
+    var visitReady: String? { visitReadyProbability.map { $0 >= 0.5 ? "yes" : "no" } }
+    var visitReadyProbability: Double? { answers?["visit_ready"]?.noul }
     var nextAction: String? { answers?["next_action"]?.choice }
     var blockingGap: String? { answers?["blocking_gap"]?.choice }
-    var readinessScore: Int? { answers?["readiness_score"]?.score }
+    /// 0 (not started) to 3 (visit-ready), fractional.
+    var readinessScore: Double? { answers?["readiness_score"]?.score }
 }
 
 // MARK: - Survey summary sent to Jev

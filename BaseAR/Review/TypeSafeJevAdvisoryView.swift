@@ -86,7 +86,9 @@ struct TypeSafeJevAdvisoryView: View {
         let answers = advisory.answers ?? [:]
         VStack(alignment: .leading, spacing: 10) {
             if let visitReady = advisory.visitReady {
-                row("Ready for engineer review?", value: words(visitReady), confidence: answers["visit_ready"]?.confidence)
+                // noul carries the probability of "yes"; show how sure Jev is of the word it lands on.
+                let sureness = advisory.visitReadyProbability.map { visitReady == "yes" ? $0 : 1 - $0 }
+                row("Ready for engineer review?", value: words(visitReady), confidence: sureness)
             }
             if let nextAction = advisory.nextAction {
                 row("Next step", value: words(nextAction), confidence: answers["next_action"]?.confidence)
@@ -95,7 +97,7 @@ struct TypeSafeJevAdvisoryView: View {
                 row("Biggest gap", value: words(gap), confidence: answers["blocking_gap"]?.confidence)
             }
             if let score = advisory.readinessScore {
-                row("Readiness", value: "\(score) of 3", confidence: answers["readiness_score"]?.confidence)
+                row("Readiness", value: "\(score.formatted(.number.precision(.fractionLength(1)))) of 3", confidence: answers["readiness_score"]?.confidence)
             }
             if advisory.visitReady == nil, advisory.nextAction == nil, advisory.blockingGap == nil, advisory.readinessScore == nil {
                 Text("Jev sent no answers.")

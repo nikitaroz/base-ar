@@ -461,11 +461,11 @@ private extension PlacementSceneSnapshot {
 }
 
 /// Step 2, the Live Survey: the camera with one task line on top and one feedback line at the bottom. No top bar
-/// and no buttons: each step advances by itself once the scan has what it needs, and a swipe right from the left
-/// edge leaves. The ••• menu, the typed-number sheets, and the step buttons below stay in the code but are not shown.
+/// and no capture buttons: each step advances by itself once the scan has what it needs. A small back button in the
+/// top-left corner, or a swipe right from the left edge, leaves. The ••• menu, the typed-number sheets, and the step buttons below stay in the code but are not shown.
 struct PlacementARView: View {
     var store: SurveyStore
-    /// Leaves the Live Survey from the left-edge swipe or VoiceOver's escape, after the scene is committed and the
+    /// Leaves the Live Survey from the back button, the left-edge swipe, or VoiceOver's escape, after the scene is committed and the
     /// session paused. Called without an animation, since the slide already happened. Nil pops with `dismiss`.
     var onExit: (() -> Void)?
     var onContinue: () -> Void
@@ -972,7 +972,8 @@ struct PlacementARView: View {
                 VStack(spacing: 0) {
                     if !coachingIsActive || cameraProblem != nil {
                         taskLineView
-                            .padding(.horizontal, 16)
+                            // Room for the back button and the photo counter on either side.
+                            .padding(.horizontal, 56)
                             .padding(.top, 8)
                     }
                     Spacer(minLength: 0)
@@ -983,6 +984,19 @@ struct PlacementARView: View {
                 // Nothing on the lines takes a touch, so a drag that starts on them still reaches the AR view.
                 .allowsHitTesting(false)
             }
+        }
+        .overlay(alignment: .topLeading) {
+            // The one control on the camera: a way out that doesn't need the edge swipe. It stays up during
+            // coaching and camera failures, so the scan never traps anyone.
+            Button { leave() } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+            .accessibilityLabel("Leave the Live Survey")
         }
         .overlay(alignment: .topTrailing) {
             if capturedFrames > 0 && !coachingIsActive {
@@ -1595,7 +1609,7 @@ struct PlacementARView: View {
         (try? await Task.sleep(for: duration)) != nil
     }
 
-    /// The left-edge swipe and VoiceOver's escape: keep the scan, pause the camera, and leave. The swipe slides the
+    /// The back button, the left-edge swipe, and VoiceOver's escape: keep the scan, pause the camera, and leave. The swipe slides the
     /// screen out first, so the navigation itself runs without an animation.
     private func leave(slidingOut width: CGFloat? = nil) {
         guard !isLeaving else { return }

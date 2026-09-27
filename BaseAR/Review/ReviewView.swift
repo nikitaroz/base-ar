@@ -59,10 +59,10 @@ struct ReviewView: View {
                 onEdit(.placement)
             }
         } message: {
-            Text("This clears the meter and panel marks, the battery spot, the scan photos, and numbers only the scan read. Your Home Info and typed numbers stay.")
+            Text("This clears the meter and panel marks, the site check, the scan photos, and numbers only the scan read. Your Home Info and typed numbers stay.")
         }
         .task {
-            await store.exportForSharing()
+            await exportIfChanged()
         }
         .sheet(isPresented: $showShare) {
             ActivityShareSheet(urls: store.exportURLs)
@@ -77,9 +77,9 @@ struct ReviewView: View {
                 Image(systemName: "info.circle.fill")
             }
             .font(.footnote)
-            Text(ToneStyle.title(store.session.placementTone))
+            Text(ToneStyle.title(readinessTone))
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(ToneStyle.color(store.session.placementTone))
+                .foregroundStyle(ToneStyle.color(readinessTone))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -94,6 +94,16 @@ struct ReviewView: View {
             Text(readinessMessage)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+            if store.isExporting {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Saving the survey files…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -152,7 +162,7 @@ struct ReviewView: View {
             if meterLocked {
                 reviewRow(
                     title: "Redo the meter",
-                    detail: "The Live Survey looks for it again. The battery spot goes too.",
+                    detail: "The Live Survey looks for it again. The site check runs again too.",
                     symbol: "arrow.counterclockwise"
                 ) {
                     store.redoLiveSurveyItem(.electricMeter)
@@ -182,7 +192,7 @@ struct ReviewView: View {
                 Divider()
                 reviewRow(
                     title: "Start the scan over",
-                    detail: "Clears the marks and the battery spot",
+                    detail: "Clears the marks and the site check",
                     symbol: "arrow.uturn.backward"
                 ) {
                     confirmScanRestart = true
@@ -396,26 +406,25 @@ struct ReviewView: View {
 
     private var placementDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            batterySpotCard
-            LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
+            siteCheckCard
             LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
             LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
             LabeledContent("Gas meter", value: gasMeterText)
             if gasShownNotRecognized {
                 gasShownCheck
             }
-            LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
-            LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
-            LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
+            LabeledContent("Spot to meter", value: feet(store.session.placement.distanceToMeterFeet))
+            LabeledContent("Spot to wall", value: feet(store.session.placement.distanceToWallFeet))
+            LabeledContent("Spot to gas meter", value: feet(store.session.placement.distanceToGasMeterFeet))
             LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
-            LabeledContent("3 × 3 ft footprint clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
-            LabeledContent("Not in front of a window", value: observation(store.session.placement.clearOfWindows))
-            LabeledContent("Clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
+            LabeledContent("3 × 3 ft spot clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
+            LabeledContent("Spot not in front of a window", value: observation(store.session.placement.clearOfWindows))
+            LabeledContent("Spot clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
             LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
             LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
             LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelShareWall))
             LabeledContent("Measurement surfaces", value: measurementMethods)
-            Text("GPS is the phone’s property fix, not the battery position. AR measurements are preliminary estimates.")
+            Text("GPS is the phone’s property fix, not the spot. Scan measurements are preliminary estimates.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if store.placementController?.hasExportableMesh == true {
@@ -431,16 +440,23 @@ struct ReviewView: View {
         }
     }
 
-    /// The spot the Live Survey suggested by itself at the finish, or why it could not, with the pad's own checks.
-    private var batterySpotCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Suggested battery spot", systemImage: "battery.100percent.bolt")
-                .font(.subheadline.weight(.semibold))
-            Text(batterySpotText)
+    /// The site check the Live Survey ran by itself after the look-around, in plain words, with the spot's own checks.
+    private var siteCheckCard: some View {
+        let check = siteCheck
+        let tone = siteCheckTone(check)
+        return VStack(alignment: .leading, spacing: 8) {
+            Label {
+                Text("Site check")
+            } icon: {
+                Image(systemName: ToneStyle.symbol(tone))
+                    .foregroundStyle(ToneStyle.color(tone))
+            }
+            .font(.subheadline.weight(.semibold))
+            Text(siteCheckText(check))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if store.session.placement.batteryPlaced {
+            if case .found = check {
                 ForEach(padRules) { rule in
                     padRuleRow(rule)
                 }
@@ -464,35 +480,47 @@ struct ReviewView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
     }
 
-    /// "About X ft along the wall from the meter, on the panel side. Y in from the wall.", or why there is no spot.
-    private var batterySpotText: String {
-        let placement = store.session.placement
-        let wall = placement.distanceToWallFeet.map { " \(max(0, Int(($0 * 12).rounded()))) in from the wall." }
-            ?? " The distance to the wall was not measured."
-        guard let spot = placement.batterySpot else {
-            // Older surveys placed the battery by hand; a scan that has not finished has no suggestion yet.
-            return placement.batteryPlaced
-                ? "Placed on the scan." + wall
-                : "No spot suggested yet. The Live Survey suggests one when the scan finishes."
+    private var siteCheck: SiteCheck { SiteCheck.of(store.session) }
+
+    /// Found on measured ground reads green; found on an answer reads teal; a blocked site is red; not yet known is amber.
+    private func siteCheckTone(_ check: SiteCheck) -> PlacementTone {
+        switch check {
+        case .found(let measured): measured ? .clear : .attested
+        case .noClearSpot: .conflict
+        case .notRun, .noMeter, .notEnoughScanned: .incomplete
         }
-        switch spot.status {
-        case .placed:
-            let along = placement.distanceToMeterFeet ?? spot.alongWallFeet.map(abs)
-            var text = along.map { String(format: "About %.1f ft along the wall from the meter", $0) }
-                ?? "Beside the meter"
-            if let towardPanel = spot.towardPanel {
-                text += towardPanel ? ", on the panel side" : ", on the other side"
+    }
+
+    /// "A spot that meets Base's spacing rules was found beside the meter.", or why not. Never battery wording.
+    private func siteCheckText(_ check: SiteCheck) -> String {
+        let placement = store.session.placement
+        switch check {
+        case .found:
+            var spotDetail = ""
+            if let along = placement.distanceToMeterFeet ?? placement.batterySpot?.alongWallFeet.map(abs) {
+                spotDetail = String(format: " It is about %.1f ft along the wall from the meter", along)
+                if let towardPanel = placement.batterySpot?.towardPanel {
+                    spotDetail += towardPanel ? ", on the panel side" : ", on the other side"
+                }
+                spotDetail += "."
             }
-            return text + "." + wall
+            if let wall = placement.distanceToWallFeet {
+                spotDetail += " \(max(0, Int((wall * 12).rounded()))) in from the wall."
+            }
+            return "A spot that meets Base’s spacing rules was found beside the meter." + spotDetail
+        case .notEnoughScanned:
+            return "Not enough of the ground was scanned beside the meter. Open the Live Survey and look around the meter again."
+        case .noClearSpot:
+            let count = placement.batterySpot?.candidatesTried ?? 0
+            let checked = count > 0 ? " The scan checked \(count) spot\(count == 1 ? "" : "s") beside the meter." : ""
+            return "No clear 3 × 3 ft spot was found." + checked + " An engineer will look at the photos."
         case .noMeter:
-            return "No spot suggested: no meter found. An engineer will choose one."
-        case .noWall:
-            return "No spot suggested: the scan found no wall beside the meter. An engineer will choose one."
-        case .allRejected:
-            let count = spot.candidatesTried
-            return "No spot suggested: checked \(count) spot\(count == 1 ? "" : "s"), none cleared. An engineer will choose one."
+            return "No meter was found on the scan, so the site check did not run."
+        case .notRun:
+            return "The site check runs by itself when the Live Survey finishes the look-around."
         }
     }
 
@@ -540,7 +568,7 @@ struct ReviewView: View {
     private func padRuleStatus(_ tone: PlacementTone) -> String {
         switch tone {
         case .clear: "Pass"
-        case .attested: "Pass, attested"
+        case .attested: "Pass, your answer"
         case .incomplete: "Unknown"
         case .conflict: "Conflict"
         }
@@ -587,12 +615,18 @@ struct ReviewView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Label(result.title, systemImage: statusSymbol(result.status))
-                                .font(.subheadline.weight(.semibold))
+                            Label {
+                                Text(result.title)
+                            } icon: {
+                                Image(systemName: ToneStyle.symbol(checkTone(result)))
+                                    .foregroundStyle(ToneStyle.color(checkTone(result)))
+                            }
+                            .font(.subheadline.weight(.semibold))
                             Spacer()
-                            Text(ToneStyle.statusTitle(result.status))
+                            Text(checkStatusTitle(result))
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(statusColor(result.status))
+                                .foregroundStyle(ToneStyle.color(checkTone(result)))
+                                .multilineTextAlignment(.trailing)
                         }
                         Text(result.requirement)
                             .font(.caption)
@@ -603,6 +637,33 @@ struct ReviewView: View {
                     Divider()
                 }
             }
+        }
+    }
+
+    // MARK: Export
+
+    /// True when the survey changed since Review's last export, or that export failed or never ran.
+    private var needsExport: Bool {
+        ReviewExportLedger.lastToken != ReviewExportToken(store) || store.exportURLs.isEmpty
+            || store.lastExportError != nil
+    }
+
+    /// Review's automatic export: once per survey revision, not on every appearance. The export reads the whole
+    /// scan's mesh on the main thread, so it waits for the step switch to finish drawing, and is skipped when
+    /// Review is left before then.
+    private func exportIfChanged() async {
+        guard needsExport else { return }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        guard !Task.isCancelled, needsExport else { return }
+        await runExport()
+    }
+
+    /// The token is taken before the export, so a change made while it runs makes the next appearance export again.
+    private func runExport() async {
+        ReviewExportLedger.lastToken = ReviewExportToken(store)
+        await store.exportForSharing()
+        if store.lastExportError != nil {
+            ReviewExportLedger.lastToken = nil
         }
     }
 
@@ -622,13 +683,19 @@ struct ReviewView: View {
             }
             Button {
                 Task {
-                    await store.exportForSharing()
+                    // The export Review already made is reused when nothing changed since; otherwise it runs again.
+                    if needsExport {
+                        await runExport()
+                    }
                     showShare = store.lastExportError == nil && !store.exportURLs.isEmpty
                 }
             } label: {
                 if store.isExporting {
-                    Label("Preparing survey…", systemImage: "hourglass")
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Preparing survey…")
+                    }
+                    .frame(maxWidth: .infinity)
                 } else {
                     Label("Share survey", systemImage: "square.and.arrow.up")
                         .frame(maxWidth: .infinity)
@@ -650,6 +717,7 @@ struct ReviewView: View {
     /// Missing answers hold a passing tone at amber too.
     private var readinessTone: PlacementTone {
         let tone = store.session.placementTone
+        if siteCheck == .noClearSpot { return .conflict }
         if missingCount > 0, tone == .clear || tone == .attested { return .incomplete }
         return tone
     }
@@ -657,7 +725,7 @@ struct ReviewView: View {
     private var readinessTitle: String {
         switch readinessTone {
         case .clear: "Ready to share"
-        case .attested: "Ready to share, with attestations"
+        case .attested: "Ready to share"
         case .incomplete:
             missingCount == 0
                 ? ToneStyle.title(.incomplete)
@@ -669,15 +737,17 @@ struct ReviewView: View {
     private var readinessMessage: String {
         switch readinessTone {
         case .clear:
-            "All requested information is captured and every required check passed on measured evidence. This remains a preliminary survey for engineer review, not approval."
+            "All requested information is captured and every required check passed on measured evidence. This is a prototype survey for engineer review, not approval."
         case .attested:
-            "All requested information is captured. Every required check passed, but at least one pass relies on your statement, not a measurement. This remains a preliminary survey for engineer review."
+            "All requested information is captured and every required check passed. Some passes rest on your answers or numbers the scan read, not measurements (teal). This is a prototype survey for engineer review, not approval."
         case .incomplete:
             missingCount == 0
                 ? "Some required checks are still unknown. Open Eligibility checks to see which. You can still share the current draft."
                 : "Use What’s missing below to finish the survey. You can still share the current draft."
         case .conflict:
-            "Captured evidence includes a conflict. Review the flagged checks and missing information."
+            siteCheck == .noClearSpot
+                ? "No clear 3 × 3 ft spot was found beside the meter. Open Site measurements for details. You can still share the survey for engineer review."
+                : "Captured evidence includes a conflict. Review the flagged checks and missing information."
         }
     }
 
@@ -692,47 +762,19 @@ struct ReviewView: View {
 
     private var readinessColor: Color { ToneStyle.color(readinessTone) }
 
-    private var missingCount: Int { store.session.missingInformation.count }
+    /// Fresh from the session, the same items the step bar counts, so a step never shows done while one is listed.
+    private var missingItems: [MissingItem] { store.missingItems }
+
+    private var missingCount: Int { missingItems.count }
 
     private var nextActions: [ReviewAction] {
-        [
-            ReviewAction(route: .home, title: "Home Info", symbol: "house.fill", count: homeMissingCount),
-            ReviewAction(route: .electrical, title: "Electrical numbers", symbol: "bolt.fill", count: electricalMissingCount),
-            ReviewAction(route: .placement, title: "Live Survey", symbol: "arkit", count: placementMissingCount)
-        ].filter { $0.count > 0 }
-    }
-
-    private var homeMissingCount: Int {
-        let session = store.session
+        let missing = missingItems
+        func count(_ step: MissingItem.Step) -> Int { missing.filter { $0.step == step }.count }
         return [
-            session.contactName.isBlank,
-            session.email.isBlank,
-            session.phone.isBlank,
-            session.propertyIdentifier.isBlank,
-            session.homeownership == nil,
-            session.electrical.hasSolar == nil,
-            session.electrical.hasPortableGenerator == nil,
-            session.electrical.hasStandbyGenerator == nil,
-            session.electrical.hasExistingWholeHomeBattery == nil,
-            session.electrical.plannedBatteryCount == nil,
-            !session.gasMeterQuestionAnswered,
-            session.propertyLocation == nil
-        ].filter { $0 }.count
-    }
-
-    private var electricalMissingCount: Int {
-        [
-            store.session.electrical.meterPhotoFilename == nil,
-            (store.session.electrical.meterNumber ?? "").isBlank,
-            store.session.electrical.meterNumberSource == .ocr && !(store.session.electrical.meterNumber ?? "").isBlank,
-            store.session.electrical.mainBreakerAmperage == nil,
-            store.session.electrical.mainBreakerAmperage != nil && store.session.electrical.mainBreakerAmperageSource == .ocr,
-            store.session.electrical.needsPanelBusRating && store.session.electrical.panelBusRatingAmps == nil
-        ].filter { $0 }.count
-    }
-
-    private var placementMissingCount: Int {
-        max(0, missingCount - homeMissingCount - electricalMissingCount)
+            ReviewAction(route: .home, title: "Home Info", symbol: "house.fill", count: count(.home)),
+            ReviewAction(route: .electrical, title: "Electrical numbers", symbol: "bolt.fill", count: count(.electrical)),
+            ReviewAction(route: .placement, title: "Live Survey", symbol: "arkit", count: count(.scan))
+        ].filter { $0.count > 0 }
     }
 
     private var breakerText: String {
@@ -830,20 +872,20 @@ struct ReviewView: View {
         }
     }
 
-    private func statusColor(_ status: CheckStatus) -> Color {
-        switch status {
-        case .pass: ToneStyle.color(.clear)
-        case .conflict: ToneStyle.color(.conflict)
-        case .unknown: ToneStyle.color(.incomplete)
+    /// Green only for a pass on measured evidence. A pass that rests on a typed number, an answer, or a number the
+    /// scan read and the user confirmed is teal: ready, but attested.
+    private func checkTone(_ result: RuleResult) -> PlacementTone {
+        switch result.status {
+        case .pass: result.usedMeasuredEvidence ? .clear : .attested
+        case .conflict: .conflict
+        case .unknown: .incomplete
         }
     }
 
-    private func statusSymbol(_ status: CheckStatus) -> String {
-        switch status {
-        case .pass: "checkmark.circle.fill"
-        case .conflict: "exclamationmark.triangle.fill"
-        case .unknown: "questionmark.circle.fill"
-        }
+    private func checkStatusTitle(_ result: RuleResult) -> String {
+        guard result.status == .pass, !result.usedMeasuredEvidence else { return ToneStyle.statusTitle(result.status) }
+        let scanRead = result.id == "austin-main-breaker" && store.session.electrical.mainBreakerAmperageBasis != nil
+        return scanRead ? "Pass, read by scan" : "Pass, your answer"
     }
 
     @ViewBuilder
@@ -888,6 +930,38 @@ private struct TestToolsCard: View {
     }
 }
 #endif
+
+/// What Review's export wrote: the survey (without the fields the export itself fills in or that are derived from
+/// the rest), the live scan's marks, and how much scan it held. Equal tokens mean the files on disk are current.
+private struct ReviewExportToken: Equatable {
+    var session: SurveySession
+    var scene: PlacementSceneSnapshot?
+    var keyframeCount: Int
+    var hasMesh: Bool
+
+    @MainActor
+    init(_ store: SurveyStore) {
+        var session = store.session
+        session.placement.pointCloudFilename = nil
+        session.placement.captureManifestPath = nil
+        session.placement.capturedFrameCount = nil
+        session.ruleResults = []
+        session.missingInformation = []
+        session.placementTone = .incomplete
+        self.session = session
+        let controller = store.placementController
+        scene = controller?.scene
+        keyframeCount = controller?.keyframes.count ?? 0
+        hasMesh = controller?.hasExportableMesh ?? false
+    }
+}
+
+/// Outlives ReviewView: the step switch rebuilds Review each time it opens. A new survey has a new session id,
+/// so its token never matches the last survey's.
+@MainActor
+private enum ReviewExportLedger {
+    static var lastToken: ReviewExportToken?
+}
 
 private struct ReviewAction: Identifiable {
     var route: HubRoute

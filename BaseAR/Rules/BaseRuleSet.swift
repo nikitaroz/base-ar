@@ -11,6 +11,7 @@ enum BaseRuleSet {
     static let maxWallDistanceFeet = 1.0
     static let minGasMeterDistanceFeet = 3.0
     static let footprintSideFeet = 3.0
+    /// Not a published Base limit: Base publishes only the 6 ft maximum. Kept until the team decides whether to drop it.
     static let minMeterHeightFeet = 3.0
     static let maxMeterHeightFeet = 6.0
     static let workingSpaceWidthInches = 30.0
@@ -52,23 +53,27 @@ enum BaseRuleSet {
         title: "Solar or two batteries",
         requirement: "Solar, or two batteries, requires a 200A panel.",
         isRequired: true,
+        // Decided only from the panel's bus rating. Main-breaker amperage is a different number and never stands in for it.
         evaluate: { session in
-            guard let amps = session.electrical.mainBreakerAmperage else {
-                return .unknown("Main breaker amperage has not been confirmed.")
+            let electrical = session.electrical
+            let busRating = electrical.panelBusRatingAmps
+            if electrical.needsPanelBusRating {
+                let reason = electrical.hasSolar == true ? "Solar was reported" : "Two batteries are planned"
+                guard let busRating else {
+                    return .unknown("\(reason). Main-breaker amperage is not the panel bus rating; confirm the panel's bus rating from the panel label.")
+                }
+                if busRating >= panelAmpsForSolarOrTwoBatteries {
+                    return .pass("\(reason) and the panel label's bus rating is \(busRating)A, which meets the 200A requirement.")
+                }
+                return .conflict("\(reason) and the panel label's bus rating is \(busRating)A. This case needs a 200A panel.")
             }
-            if amps >= panelAmpsForSolarOrTwoBatteries {
-                return .pass("Confirmed main breaker is \(amps)A, which covers solar and a two-battery system.")
+            if electrical.hasSolar == false, let count = electrical.plannedBatteryCount, count < 2 {
+                return .pass("Solar was reported as not present and fewer than two batteries are planned, so the 200A panel requirement is not triggered.")
             }
-            let hasSolar = session.electrical.hasSolar
-            let count = session.electrical.plannedBatteryCount
-            if hasSolar == true || (count ?? 0) >= 2 {
-                let reason = hasSolar == true ? "Solar was reported" : "Two batteries are planned"
-                return .conflict("\(reason) and the confirmed main breaker is \(amps)A. This case needs 200A.")
+            if let busRating, busRating >= panelAmpsForSolarOrTwoBatteries {
+                return .pass("The panel label's bus rating is \(busRating)A, which meets the 200A requirement whether or not solar or two batteries apply.")
             }
-            if hasSolar == false, let count, count < 2 {
-                return .pass("Solar was reported as not present and fewer than two batteries are planned, so the 200A requirement does not apply.")
-            }
-            return .unknown("Confirmed main breaker is \(amps)A. Solar or planned battery count is still missing, so the 200A requirement cannot be decided.")
+            return .unknown("Solar or planned battery count is still missing, so the 200A panel requirement cannot be decided. Main-breaker amperage is not the panel bus rating.")
         }
     )
 
@@ -169,7 +174,8 @@ enum BaseRuleSet {
         isRequired: true,
         evaluate: { session in
             if session.placement.distanceToGasMeterFeet == nil, session.placement.gasMeterNotPresent {
-                return .pass("No gas meter was observed near the placement.")
+                // The user's answer, not a measurement, so the best this home can reach is "attested".
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user reported no visible gas meter. This is not a measured clearance or proof that no gas equipment is present.")
             }
             return distanceOutcome(
                 feet: session.placement.distanceToGasMeterFeet,
@@ -189,6 +195,9 @@ enum BaseRuleSet {
         evaluate: { session in
             guard let height = session.placement.meterHeightFeet else {
                 return .unknown("Meter height was not measured. Tap the ground below the meter and then the meter on the wall to measure it.")
+            }
+            guard height.isFinite else {
+                return .unknown("Meter height was not a valid measurement, so the height range was not checked.")
             }
             let formatted = String(format: "%.1f ft", height)
             if height >= minMeterHeightFeet && height <= maxMeterHeightFeet {
@@ -256,7 +265,7 @@ private func distanceOutcome(
     passText: (String) -> String,
     conflictText: (String) -> String
 ) -> RuleOutcome {
-    guard let feet else { return .unknown(missing) }
+    guard let feet, feet.isFinite, feet >= 0 else { return .unknown(missing) }
     let formatted = String(format: "%.1f ft", feet)
     return passes(feet) ? .pass(passText(formatted)) : .conflict(conflictText(formatted))
 }

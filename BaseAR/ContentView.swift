@@ -317,11 +317,17 @@ private struct SurveyHubView: View {
     }
 
     private var electricalProgress: StepProgress {
-        progress(for: [
-            store.session.electrical.meterPhotoFilename != nil,
-            filled(store.session.electrical.meterNumber ?? ""),
-            store.session.electrical.mainBreakerAmperage != nil
-        ])
+        let electrical = store.session.electrical
+        var answers = [
+            electrical.meterPhotoFilename != nil,
+            filled(electrical.meterNumber ?? ""),
+            electrical.mainBreakerAmperage != nil
+        ]
+        // Only solar or two batteries need the panel's bus rating.
+        if electrical.needsPanelBusRating {
+            answers.append(electrical.panelBusRatingAmps != nil)
+        }
+        return progress(for: answers)
     }
 
     private var placementProgress: StepProgress {

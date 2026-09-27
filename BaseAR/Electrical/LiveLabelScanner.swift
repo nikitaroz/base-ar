@@ -112,6 +112,8 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     private var didHaptic = false
     /// Photo taken the moment a number locks, so it shows the meter even if the phone moves before the tap.
     private var lockedPhoto: Task<UIImage?, Never>?
+    /// Pending reset after the number leaves the card. Nil while a number is in the frame.
+    private var lostReset: Task<Void, Never>?
     private let haptic = UIImpactFeedbackGenerator(style: .medium)
 
     init(target: LabelScanTarget) {
@@ -303,10 +305,15 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             guard case .text(let text) = item else { return nil }
             return text
         }
+        // Only text inside the card counts, so a number elsewhere in view can't lock.
         let inside = texts.filter { cardRect.contains(center(of: $0.bounds)) }
-        let pool = inside.isEmpty ? texts : inside
-        let ordered = pool.sorted { $0.bounds.topLeft.x < $1.bounds.topLeft.x }
-        guard let read = target.read(from: ordered.map(\.transcript)) else { return }
+        let ordered = inside.sorted { $0.bounds.topLeft.x < $1.bounds.topLeft.x }
+        guard let read = target.read(from: ordered.map(\.transcript)) else {
+            labelLost()
+            return
+        }
+        lostReset?.cancel()
+        lostReset = nil
         if read == lockedRead { return }
         if read.display != candidateKey {
             candidateKey = read.display
@@ -331,6 +338,32 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
             didHaptic = true
             haptic.impactOccurred()
         }
+    }
+
+    /// Losing the label drops the old candidate, so "Use this number" can't save a number that left the frame.
+    /// A short grace keeps a one-frame dropout from undoing a lock. "Save photo" still saves the photo alone.
+    /// A timer, because the scanner stops calling back once nothing is in view.
+    private func labelLost() {
+        guard candidateKey != nil || lockedRead != nil, lostReset == nil else { return }
+        lostReset = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.dropCandidate()
+        }
+    }
+
+    private func dropCandidate() {
+        lostReset = nil
+        guard !didFinish else { return }
+        lockedRead = nil
+        candidateKey = nil
+        candidateSince = nil
+        didHaptic = false
+        lockedPhoto?.cancel()
+        lockedPhoto = nil
+        setUseTitle("Save photo")
+        candidateLabel.text = "Looking…"
+        hintLabel.text = "Keep the number inside the frame. Hold still and avoid glare."
     }
 
     private func center(of bounds: RecognizedItem.Bounds) -> CGPoint {
@@ -369,6 +402,8 @@ final class LabelScanController: UIViewController, DataScannerViewControllerDele
     private func finish(_ read: LabelScanRead?) {
         guard !didFinish else { return }
         didFinish = true
+        lostReset?.cancel()
+        lostReset = nil
         useButton.isEnabled = false
         candidateLabel.text = "Saving photo…"
         let accepted = read ?? LabelScanRead(meterNumber: nil, amperage: nil)

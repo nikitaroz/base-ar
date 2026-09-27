@@ -4,7 +4,8 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    var schemaVersion: Int = 5
+    /// 6: adds `electrical.panelBusRatingAmps`.
+    var schemaVersion: Int = 6
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -117,6 +118,14 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     var hasExistingWholeHomeBattery: Bool?
     /// Nil until the home form asks. 1 or 2. Two batteries require a 200A panel.
     var plannedBatteryCount: Int?
+    /// The panel's bus rating in amps, typed from the panel label. Distinct from mainBreakerAmperage:
+    /// the main breaker never stands in for the bus rating. Nil until the user enters it.
+    var panelBusRatingAmps: Int?
+
+    /// Solar or two batteries need a 200A panel, so only then does the bus rating matter.
+    var needsPanelBusRating: Bool {
+        hasSolar == true || (plannedBatteryCount ?? 0) >= 2
+    }
 }
 
 struct PlacementAnchor: Codable, Sendable, Equatable {

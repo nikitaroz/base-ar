@@ -202,6 +202,9 @@ struct ReviewView: View {
                 LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
             }
             LabeledContent("Main breaker", value: breakerText)
+            if store.session.electrical.needsPanelBusRating || store.session.electrical.panelBusRatingAmps != nil {
+                LabeledContent("Panel bus rating", value: store.session.electrical.panelBusRatingAmps.map { "\($0) A" } ?? "Not entered")
+            }
             LabeledContent("Solar", value: yesNo(store.session.electrical.hasSolar))
             LabeledContent("Portable generator", value: yesNo(store.session.electrical.hasPortableGenerator))
             LabeledContent("Standby generator", value: yesNo(store.session.electrical.hasStandbyGenerator))
@@ -232,7 +235,7 @@ struct ReviewView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if store.placementController?.hasExportableMesh == true {
-                Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Blue is wall, cyan is a window, green is floor, gray is ceiling, orange is other.")
+                Text("Share includes scene.ply: the LiDAR mesh in meters, in the AR world. Open it in MeshLab, CloudCompare, or Blender. Surfaces carry the camera's colors (light gray where the camera never saw them), and each face is labeled wall, floor, window, and so on. The measurements are drawn in: green passes, red conflicts, amber unknown.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -326,32 +329,51 @@ struct ReviewView: View {
         .padding(.top, 4)
     }
 
+    /// The placement tone drives the card, so it can't read green while a check is amber or red.
+    /// Missing answers hold a passing tone at amber too.
+    private var readinessTone: PlacementTone {
+        let tone = store.session.placementTone
+        if missingCount > 0, tone == .clear || tone == .attested { return .incomplete }
+        return tone
+    }
+
     private var readinessTitle: String {
-        if missingCount == 0 { return "Ready to share" }
-        return "\(missingCount) item\(missingCount == 1 ? "" : "s") still needed"
+        switch readinessTone {
+        case .clear: "Ready to share"
+        case .attested: "Ready to share, with attestations"
+        case .incomplete:
+            missingCount == 0
+                ? ToneStyle.title(.incomplete)
+                : "\(missingCount) item\(missingCount == 1 ? "" : "s") still needed"
+        case .conflict: ToneStyle.title(.conflict)
+        }
     }
 
     private var readinessMessage: String {
-        if store.session.ruleResults.contains(where: { $0.status == .conflict }) {
-            return "Captured evidence includes a conflict. Review the flagged checks and missing information."
+        switch readinessTone {
+        case .clear:
+            "All requested information is captured and every required check passed on measured evidence. This remains a preliminary survey for engineer review, not approval."
+        case .attested:
+            "All requested information is captured. Every required check passed, but at least one pass relies on your statement, not a measurement. This remains a preliminary survey for engineer review."
+        case .incomplete:
+            missingCount == 0
+                ? "Some required checks are still unknown. Open Eligibility checks to see which. You can still share the current draft."
+                : "Use the next actions below to finish the survey. You can still share the current draft."
+        case .conflict:
+            "Captured evidence includes a conflict. Review the flagged checks and missing information."
         }
-        if missingCount == 0 {
-            return "All requested information is captured. This remains a preliminary survey for engineer review."
-        }
-        return "Use the next actions below to finish the survey. You can still share the current draft."
     }
 
     private var readinessSymbol: String {
-        if store.session.ruleResults.contains(where: { $0.status == .conflict }) {
-            return "exclamationmark.triangle.fill"
+        switch readinessTone {
+        case .clear: "checkmark.circle.fill"
+        case .attested: "checkmark.circle"
+        case .incomplete: "questionmark.circle.fill"
+        case .conflict: "exclamationmark.triangle.fill"
         }
-        return missingCount == 0 ? "checkmark.circle.fill" : "questionmark.circle.fill"
     }
 
-    private var readinessColor: Color {
-        if store.session.ruleResults.contains(where: { $0.status == .conflict }) { return ToneStyle.color(.conflict) }
-        return missingCount == 0 ? ToneStyle.color(.clear) : ToneStyle.color(.incomplete)
-    }
+    private var readinessColor: Color { ToneStyle.color(readinessTone) }
 
     private var missingCount: Int { store.session.missingInformation.count }
 
@@ -384,7 +406,8 @@ struct ReviewView: View {
         [
             store.session.electrical.meterPhotoFilename == nil,
             (store.session.electrical.meterNumber ?? "").isBlank,
-            store.session.electrical.mainBreakerAmperage == nil
+            store.session.electrical.mainBreakerAmperage == nil,
+            store.session.electrical.needsPanelBusRating && store.session.electrical.panelBusRatingAmps == nil
         ].filter { $0 }.count
     }
 

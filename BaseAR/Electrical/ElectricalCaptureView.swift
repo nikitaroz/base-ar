@@ -15,11 +15,12 @@ struct ElectricalCaptureView: View {
     @State private var scanTarget: LabelScanTarget?
     @State private var scanMessage: String?
     @State private var amperageText = ""
+    @State private var busRatingText = ""
     @State private var showCameraDeniedAlert = false
     @State private var showsManualMeterEntry = false
     @FocusState private var focusedField: Field?
 
-    private enum Field { case meterNumber, amperage }
+    private enum Field { case meterNumber, amperage, busRating }
 
     var body: some View {
         Form {
@@ -31,6 +32,9 @@ struct ElectricalCaptureView: View {
         .onAppear {
             if amperageText.isEmpty, let amps = store.session.electrical.mainBreakerAmperage {
                 amperageText = String(amps)
+            }
+            if busRatingText.isEmpty, let rating = store.session.electrical.panelBusRatingAmps {
+                busRatingText = String(rating)
             }
         }
         .onChange(of: store.session.electrical.mainBreakerAmperage) { _, amps in
@@ -175,15 +179,52 @@ struct ElectricalCaptureView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            // A typed value is a record of what the user read, not a confirmation, so it stays neutral.
             if let amps = store.session.electrical.mainBreakerAmperage {
-                if (150...200).contains(amps) {
-                    Label("Confirmed: \(amps) A", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
+                Text("Recorded: \(amps) A")
+                    .foregroundStyle(.secondary)
+                if !BaseRuleSet.austinMainBreakerRange.contains(amps) {
                     Label("\(amps) A is outside the 150–200A Austin guidance and will be flagged for review.", systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(ToneStyle.color(.conflict))
                 }
+            }
+            if store.session.electrical.needsPanelBusRating {
+                busRatingField
+            }
+        }
+    }
+
+    /// Solar or two batteries need a 200A panel. That is the panel's bus rating, which the main breaker cannot stand in for.
+    private var busRatingField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Panel bus rating")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack {
+                TextField("Bus rating from the panel label", text: $busRatingText)
+                    .keyboardType(.numberPad)
+                    .focused($focusedField, equals: .busRating)
+                    .onChange(of: busRatingText) { _, newValue in
+                        let digits = newValue.filter(\.isNumber)
+                        if digits != newValue {
+                            busRatingText = digits
+                            return
+                        }
+                        let parsed = Int(digits)
+                        if parsed != store.session.electrical.panelBusRatingAmps {
+                            store.setPanelBusRatingAmps(parsed)
+                        }
+                    }
+                Text("A")
+                    .foregroundStyle(.secondary)
+            }
+            Text("Solar or two batteries need a 200A panel. Read the bus rating from the label on the panel, usually inside the panel door. It is not the main breaker number. Do not remove the panel cover.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            if let rating = store.session.electrical.panelBusRatingAmps {
+                Text("Recorded: \(rating) A")
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -207,7 +248,7 @@ struct ElectricalCaptureView: View {
         switch target {
         case .meterNumber:
             if let number = read.meterNumber {
-                store.setMeterNumber(number, note: "Scanned from the camera. Confirm it matches the meter.")
+                store.setMeterNumber(number, source: .ocr, note: "Scanned from the camera. Confirm it matches the meter.")
             }
             if let image {
                 store.attachMeterPhoto(image)

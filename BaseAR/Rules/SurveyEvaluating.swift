@@ -59,6 +59,9 @@ enum MissingInformation {
         if session.electrical.mainBreakerAmperage == nil {
             items.append("Confirmed main breaker amperage")
         }
+        if session.electrical.needsPanelBusRating, session.electrical.panelBusRatingAmps == nil {
+            items.append("Panel bus rating from the panel label, for solar or two batteries")
+        }
         if session.homeownership == nil {
             items.append("Whether you own or rent the home")
         }

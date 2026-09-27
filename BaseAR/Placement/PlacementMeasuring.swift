@@ -164,9 +164,10 @@ extension PlacementMeasuring {
             && measured.workingSpacePosition == placement.workingSpacePosition
         updated.frontWorkingSpaceIsClear = measured.frontWorkingSpaceIsClear
             ?? (keepWorkingSpace ? placement.frontWorkingSpaceIsClear : nil)
-        if let transfer = measured.transferSwitchClearanceObserved {
-            updated.transferSwitchClearanceObserved = transfer
-        }
+        // Same keep rule as the footprint, keyed to the meter lock the reservation sits beside.
+        let keepTransfer = !measured.lidarMeshAvailable && measured.meterPosition == placement.meterPosition
+        updated.transferSwitchClearanceObserved = measured.transferSwitchClearanceObserved
+            ?? (keepTransfer ? placement.transferSwitchClearanceObserved : nil)
         updated.meterAndPanelShareWall = measured.meterAndPanelShareWall
         updated.workingSpacePosition = measured.workingSpacePosition
         updated.workingSpaceYawRadians = measured.workingSpaceYawRadians

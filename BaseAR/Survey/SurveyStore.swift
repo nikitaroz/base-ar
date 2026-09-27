@@ -129,6 +129,11 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    func setPanelBusRatingAmps(_ value: Int?) {
+        session.electrical.panelBusRatingAmps = value
+        refreshAssessment()
+    }
+
     func setHasSolar(_ value: Bool?) {
         session.electrical.hasSolar = value
         refreshAssessment()

@@ -543,6 +543,10 @@ struct ScanCapture: @unchecked Sendable {
     var image: UIImage
     var meterNumber: String?
     var mainBreakerAmps: Int?
+    /// A wider panel photo taken after the lock. It replaces panel.jpg only; the lock and the amps stay as they are.
+    var photoOnly = false
+    /// Which OCR rule read `mainBreakerAmps`. Nil with no amps.
+    var mainBreakerBasis: MainBreakerBasis? = nil
 }
 
 /// One OCR read the gate kept, with where the candidate was when its frame was taken.

@@ -23,6 +23,8 @@ final class SurveyStore {
     private var meterNumberFromScanCrop = false
     /// The Live Survey's photo of the panel, from its automatic capture.
     private(set) var panelImage: UIImage?
+    /// The Live Survey's crop of the spot shown as the gas meter (gas.jpg). Nil until one is shown.
+    private(set) var gasImage: UIImage?
     /// Shown under the main-breaker value after a scan read it. Cleared when the user sets the value.
     private(set) var mainBreakerNote: String?
     /// True while the main-breaker value is the scan's read, so a redone panel drops it with the photo.
@@ -348,6 +350,19 @@ final class SurveyStore {
         }
         refreshAssessment()
     }
+
+    /// Contract stub (C0): records how the Live Survey's gas step ended.
+    func setGasStepOutcome(_ outcome: GasStepOutcome) {}
+
+    /// Contract stub (C0): Review's "Not the gas meter" drops the shown gas mark and its photo.
+    func rejectGasMark() {}
+
+    /// Contract stub (C0): writes scene.ply, the capture manifest, and survey.json without sharing, so a scan that
+    /// ends or is left keeps its files.
+    func checkpointScan() {}
+
+    /// Contract stub (C0): keeps the gas step's crop as gas.jpg.
+    func attachGasPhoto(_ image: UIImage) {}
 
     func setFootprintClearAttested(_ value: Bool) {
         session.placement.footprintClearAttested = value ? true : nil

@@ -70,6 +70,8 @@ private enum LiveStep: Equatable {
     case lookAround
     case placeBattery
     case confirm
+    /// The scan is over: the look-around is done and the battery spot is chosen in the background.
+    case finish
 
     /// The top line: the one job for this step.
     var task: String {
@@ -82,6 +84,7 @@ private enum LiveStep: Equatable {
         case .lookAround: "Step back and look around"
         case .placeBattery: "Place the battery"
         case .confirm: "Saving your scan"
+        case .finish: "Scan done"
         }
     }
 }
@@ -141,6 +144,17 @@ private enum CoachTip: String {
     case cantRecognize = "This phone can’t spot it. Review lists it"
     // Fixer: a finished scan opened again has nothing left to do but slide the battery or go back.
     case swipeBack = "Slide the battery, or swipe from the left edge to go back"
+    // Live Survey v2: the gas step is shown, not tapped or ringed; the panel read asks for the whole panel; the
+    // finished scan says so.
+    case pointAtIt = "Point your phone at it"
+    case backUpLittle = "Back up a little"
+    case notTheElectricMeter = "Not the electric meter"
+    case stepBackWholePanel = "Step back so the whole panel fits"
+    case gasSaved = "Gas meter saved"
+    case gasLooksLow = "Gas meters sit low, where a pipe comes out of the ground"
+    case gasNoneMovesOn = "None here? It moves on by itself"
+    case gasNotShown = "No gas meter shown. Review asks"
+    case scanDone = "Scan done. Swipe from the left edge to go back"
 
     var symbol: String {
         switch self {
@@ -174,6 +188,15 @@ private enum CoachTip: String {
         case .movingOn: "arrow.forward.circle.fill"
         case .cantRecognize: "exclamationmark.triangle.fill"
         case .swipeBack: "hand.draw.fill"
+        case .pointAtIt: "viewfinder"
+        case .backUpLittle: "arrow.uturn.backward.circle.fill"
+        case .notTheElectricMeter: "bolt.slash.fill"
+        case .stepBackWholePanel: "arrow.up.left.and.arrow.down.right"
+        case .gasSaved: "checkmark.seal.fill"
+        case .gasLooksLow: "arrow.down.to.line"
+        case .gasNoneMovesOn: "arrow.forward.circle"
+        case .gasNotShown: "arrow.forward.circle.fill"
+        case .scanDone: "hand.draw.fill"
         }
     }
 
@@ -181,7 +204,7 @@ private enum CoachTip: String {
     var pulses: Bool {
         switch self {
         case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned, .paused,
-             .gotBreaker, .movingOn, .swipeBack: false
+             .gotBreaker, .movingOn, .swipeBack, .gasSaved, .gasNotShown, .scanDone: false
         default: true
         }
     }
@@ -194,6 +217,8 @@ private struct ScanFeedback: Equatable {
     /// Set when "Mark it myself" should show for this target: about 12 s without a lock, or the detector is down.
     var manualTarget: EquipmentKind?
     var detector: EquipmentObservationStatus = .ok
+    /// The panel locked from a close or label-only read: for a few seconds the scan waits for a wider panel photo.
+    var widePanelPhotoPending = false
 }
 
 /// The bottom line: short copy, an SF Symbol, and a tint. The words always carry the message; the tint only adds
@@ -544,7 +569,7 @@ struct PlacementARView: View {
         case .findMeter, .readMeter, .findPanel, .readBreaker, .lookAround: .scan
         case .gas: .gas
         case .placeBattery: .battery
-        case .confirm: .finish
+        case .confirm, .finish: .finish
         }
     }
 
@@ -1011,6 +1036,8 @@ struct PlacementARView: View {
             // No ghost yet means no ground beside the meter.
             guard let assessment else { return Feedback(.pointDown) }
             return toneFeedback(assessment)
+        case .finish:
+            return Feedback(.scanDone)
         }
     }
 
@@ -1107,6 +1134,8 @@ struct PlacementARView: View {
                 store.placementController?.unconfirmBatterySpot()
             }
             .disabled(isSaving)
+        case .finish:
+            EmptyView()
         }
     }
 
@@ -1378,7 +1407,7 @@ struct PlacementARView: View {
             store.placementController?.skipLookAround()
         case .findMeter, .findPanel:
             await runFindClock(waiting)
-        case .placeBattery, .confirm:
+        case .placeBattery, .confirm, .finish:
             return
         }
     }
@@ -2056,6 +2085,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var onScanCapture: ((ScanCapture) -> Void)?
         /// A lock the capture gate made was cleared ("Not the …", Redo, Start over): its photo and read go too.
         var onScanCaptureCleared: ((EquipmentKind) -> Void)?
+        /// The survey this scan belongs to. The store sets it when it creates the controller (frame-log folder name).
+        var surveyID: UUID?
+        /// The gas step placed its mark: a crop of the frame it was shown in, for gas.jpg. The store sets this.
+        var onGasShown: ((UIImage?) -> Void)?
         private let textReader = ScanTextReader()
         private var capture = ScanCaptureState()
         private var shownCaptureHint: CoachTip?
@@ -2783,6 +2816,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             scene.confirmedMeasurements.removeAll { $0.kind == .batteryToGasMeter }
             emit()
         }
+
+        /// Contract stub (C0). Places the best background battery candidate at the end of the scan and returns true,
+        /// or records why there is none and returns false.
+        @discardableResult
+        func finalizeBatterySuggestion() -> Bool { false }
+
+        /// Contract stub (C0). Drops a finalized battery back to the background suggestion and recomputes it.
+        func resuggestBattery() {}
 
         func startAiming() {
             guard aimLink == nil else { return }

@@ -93,6 +93,12 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var workingSpaceYawRadians: Float = 0
     var draftMeasurementStart: MeasurementEndpoint?
     var draftMeasurementEnd: MeasurementEndpoint?
+    /// Half the meter enclosure's width along its wall, from the lock box. Nil until the meter locks.
+    var meterHalfWidthMeters: Float?
+    /// How the gas-meter mark was made. Nil with no mark.
+    var gasMarkSource: GasMarkSource?
+    /// The scan's own battery-spot suggestion. Nil until the scan finishes.
+    var batterySpot: BatterySpotSummary?
 
     var hasPlacedContent: Bool {
         batteryPosition != nil || meterPosition != nil || gasMeterPosition != nil || panelPosition != nil
@@ -163,6 +169,8 @@ extension PlacementMeasuring {
         // Provenance, not a measurement: copied from the scene so survey.json says how each spot was chosen.
         updated.meterLockSource = snapshot.meterPosition == nil ? nil : snapshot.meterLockSource
         updated.panelLockSource = snapshot.panelPosition == nil ? nil : snapshot.panelLockSource
+        updated.gasMeterMarkSource = snapshot.gasMeterPosition == nil ? nil : snapshot.gasMarkSource
+        updated.batterySpot = snapshot.batterySpot
         updated.batteryYawRadians = measured.batteryYawRadians
         updated.confirmedMeasurements = measured.confirmedMeasurements
         let keepWorkingSpace = !measured.lidarMeshAvailable

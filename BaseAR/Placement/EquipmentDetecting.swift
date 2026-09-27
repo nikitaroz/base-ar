@@ -68,26 +68,46 @@ extension EquipmentDetecting {
 /// The recognizer only reads that package.
 final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
     private static let log = Logger(subsystem: "BaseAR", category: "EquipmentScan")
-    private let request: VNCoreMLRequest?
+    /// Built on first use under `lock`, not in `init`. The detector is made when the Live Survey opens, on the main
+    /// thread, and the first load compiles the model for the Neural Engine (about 1.5 s on a fresh install).
+    private var request: VNCoreMLRequest?
+    private var loaded = false
+    /// Held for the whole load and every inference.
     private let lock = NSLock()
-    let loadError: String?
+    /// Its own lock, so the main thread can read it while an inference holds `lock`.
+    private let failure = OSAllocatedUnfairLock<String?>(initialState: nil)
 
-    init() {
+    /// Why the model did not load. Nil while it is still loading and once it has loaded.
+    var loadError: String? {
+        failure.withLock { $0 }
+    }
+
+    /// Loads the model now. Call it off the main thread.
+    func load() {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = loadedRequest()
+    }
+
+    /// The caller holds `lock`.
+    private func loadedRequest() -> VNCoreMLRequest? {
+        guard !loaded else { return request }
+        loaded = true
         do {
             request = try Self.makeRequest()
-            loadError = nil
         } catch {
-            request = nil
-            loadError = error.localizedDescription
+            let message = error.localizedDescription
+            failure.withLock { $0 = message }
         }
+        return request
     }
 
     func detectResult(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> EquipmentDetectionResult {
-        guard let request else {
-            return EquipmentDetectionResult(detections: [], status: .modelMissing, errorMessage: loadError)
-        }
         lock.lock()
         defer { lock.unlock() }
+        guard let request = loadedRequest() else {
+            return EquipmentDetectionResult(detections: [], status: .modelMissing, errorMessage: loadError)
+        }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
             try handler.perform([request])
@@ -259,6 +279,13 @@ final class EquipmentScanBridge: @unchecked Sendable {
     private let gate = OSAllocatedUnfairLock(initialState: Gate())
     private let latest = OSAllocatedUnfairLock<EquipmentScanFrame?>(initialState: nil)
     private let inference = DispatchQueue(label: "BaseAR.equipment-scan", qos: .userInitiated)
+
+    init() {
+        // The model loads on the inference queue, ahead of the first frame, so opening the Live Survey does not wait for it.
+        inference.async { [detector] in
+            detector.load()
+        }
+    }
 
     private struct Gate {
         var enabled = false

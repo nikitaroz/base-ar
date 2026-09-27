@@ -1,0 +1,23 @@
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_97c3c10b0c6fd3 92,160,501
+BaseAR/Info-Debug.plist
+  s_535a502178fe4f::t_7a89bfe78a5c95 1-17
+BaseAR/Placement/FrameRecorder.swift
+  s_535a502178fe4f::t_491e4f7ce17891 10-11,20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5d1cfe5042af666f08a2decb4872a0ff2dc09f14",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

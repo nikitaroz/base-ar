@@ -1,0 +1,33 @@
+BaseAR/Review/TypeSafeJevClient.swift
+  s_535a502178fe4f::t_65c569c1575c68 1-327
+BaseAR/Review/TypeSafeJevAdvisoryView.swift
+  s_535a502178fe4f::t_45d767932eb650 1-139
+.gitignore
+  s_535a502178fe4f::t_90129508e86beb 18-21
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_f1d79833d853f7 29-30,76-77,218-219,365-366
+BaseAR/Info.plist
+  s_535a502178fe4f::t_d776c10f51c714 5-6
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_be7d5b31e0d14d 24
+Config/BaseAR.xcconfig
+  s_535a502178fe4f::t_34881e79bc5a8a 4-5
+Config/Local.xcconfig.example
+  s_535a502178fe4f::t_568811cd1a9e0d 4-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0f44ba52c5311bf8ac3f2cbf8fdfe87cd6c3bc4d",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

@@ -45,6 +45,7 @@
 		F10000000000000000000002 /* LoadZoneLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000002 /* LoadZoneLookup.swift */; };
 		F10000000000000000000003 /* ERCOTPriceSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000003 /* ERCOTPriceSample.swift */; };
 		F10000000000000000000004 /* GridService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000004 /* GridService.swift */; };
+		F10000000000000000000008 /* PricingSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000008 /* PricingSource.swift */; };
 		F10000000000000000000005 /* BatteryCountDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000005 /* BatteryCountDecision.swift */; };
 		F10000000000000000000006 /* BatteryCountDecisionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000006 /* BatteryCountDecisionCard.swift */; };
 		F10000000000000000000007 /* ERCOTPricesSample.json in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000007 /* ERCOTPricesSample.json */; };
@@ -104,6 +105,7 @@
 		F20000000000000000000002 /* LoadZoneLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadZoneLookup.swift; sourceTree = "<group>"; };
 		F20000000000000000000003 /* ERCOTPriceSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ERCOTPriceSample.swift; sourceTree = "<group>"; };
 		F20000000000000000000004 /* GridService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridService.swift; sourceTree = "<group>"; };
+		F20000000000000000000008 /* PricingSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingSource.swift; sourceTree = "<group>"; };
 		F20000000000000000000005 /* BatteryCountDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCountDecision.swift; sourceTree = "<group>"; };
 		F20000000000000000000006 /* BatteryCountDecisionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCountDecisionCard.swift; sourceTree = "<group>"; };
 		F20000000000000000000007 /* ERCOTPricesSample.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ERCOTPricesSample.json; sourceTree = "<group>"; };
@@ -277,6 +279,7 @@
 				F20000000000000000000002 /* LoadZoneLookup.swift */,
 				F20000000000000000000003 /* ERCOTPriceSample.swift */,
 				F20000000000000000000004 /* GridService.swift */,
+				F20000000000000000000008 /* PricingSource.swift */,
 				F20000000000000000000005 /* BatteryCountDecision.swift */,
 				F20000000000000000000006 /* BatteryCountDecisionCard.swift */,
 				F20000000000000000000007 /* ERCOTPricesSample.json */,
@@ -411,6 +414,7 @@
 				F10000000000000000000002 /* LoadZoneLookup.swift in Sources */,
 				F10000000000000000000003 /* ERCOTPriceSample.swift in Sources */,
 				F10000000000000000000004 /* GridService.swift in Sources */,
+				F10000000000000000000008 /* PricingSource.swift in Sources */,
 				F10000000000000000000005 /* BatteryCountDecision.swift in Sources */,
 				F10000000000000000000006 /* BatteryCountDecisionCard.swift in Sources */,
 			);

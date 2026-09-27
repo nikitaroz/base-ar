@@ -33,95 +33,168 @@ struct BaseSurveyEvaluator: SurveyEvaluating {
     }
 }
 
+/// One missing item and the step that fixes it. Review's "What's missing" rows and the step bar's checkmarks
+/// both count these, so a step never shows done while Review still lists something for it.
+struct MissingItem: Sendable, Equatable {
+    enum Step: Sendable, Equatable {
+        /// Home Info (and the phone's property fix, which Home Info asks for).
+        case home
+        /// The numbers the Live Survey reads (or the user types in Electrical): meter photo and number, main breaker.
+        case electrical
+        /// Everything else the Live Survey measures, including the site check.
+        case scan
+    }
+
+    var step: Step
+    var text: String
+}
+
 enum MissingInformation {
+    /// The plain list saved in survey.json. Same items and order as `items(for:)`.
     static func list(for session: SurveySession) -> [String] {
-        var items: [String] = []
+        items(for: session).map(\.text)
+    }
+
+    static func items(for session: SurveySession) -> [MissingItem] {
+        var items: [MissingItem] = []
+        func add(_ step: MissingItem.Step, _ text: String) {
+            items.append(MissingItem(step: step, text: text))
+        }
         if session.propertyIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            items.append("Property address or identifier")
+            add(.home, "Property address or identifier")
         }
         for (value, label) in [
             (session.contactName, "Name"),
             (session.email, "Email"),
             (session.phone, "Phone")
         ] where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            items.append(label)
+            add(.home, label)
         }
         if session.propertyLocation == nil {
-            items.append("Phone location for the property: latitude, longitude, time, and horizontal accuracy")
+            add(.home, "Phone location for the property: latitude, longitude, time, and horizontal accuracy")
         }
         if session.electrical.meterPhotoFilename == nil {
-            items.append("Photo of the round electric meter")
+            add(.electrical, "Photo of the round electric meter")
         }
         let meterNumber = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if meterNumber.isEmpty {
-            items.append("Meter number")
+            add(.electrical, "Meter number")
         } else if session.electrical.meterNumberSource == .ocr {
-            items.append("Check the meter number the scan read")
+            add(.electrical, "Check the meter number the scan read")
         }
         if session.electrical.mainBreakerAmperage == nil {
-            items.append("Confirmed main breaker amperage")
+            add(.electrical, "Confirmed main breaker amperage")
         } else if session.electrical.mainBreakerAmperageSource == .ocr {
-            items.append("Check the main breaker amperage the scan read")
+            add(.electrical, "Check the main breaker amperage the scan read")
         }
         if session.electrical.needsPanelBusRating, session.electrical.panelBusRatingAmps == nil {
-            items.append("Panel bus rating from the panel label, for solar or two batteries")
+            add(.electrical, "Panel bus rating from the panel label, for solar or two batteries")
         }
         if session.homeownership == nil {
-            items.append("Whether you own or rent the home")
+            add(.home, "Whether you own or rent the home")
         }
         if session.electrical.hasSolar == nil {
-            items.append("Whether the home has solar")
+            add(.home, "Whether the home has solar")
         }
         if session.electrical.hasPortableGenerator == nil {
-            items.append("Whether the home has a portable generator")
+            add(.home, "Whether the home has a portable generator")
         }
         if session.electrical.hasStandbyGenerator == nil {
-            items.append("Whether the home has a whole-home standby generator")
+            add(.home, "Whether the home has a whole-home standby generator")
         }
         if session.electrical.hasExistingWholeHomeBattery == nil {
-            items.append("Whether the home already has a whole-home battery")
+            add(.home, "Whether the home already has a whole-home battery")
         }
         if session.electrical.plannedBatteryCount == nil {
-            items.append("Planned battery count")
+            add(.home, "Planned battery count")
         }
         if !session.gasMeterQuestionAnswered {
-            items.append("Whether there is a gas meter outside")
+            add(.home, "Whether there is a gas meter outside")
         }
-        if !session.placement.batteryPlaced {
-            items.append("AR placement of the battery")
-        } else {
+        // The site check the Live Survey runs by itself at the finish. A scan that found no clear spot is a
+        // finding (Review says so), not a missing item.
+        switch SiteCheck.of(session) {
+        case .notRun:
+            add(.scan, "Site check beside the meter (the Live Survey runs it when the look-around finishes)")
+        case .noMeter:
+            add(.scan, "Electric meter found on the scan, for the site check")
+        case .notEnoughScanned:
+            add(.scan, "More of the ground beside the meter scanned, for the site check")
+        case .noClearSpot:
+            break
+        case .found:
             if !session.placement.meterMarked {
-                items.append("Electric meter marked in AR, for the 20 ft check")
+                add(.scan, "Electric meter marked on the scan, for the 20 ft check")
             }
             if session.placement.distanceToWallFeet == nil {
-                items.append("Confirmed battery-to-wall measurement")
+                add(.scan, "Distance from the spot to the meter wall")
             }
             if !session.placement.gasMeterMarked && !session.placement.gasMeterNotPresent {
-                items.append("Gas meter marked in AR, for the 3 ft check")
-            }
-            if session.placement.footprintIsClear == nil {
-                items.append("Clearance inside the 3 ft × 3 ft planning footprint")
+                add(.scan, "Gas meter shown on the scan, for the 3 ft check")
             }
             if session.placement.clearOfWindows == nil {
-                items.append("Whether the battery is in front of a window")
+                add(.scan, "Whether the spot is in front of a window")
             }
             if session.placement.keepsEquipmentAccess == nil {
-                items.append("Whether the battery blocks the meter or panel working space")
+                add(.scan, "Whether the spot blocks the meter or panel working space")
             }
         }
         if session.placement.meterHeightFeet == nil {
-            items.append("Confirmed meter height")
+            add(.scan, "Confirmed meter height")
         }
         if session.placement.frontWorkingSpaceIsClear == nil {
-            items.append("30 × 36 in front working-space confirmation")
+            add(.scan, "30 × 36 in front working-space confirmation")
         }
         if session.placement.transferSwitchClearanceObserved == nil {
-            items.append("Space for a transfer switch beside the meter")
+            add(.scan, "Space for a transfer switch beside the meter")
         }
         if session.placement.meterAndPanelShareWall == nil {
-            items.append("Whether the meter and breaker panel share a wall")
+            add(.scan, "Whether the meter and breaker panel share a wall")
         }
         return items
+    }
+}
+
+/// The one site check the Live Survey runs by itself after the look-around: is there a clear 3 × 3 ft ground spot
+/// beside the meter that meets Base's spacing rules. Nothing is drawn or placed on the camera; this only reads what
+/// the scan saved (`batterySpot` and the spot's measured checks), so Review and "What's missing" say the same thing.
+enum SiteCheck: Equatable, Sendable {
+    /// The Live Survey has not finished the look-around yet.
+    case notRun
+    /// No meter was found, so there was nothing to check beside.
+    case noMeter
+    /// Some of the ground or wall beside the meter was never scanned: unknown, not a conflict.
+    case notEnoughScanned
+    /// Everything beside the meter was scanned and every spot was blocked: a measured conflict.
+    case noClearSpot
+    /// A spot that meets the spacing rules was found. `measured` is false when its pad rests on an answer.
+    case found(measured: Bool)
+
+    static func of(_ session: SurveySession) -> SiteCheck {
+        let placement = session.placement
+        if let spot = placement.batterySpot {
+            switch spot.status {
+            case .placed:
+                break
+            case .noMeter:
+                return .noMeter
+            case .noWall:
+                return .notEnoughScanned
+            case .allRejected:
+                let unscanned = spot.candidatesTried == 0
+                    || spot.rejections.contains { $0.hasSuffix(BatterySpotPlanner.notScanned) }
+                return unscanned ? .notEnoughScanned : .noClearSpot
+            }
+        } else if !placement.batteryPlaced {
+            return .notRun
+        }
+        if placement.footprintIsClear == false || placement.clearOfWindows == false
+            || placement.keepsEquipmentAccess == false {
+            return .noClearSpot
+        }
+        if placement.footprintIsClear == true { return .found(measured: true) }
+        if placement.footprintClearAttested == true { return .found(measured: false) }
+        return .notEnoughScanned
     }
 }
 

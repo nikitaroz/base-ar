@@ -209,14 +209,19 @@ struct ContentView: View {
     }
 
     /// Start over: the survey is deleted, and the next one begins with the wizard again.
+    /// The files are deleted after the switch to Welcome has drawn, so a large scan folder does not hold the tap.
     private func resetToWelcome() {
         path = NavigationPath()
-        store?.discardSavedSurvey()
+        let discarded = store
         store = nil
         step = .home
         hasSeenOnboarding = false
         withAnimation(.easeInOut(duration: 0.35)) {
             phase = .welcome
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            discarded?.discardSavedSurvey()
         }
     }
 
@@ -686,14 +691,21 @@ extension SurveyStore {
 
     /// Nothing is missing and every required check passed, measured or attested: Review says "Ready to share".
     var isReadyToShare: Bool {
-        session.missingInformation.isEmpty && (session.placementTone == .clear || session.placementTone == .attested)
+        missingItems.isEmpty && (session.placementTone == .clear || session.placementTone == .attested)
+            && SiteCheck.of(session) != .noClearSpot
     }
 
+    /// The same list Review's "What's missing" counts, computed fresh from the session.
+    var missingItems: [MissingItem] { MissingInformation.items(for: session) }
+
+    /// A step shows done only when Review lists nothing for it: Home Info's items for Home, and the Live Survey's
+    /// items plus the numbers it reads for Scan.
     func isComplete(_ step: SurveyStep) -> Bool {
+        let missing = missingItems
         switch step {
-        case .home: homeProgress.isComplete
-        case .scan: scanProgress.isComplete
-        case .review: isReadyToShare
+        case .home: return !missing.contains { $0.step == .home }
+        case .scan: return !missing.contains { $0.step == .electrical || $0.step == .scan }
+        case .review: return isReadyToShare
         }
     }
 
@@ -734,9 +746,10 @@ extension SurveyStore {
 
 // MARK: - Home and personal info
 
+/// Yes first, like the gas question's Yes / No / Not sure, so every Home Info answer reads in the same order.
 private enum AnswerChoice: String, CaseIterable, Identifiable {
-    case no
     case yes
+    case no
 
     var id: String { rawValue }
 

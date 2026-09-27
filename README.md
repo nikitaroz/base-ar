@@ -28,6 +28,7 @@ https://github.com/nikitaroz/base-ar/raw/main/docs/media/demo.mp4
 - [Rules engine](#rules-engine)
 - [Optional TypeSafe Jev advisory](#optional-typesafe-jev-advisory)
 - [On-device equipment detector](#on-device-equipment-detector)
+- [Debug test tools](#debug-test-tools)
 - [Site Scan Viewer (browser tool)](#site-scan-viewer-browser-tool)
 - [How this maps to Base's intake](#how-this-maps-to-bases-intake)
 - [What's stubbed](#whats-stubbed)
@@ -54,7 +55,7 @@ Splash → Welcome → **Home Info** → **Live Survey** → **Review & Export**
    - the **top** line is the current job, and it changes as each job completes;
    - the **bottom** line is live feedback with a small animated graphic ("Point at the meter", "Get closer", "Hold still", "Found the meter", …).
 
-   There is nothing to tap. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (only when Home Info said Yes or Not sure), a step back to look around, then the battery. The app suggests a spot beside the meter wall (slide it with one finger, including to the other side of the meter; turn it with two), accepts it once the phone holds still, and tints it with the live tone. Then the scan saves itself and opens Review. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, swipe right from the left edge; the scan so far is kept and you go back to the step you came from.
+   There is nothing to tap and nothing to aim. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (skipped when Home Info said No), and a step back to look around. For the gas meter you just **show** it: walk to it, point the phone at it from within about 8 ft, and hold still; the app saves the spot and a photo, and Review asks you to check the photo. There is no battery step. The app measures meter height and the shared wall when the meter and panel lock, and scores candidate battery spots along the meter wall in the background while you look around. When the look-around is done it places the best spot, saves the scan photo, and opens Review with the suggested spot and its results. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, swipe right from the left edge; the scan so far is saved and you go back to the step you came from.
 3. **Review & Export.** "What's missing" rows take you to the fix (Home Info, the Live Survey, or the Electrical screen to retake a photo or type a number). Numbers read by scan are marked "read by scan" until you confirm them here. Then property, electrical, site-measurement, and eligibility details, a `survey.json` preview, and Share (see [Export packet](#export-packet)). Start over deletes the survey.
 
 ## Feature tour
@@ -74,10 +75,11 @@ Splash → Welcome → **Home Info** → **Live Survey** → **Review & Export**
 
 ### AR placement and site scan
 - Outdoor `ARView` with horizontal and vertical plane detection, LiDAR mesh occlusion on supported devices, and plane-raycast placement on devices without LiDAR.
-- **One hands-free Live Survey** covers the meter, the breaker panel, the gas meter, a look-around, and the battery. It has no buttons: the top line names the job, the bottom line coaches, and each step advances by itself or times out into Review's "What's missing".
+- **One hands-free Live Survey** covers the meter, the breaker panel, the gas meter, and a look-around; the battery spot is chosen by itself. It has no buttons: the top line names the job, the bottom line coaches, and each step advances by itself or times out into Review's "What's missing".
+- **Strict label reading.** The main breaker is taken only from a MAIN row, the rating beside MAIN, or (on a real panel box with branch breakers in view) the largest handle. Stab, bus, maximum, and printed-label numbers are never the main breaker; a panel seen with no MAIN rating locks with no amps for you to type.
 - **On-device YOLO detector** (`EquipmentScan.mlpackage`, YOLO26n fine-tuned at 640 px) draws candidate meter / panel boxes on the camera (no text on them in release builds). A meter or panel locks through the **capture gate**: a steady, sharp, well-lit box on a wall at a plausible height whose label (the meter number, or the rating beside MAIN) reads the same twice. A meter whose label never reads twice (glare, a dirty cover, a barcode-only plate) can still lock after 20 s of searching as a plain detector lock: five agreeing wall hits at the lock score (0.45) on a sharp, exposed box, with no suggested number. The panel has no such fallback. The detector stops once both are locked. Every lock records its source (`scanCapture` / `detector`; `hold` and `tap` stay in the code, off).
-- **Battery preview**: a to-scale Base Core cabinet (30.68 in W × 35.9 in H × 22 in D) is placed on the ground; a separate 3 ft × 3 ft planning footprint and a transfer-switch working space beside the meter are drawn as overlays.
-- Live tint: the cabinet uses the same full assessment as Review: **green** only when every required rule passes on measured evidence, **teal** when every rule passes but some pass on the user's statement, **amber** if anything is unknown, **red** on an observed conflict. The two electrical rules always rest on the user's reading of a label, so a complete survey reads teal at best today.
+- **Suggested battery spot**: ten spots along the meter wall (0.9–3.6 m either side of the meter) are checked in the background: the wall must continue there, nothing may stand between the spot and the meter, the pad stays over 3.25 ft from a gas meter, and no pad rule may fail. The best one is placed at the finish as a to-scale Base Core cabinet (30.68 in W × 35.9 in H × 22 in D) with its 3 ft × 3 ft planning footprint and the transfer-switch space beside the meter. Review says where it is, or why no spot was suggested.
+- Tint: the cabinet uses the same full assessment as Review: **green** only when every required rule passes on measured evidence, **teal** when every rule passes but some pass on the user's statement, **amber** if anything is unknown, **red** on an observed conflict. The two electrical rules always rest on the user's reading of a label, so a complete survey reads teal at best today.
 - **Keyframe recorder** captures posed camera photos + depth + intrinsics during the scan: an anchor frame at every meter / panel lock, then a new frame after ~0.4 m of movement or a ~20° turn, only while the phone is steady. Up to 120 frames per scan, all rotated upright to match how the phone was held.
 
 ### Review and export
@@ -96,7 +98,7 @@ BaseAR/
 ├─ Electrical/    Camera picker · LiveLabelScanner · Vision OCR (meter number
 │                 + breaker amperage) · MeterNumberRecognizing protocol
 ├─ Placement/     PlacementARView (Live Survey + scene controller) · CaptureQuality
-│                 PlacementMeasuring · KeyframeRecorder
+│                 PlacementMeasuring · KeyframeRecorder · FrameRecorder (Debug)
 │                 EquipmentDetecting (Core ML) · BatteryCatalog / Geometry
 │                 EquipmentScan.mlpackage (YOLO26n)
 ├─ Grid/          ERCOTLoadZone · LoadZoneLookup · ERCOTPriceSample
@@ -179,6 +181,7 @@ BaseSiteSurvey-2026-09-26-2041/
 ├─ meter.jpg            The meter photo from the scan capture or the Electrical
 │                       screen (upright JPEG)
 ├─ panel.jpg            The panel photo from the scan capture, when it locked one
+├─ gas.jpg              The spot shown as the gas meter, when one was shown
 ├─ placement.jpg        AR screenshot at the time of Save
 ├─ scene.ply            ASCII LiDAR mesh — per-vertex RGB from camera,
 │                       per-face ARKit label (wall / floor / window / door /
@@ -196,12 +199,14 @@ BaseSiteSurvey-2026-09-26-2041/
 
 `scene.ply` opens directly in MeshLab, CloudCompare, or Blender. The keyframe stream is enough to re-photogrammetry the yard or run a downstream 3D pipeline.
 
+`survey.json` is `schemaVersion` 8. It adds `placement.batterySpot` (status, along-wall feet, side, candidates tried, rejections), `placement.gasMeterMarkSource`, `placement.gasStepOutcome`, `electrical.gasMeterPhotoFilename`, and `electrical.mainBreakerAmperageBasis`. The scan also writes `survey.json`, `scene.ply`, and `capture/frames.json` when it finishes or you leave it, so an unfinished run keeps its files.
+
 ## Rules engine
 
 Every eligibility check returns `pass`, `conflict`, or `unknown`, and records whether it used **measured** or **attested** evidence.
 
 - **Green**: every required check passed on measured evidence.
-- **Teal**: every required check passed, but some passes are your statements (the typed or confirmed main breaker, the panel bus rating typed from its label, "no solar and one battery", or "No gas meter").
+- **Teal**: every required check passed, but some passes are your statements (the typed or confirmed main breaker, the panel bus rating typed from its label, "no solar and one battery", "No gas meter", or a gas meter you showed on the scan, which the app cannot recognize). Teal counts as ready for Base review.
 - **Amber**: something is still unknown.
 - **Red**: a measured conflict.
 
@@ -249,6 +254,10 @@ Training data lives outside git. Web photos go in `~/base-ar-data/open-images/` 
 5. `train_equipment.py --data ~/base-ar-data/open-images/dataset/data.yaml` trains YOLO26s on the Apple GPU and writes the Core ML package into the app (`--no-export` only trains).
 
 Web photos skew European (DIN-rail boards, diaphragm gas meters). Phone frames from real houses still matter most; split them by house. Every panel example from a real site so far comes from one demo wall, so expect weaker panel detection at other houses until more site photos are added.
+
+## Debug test tools
+
+Debug builds can save the camera frames the scan saw, for detector tuning and retraining. The frame recorder (`BaseAR/Placement/FrameRecorder.swift`) is compiled out of Release and **off by default**. Turn it on in Review's "Test tools" card ("Save test frames on this phone"); it starts the next time the Live Survey opens. Frames land in Files › On My iPhone › Base Site Survey › FrameLog, which only Debug builds expose (`BaseAR/Info-Debug.plist`; Release keeps `BaseAR/Info.plist` without file sharing). Frames can show a house, a street, and people; treat them like any site photo.
 
 ## Site Scan Viewer (browser tool)
 

@@ -22,34 +22,42 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
-/// Visual coaching tips with motion graphics
-enum CoachTip: Equatable {
-    case pointDown
+/// One phone-motion tip for the top coach banner. Copy never carries a distance.
+private enum CoachTip: Equatable {
+    case findMeter
+    case findPanel
     case stepBack
-    case scoofLeft
-    case scoofRight
-    case lookUp
-    case rotatePhone
-    
+    case lookAlongWall
+    case scootLeft
+    case scootRight
+    case findGasMeter
+    case pointDown
+    case slideToWall
+
     var message: String {
         switch self {
-        case .pointDown: "Point your phone down at the ground"
+        case .findMeter: "Look up at the electric meter"
+        case .findPanel: "Now look up at the breaker box"
         case .stepBack: "Take a few steps back"
-        case .scoofLeft: "Scoot left to see more"
-        case .scoofRight: "Scoot right to see more"
-        case .lookUp: "Look up at the equipment"
-        case .rotatePhone: "Slowly turn around"
+        case .lookAlongWall: "Turn your body to look along the wall"
+        case .scootLeft: "Scoot left and look at that side"
+        case .scootRight: "Scoot right and look at that side"
+        case .findGasMeter: "Look around for a gas meter"
+        case .pointDown: "Point your phone down at the ground"
+        case .slideToWall: "Slide the battery closer to the wall"
         }
     }
-    
+
     var symbol: String {
         switch self {
+        case .findMeter, .findPanel: "iphone.gen3.radiowaves.left.and.right"
+        case .stepBack: "figure.walk.motion"
+        case .lookAlongWall: "arrow.triangle.2.circlepath"
+        case .scootLeft: "arrow.left.circle.fill"
+        case .scootRight: "arrow.right.circle.fill"
+        case .findGasMeter: "flame.circle.fill"
         case .pointDown: "arrow.down.circle.fill"
-        case .stepBack: "arrow.backward.circle.fill"
-        case .scoofLeft: "arrow.left.circle.fill"
-        case .scoofRight: "arrow.right.circle.fill"
-        case .lookUp: "arrow.up.circle.fill"
-        case .rotatePhone: "arrow.clockwise.circle.fill"
+        case .slideToWall: "hand.draw.fill"
         }
     }
 }
@@ -124,6 +132,8 @@ private struct PlacementSaveRequest {
 
 struct PlacementARView: View {
     var store: SurveyStore
+    /// Room above the coach banner for overlays a parent draws on the camera.
+    var coachTopInset: CGFloat
     var onContinue: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -143,19 +153,20 @@ struct PlacementARView: View {
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
     @State private var measureMode: Bool = true
-    @State private var step: WalkStep = .scan
+    @State private var step: WalkStep
     @State private var manualMark: PlacementTarget? = nil
-    @State private var liveReadout: (text: String?) = (nil)
-    @State private var hasStartedAR = false
-    @State private var coachTip: CoachTip? = nil
+    @State private var liveFeetText: String? = nil
+    @State private var hasStartedAR = true
 
-    init(store: SurveyStore, onContinue: @escaping () -> Void) {
+    init(store: SurveyStore, coachTopInset: CGFloat = 8, onContinue: @escaping () -> Void) {
         self.store = store
+        self.coachTopInset = coachTopInset
         self.onContinue = onContinue
         let existing = store.placementController
         _scene = State(initialValue: existing?.scene ?? PlacementSceneSnapshot())
         _guide = State(initialValue: existing?.scanGuide ?? ScanGuide())
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
+        _step = State(initialValue: existing?.hasChosenWalkStep == true ? (existing?.walkStep ?? .scan) : .scan)
     }
 
     private var isSaving: Bool { pendingSave != nil }
@@ -174,47 +185,41 @@ struct PlacementARView: View {
         return .ready
     }
     
-    /// Determines the appropriate coaching tip based on current state
-    private var suggestedCoachTip: CoachTip? {
-        // Only show tips during scan and battery placement steps
-        guard step == .scan || step == .battery else { return nil }
-        
-        // During scan: equipment detection tips
-        if step == .scan {
-            if !meterIsMarked || !panelIsMarked {
-                // Looking for equipment - suggest looking up
-                return .lookUp
+    /// One tip at a time, read from the same scan guide and wall check that gate the flow.
+    private var coachTip: CoachTip? {
+        switch step {
+        case .scan:
+            guard manualMark == nil else { return nil }
+            switch cue {
+            case .findMeter: return .findMeter
+            case .findPanel: return .findPanel
+            case .stepBack:
+                return surroundTip(steps: guide.meterSteps, left: guide.meterLookedLeft,
+                                   right: guide.meterLookedRight, along: guide.meterLookedAlong)
+            case .stepBackFromPanel:
+                return surroundTip(steps: guide.panelSteps, left: guide.panelLookedLeft,
+                                   right: guide.panelLookedRight, along: guide.panelLookedAlong)
+            case .ready: return nil
+            }
+        case .gas:
+            return scene.gasMeterPosition == nil ? .findGasMeter : nil
+        case .battery:
+            guard scene.batteryPosition != nil else { return .pointDown }
+            if let wallFeet = scene.automaticWallClearanceFeet, wallFeet > BaseRuleSet.maxWallDistanceFeet {
+                return .slideToWall
             }
             return nil
+        case .finish:
+            return nil
         }
-        
-        // During battery placement: spatial guidance from scene state
-        if step == .battery {
-            // No battery placed yet - need to find floor
-            guard scene.batteryPosition != nil else {
-                return .pointDown
-            }
-            
-            // Check wall distance
-            if let wallDist = scene.automaticWallClearanceFeet {
-                if wallDist > 2.0 {
-                    return .stepBack // Too far from wall
-                }
-            }
-            
-            // Check if we need more scanning around the area
-            if !guide.meterSurroundDone && meterIsMarked {
-                if guide.meterSteps < ScanGuide.wideLookSteps {
-                    return .stepBack
-                } else if !guide.meterLookedLeft {
-                    return .scoofLeft
-                } else if !guide.meterLookedRight {
-                    return .scoofRight
-                }
-            }
-        }
-        
-        return nil
+    }
+
+    private func surroundTip(steps: Int, left: Bool, right: Bool, along: Bool) -> CoachTip {
+        if steps < ScanGuide.wideLookSteps { return .stepBack }
+        if !along { return .lookAlongWall }
+        if !left { return .scootLeft }
+        if !right { return .scootRight }
+        return .stepBack
     }
 
     /// Center-dot lock only while the prompt is asking for one object. Stepping back should not lock a random wall.
@@ -287,12 +292,10 @@ struct PlacementARView: View {
             store.placementController?.walkStep = new
             store.placementController?.hasChosenWalkStep = true
             statusMessage = nil
-            liveReadout.text = nil
+            liveFeetText = nil
             if new != .scan {
                 manualMark = nil
             }
-            // Update coaching tip for new step
-            coachTip = suggestedCoachTip
         }
     }
 
@@ -303,14 +306,14 @@ struct PlacementARView: View {
                 if let controller = store.placementController {
                     PlacementARRepresentable(
                         controller: controller,
-                        mode: .battery,
+                        mode: placementMode,
                         measurementMode: false,
                         measurementKind: .batteryToMeter,
                         editingWorkingSpace: false,
-                        inputEnabled: false,
-                        aimEnabled: false,
-                        tapEnabled: false,
-                        scanning: true,
+                        inputEnabled: inputEnabled,
+                        aimEnabled: aimEnabled,
+                        tapEnabled: tapEnabled,
+                        scanning: isScanning,
                         holdTarget: holdTarget,
                         yawRadians: yawRadians,
                         tone: tone,
@@ -321,6 +324,7 @@ struct PlacementARView: View {
                             yawRadians = $0
                         },
                         onLiveFeet: acceptLiveFeet,
+                        onGuide: { guide = $0 },
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
@@ -332,10 +336,11 @@ struct PlacementARView: View {
                 // Top coaching banner
                 if !coachingIsActive {
                     VStack {
-                        if let tip = coachTip {
+                        if let tip = coachTip, statusMessage == nil {
                             coachingBanner(tip)
                                 .padding(.horizontal, 16)
-                                .padding(.top, 8)
+                                .padding(.top, coachTopInset)
+                                .animation(.easeInOut(duration: 0.25), value: tip)
                         }
                         Spacer()
                     }
@@ -481,7 +486,7 @@ struct PlacementARView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.green, in: RoundedRectangle(cornerRadius: 8))
+                    .background(.orange, in: RoundedRectangle(cornerRadius: 8))
                     .multilineTextAlignment(.center)
             }
             if let statusMessage {
@@ -502,7 +507,6 @@ struct PlacementARView: View {
     
     private func coachingBanner(_ tip: CoachTip) -> some View {
         HStack(spacing: 12) {
-            // Animated motion graphic
             ZStack {
                 Circle()
                     .fill(.blue.opacity(0.2))
@@ -522,6 +526,8 @@ struct PlacementARView: View {
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tip.message)
     }
 
     @ViewBuilder
@@ -632,7 +638,7 @@ struct PlacementARView: View {
 
             // Primary actions
             Button {
-                finishScan()
+                saveAndReview()
             } label: {
                 if isSaving {
                     ProgressView()
@@ -944,11 +950,12 @@ struct PlacementARView: View {
     }
 
     private var scanInstruction: String {
-        switch (meterIsMarked, panelIsMarked) {
-        case (false, false): "Point at the electric meter — it will detect automatically."
-        case (true, false): "Now point at the breaker panel."
-        case (false, true): "Point at the electric meter."
-        case (true, true): "Both found! Tap Next."
+        switch cue {
+        case .findMeter: "Point at the electric meter. It locks on by itself."
+        case .stepBack: "Got it — now the breaker box. First, back up so we can see the wall."
+        case .findPanel: "Got it — now the breaker box."
+        case .stepBackFromPanel: "Got the panel. Back up so we can see around it."
+        case .ready: "Got the panel. Tap Next."
         }
     }
 
@@ -963,15 +970,13 @@ struct PlacementARView: View {
         }
         guard snapshot != scene else { return }
         scene = snapshot
-        
-        // Update coaching tip based on new scene state
-        coachTip = suggestedCoachTip
     }
 
+    /// Kept for measurement bookkeeping only; feet are never shown on screen.
     private func acceptLiveFeet(_ feet: Double?) {
         let text = feet.map(formatFeet)
-        guard liveReadout.text != text else { return }
-        liveReadout.text = text
+        guard liveFeetText != text else { return }
+        liveFeetText = text
     }
 
     private func formatFeet(_ feet: Double) -> String {
@@ -1194,6 +1199,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onSceneChange: (PlacementSceneSnapshot) -> Void
     var onYawChange: (Float) -> Void
     var onLiveFeet: (Double?) -> Void
+    var onGuide: (ScanGuide) -> Void
     var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
@@ -1221,6 +1227,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             screenshotToken: screenshotToken,
             onSceneChange: onSceneChange,
             onYawChange: onYawChange,
+            onLiveFeet: onLiveFeet,
             onGuide: onGuide,
             onScreenshot: onScreenshot,
             onFailure: onFailure,
@@ -1254,6 +1261,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private(set) var scene = PlacementSceneSnapshot()
     var yawRadians: Float = 0
     fileprivate var walkStep: WalkStep = .scan
+    var hasChosenWalkStep = false
     fileprivate private(set) var scanGuide = ScanGuide()
     private var holdTarget: EquipmentKind?
 
@@ -1435,6 +1443,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onSceneChange: @escaping (PlacementSceneSnapshot) -> Void,
             onYawChange: @escaping (Float) -> Void,
             onLiveFeet: @escaping (Double?) -> Void,
+            onGuide: @escaping (ScanGuide) -> Void,
             onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
@@ -1462,6 +1471,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             self.onSceneChange = onSceneChange
             self.onYawChange = onYawChange
+            self.onLiveFeet = onLiveFeet
             self.onGuide = onGuide
             self.onScreenshot = onScreenshot
             self.onFailure = onFailure
@@ -2539,10 +2549,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 publishEquipmentStatus(nil)
                 return
             }
+            // The bridge does not report per-frame status yet, so silence is the normal case.
             guard let observation = equipmentBridge.latestObservation else {
-                clearTransientEquipmentObservations()
-                publishEquipmentStatus(trackingBlockedMessage == nil
-                    ? "Waiting for a fresh equipment scan. You can also mark equipment manually." : nil)
+                publishEquipmentStatus(nil)
                 return
             }
             if observation.generation != lastEquipmentGeneration {
@@ -2582,6 +2591,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             // Stepping back leaves holdTarget nil, so a box in view cannot lock a random wall.
             for detection in best.values where detection.confidence >= 0.5 && detection.kind == holdTarget {
                 let alreadyLocked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
+                let rect = Self.viewRect(for: detection.boundingBox, in: packet)
+                let landing = project(detection, in: packet)
                 let color: UIColor
                 let title: String
                 if alreadyLocked {
@@ -2627,6 +2638,31 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard let depth = depthHit(at: pixel, packet: packet, cameraOrigin: ray.origin) else { return nil }
             // Depth locates equipment; a camera-facing direction is not an observed wall normal.
             return (depth.position, depth.normal, false)
+        }
+
+        private func depthHit(
+            at pixel: CGPoint,
+            packet: EquipmentScanFrame,
+            cameraOrigin: SIMD3<Float>
+        ) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
+            guard let depth = packet.depth else { return nil }
+            return depthPatch(
+                at: pixel,
+                depth: depth,
+                imageSize: packet.imageSize,
+                intrinsics: packet.intrinsics,
+                cameraTransform: packet.cameraTransform,
+                cameraOrigin: cameraOrigin
+            )
+        }
+
+        private func relockAllowed(_ kind: EquipmentKind, point: SIMD3<Float>) -> Bool {
+            guard let ban = relockBan, ban.kind == kind else { return true }
+            guard simd_distance(ban.point, point) < 0.45 else {
+                relockBan = nil
+                return true
+            }
+            return false
         }
 
         /// Median of a depth patch. One empty neighbor no longer throws the hit away.
@@ -2731,8 +2767,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterWallHit = (sample.point, sample.normal)
                 meterWallNormalIsMeasured = sample.normalIsMeasured
                 meterGroundPosition = ground
-                // Auto-advance coaching: "Got it — now the breaker box"
-                publishEquipmentStatus("Got it — now the breaker box")
             case .breakerPanel:
                 panelWallMarker?.removeFromParent()
                 panelWallMarker = nil
@@ -2741,8 +2775,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelWallHit = (sample.point, sample.normal)
                 panelWallNormalIsMeasured = sample.normalIsMeasured
                 panelGroundPosition = ground
-                // Auto-advance coaching: "Got the panel"
-                publishEquipmentStatus("Got the panel")
             }
         }
 

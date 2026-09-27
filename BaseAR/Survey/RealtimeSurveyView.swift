@@ -1,76 +1,43 @@
 import SwiftUI
 
-/// Single unified realtime feedback screen: live AR + equipment detection + rules + Jev coaching.
-/// Replaces the verbose 9-step guided photo checklist with continuous observation.
+/// Live scan: AR find meter → panel → placement, with location and electrical status above it.
+/// TypeSafe Jev coaching stays behind the menu so the AR coach banner is the only tip on screen.
 struct RealtimeSurveyView: View {
     var store: SurveyStore
     @Environment(\.dismiss) private var dismiss
     @State private var showingJevCoaching = false
-    @State private var jevNextAction: String?
-    @State private var isLoadingJev = false
-    
+
     var body: some View {
         ZStack(alignment: .top) {
-            // Full-screen AR with embedded equipment detection and placement
-            PlacementARView(store: store) {
-                // onContinue: user can save and exit from AR controls
+            PlacementARView(store: store, coachTopInset: 48) {
+                dismiss()
             }
-            
-            // Overlay: Status chips + Jev coaching
-            VStack(spacing: 12) {
-                // Live status chips
-                HStack(spacing: 8) {
-                    statusChip(
-                        icon: "location.circle.fill",
-                        text: locationStatus,
-                        color: store.session.propertyLocation != nil ? .green : .orange
-                    )
-                    statusChip(
-                        icon: "bolt.circle.fill",
-                        text: electricalStatus,
-                        color: electricalColor
-                    )
-                    statusChip(
-                        icon: "cube.box.fill",
-                        text: placementStatus,
-                        color: placementColor
-                    )
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                
-                // Jev coaching chip (when available)
-                if let action = jevNextAction {
-                    Button {
-                        showingJevCoaching.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "sparkles")
-                            Text(action)
-                                .font(.subheadline)
-                                .lineLimit(2)
-                            Spacer()
-                            Image(systemName: showingJevCoaching ? "chevron.up" : "chevron.down")
-                        }
-                        .padding(12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .padding(.horizontal, 16)
-                }
-                
-                Spacer()
+
+            HStack(spacing: 8) {
+                statusChip(
+                    icon: "location.circle.fill",
+                    text: locationStatus,
+                    color: store.session.propertyLocation != nil ? .green : .orange
+                )
+                statusChip(
+                    icon: "bolt.circle.fill",
+                    text: electricalStatus,
+                    color: electricalColor
+                )
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
         }
         .navigationTitle("Live Scan")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("View Results") {
-                        // Navigate to minimal review screen
+                    Button("Back to survey") {
+                        dismiss()
                     }
                     Button("Get Tips") {
-                        fetchJevCoaching()
+                        showingJevCoaching = true
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -87,15 +54,8 @@ struct RealtimeSurveyView: View {
                     }
             }
         }
-        .onAppear {
-            // Fetch initial Jev coaching after a short delay
-            Task {
-                try? await Task.sleep(for: .seconds(2))
-                fetchJevCoaching()
-            }
-        }
     }
-    
+
     private func statusChip(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
@@ -109,78 +69,25 @@ struct RealtimeSurveyView: View {
         .padding(.vertical, 6)
         .background(color.gradient, in: Capsule())
     }
-    
+
     private var locationStatus: String {
-        store.session.propertyLocation != nil ? "Located" : "Tap for location"
+        store.session.propertyLocation != nil ? "Located" : "No location yet"
     }
-    
+
     private var electricalStatus: String {
         let hasMeter = store.session.electrical.meterNumber != nil
         let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
-        if hasMeter && hasBreaker { return "Scanned" }
-        if hasMeter || hasBreaker { return "Partial" }
-        return "Point at meter"
+        if hasMeter && hasBreaker { return "Numbers entered" }
+        if hasMeter || hasBreaker { return "Numbers partly entered" }
+        return "No meter numbers yet"
     }
-    
+
     private var electricalColor: Color {
         let hasMeter = store.session.electrical.meterNumber != nil
         let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
         if hasMeter && hasBreaker { return .green }
         if hasMeter || hasBreaker { return .yellow }
         return .orange
-    }
-    
-    private var placementStatus: String {
-        if store.session.placement.batteryPlaced {
-            switch store.session.placementTone {
-            case .clear: return "Looking good"
-            case .conflict: return "Check placement"
-            case .incomplete, .attested: return "Placed"
-            }
-        }
-        return "Preview battery"
-    }
-    
-    private var placementColor: Color {
-        guard store.session.placement.batteryPlaced else { return .orange }
-        switch store.session.placementTone {
-        case .clear: return .green
-        case .conflict: return .orange
-        case .incomplete, .attested: return .yellow
-        }
-    }
-    
-    private func fetchJevCoaching() {
-        guard !isLoadingJev else { return }
-        guard let apiKey = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"] else { return }
-        
-        isLoadingJev = true
-        Task {
-            defer { isLoadingJev = false }
-            do {
-                let client = TypeSafeJevClient(apiKey: apiKey)
-                let response = try await client.fetchAdvisory(session: store.session)
-                
-                // Extract next action from response
-                if let nextAction = response.nextAction {
-                    await MainActor.run {
-                        jevNextAction = nextActionDescription(nextAction)
-                    }
-                }
-            } catch {
-                // Silently degrade - coaching is optional
-                print("Jev coaching unavailable: \(error)")
-            }
-        }
-    }
-    
-    private func nextActionDescription(_ action: String) -> String {
-        switch action {
-        case "proceed": return "Looking good! Continue when ready"
-        case "need_more_photos": return "Capture additional evidence"
-        case "conflict": return "Check placement conflicts"
-        default: return "Review findings"
-        }
     }
 }
 

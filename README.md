@@ -1,35 +1,121 @@
+<div align="center">
+
+<img src="docs/media/app-icon-256.png" alt="Base Site Survey app icon" width="128" height="128" />
+
 # Base Site Survey
 
-A small iPhone app for a preliminary Base Power site survey. It collects a meter photo and the breaker amperage, previews a Base Core in AR, and writes a local review. It is not an electrical inspection or installation approval.
+A native iPhone app that turns a homeowner's phone into a preliminary Base Power site survey — collecting electrical evidence, capturing a LiDAR scan of the meter and breaker panel, previewing a Base Core battery in AR against Base's published clearances, and exporting a portable review packet.
 
-The Xcode target is still `BaseAR`. The home-screen name is **Base Site Survey**.
+Not an electrical inspection, code review, or installation approval.
 
-## First-time setup (once per Mac)
+</div>
 
-Each teammate does this once. `git pull` won't disturb any of it — signing config lives in files git ignores.
+## Demo
 
-1. **Sign in to Xcode with your Apple ID.**
-   Xcode → Settings → Accounts → **+** → Apple ID. This downloads your Apple Development certificate to the keychain. Without this step Xcode has no way to sign the app, and every build will fail with *"No Account for Team … / No profiles for …"*.
+https://github.com/nikitaroz/base-ar/raw/main/docs/media/demo.mp4
+
+> If your Markdown viewer does not render the video inline, open [`docs/media/demo.mp4`](docs/media/demo.mp4) directly.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Feature tour](#feature-tour)
+- [Architecture](#architecture)
+- [Getting started](#getting-started)
+- [Running the app](#running-the-app)
+- [Export packet](#export-packet)
+- [Rules engine](#rules-engine)
+- [On-device equipment detector](#on-device-equipment-detector)
+- [Site Scan Viewer (browser tool)](#site-scan-viewer-browser-tool)
+- [How this maps to Base's intake](#how-this-maps-to-bases-intake)
+- [What's stubbed](#whats-stubbed)
+- [References](#references)
+
+## What it does
+
+Base Power asks homeowners for a home-form of typed answers and a photo kit of the meter yard and breaker panel; engineers then judge the site. This app is a guided phone-side stand-in for that flow. It:
+
+1. Walks the homeowner through the same typed answers Base asks (with a MapKit-completed address, an optional GPS fix, and a battery-count decision helper backed by ERCOT price samples).
+2. Captures the electric meter photo, reads the meter number and main-breaker amperage with Vision OCR, and lets the user hand-correct either.
+3. Runs an outdoor AR scan that locks the meter and breaker panel using an on-device YOLO detector, reconstructs a LiDAR mesh, and records posed keyframes with depth.
+4. Previews a to-scale Base Core cabinet in AR, tinted **green / amber / red** against Base's Austin siting rules using only measured evidence.
+5. Writes `survey.json` and a `BaseSiteSurvey-<date>.zip` you can share; a companion browser viewer maps every square-foot of the scan for candidate battery placements.
+
+## Feature tour
+
+### Home & personal info
+- Name, email, phone, and address (with MapKit typeahead suggestions).
+- Own / rent, existing solar, portable generator, whole-home standby generator, existing whole-home battery — all radio-buttoned to match Base's Get Started form.
+- Planned battery count (1 or 2) with an inline **battery-count decision card**: capacity, backup hours at ~3 kW load, and annualized wholesale-arbitrage $/day derived from an embedded ERCOT price sample keyed to the property's load zone.
+- One-shot property GPS fix (lat, lon, timestamp, reported horizontal accuracy) shown on a map with an accuracy ring. Precise-location is requested; if the user only grants approximate, that's what is recorded.
+
+### Electrical capture
+- Round-meter photo capture through a native camera picker; the JPEG is baked upright (no EXIF-only rotation).
+- **Live label scanner** overlays the camera preview with a card-style highlight around the meter nameplate, aggregating Vision text observations across frames until the meter number stabilizes.
+- Photo-fallback OCR: attaching an existing library photo also runs Vision recognition on the still.
+- Typed main-breaker amperage is the value of record — OCR is a suggestion, not an override.
+
+### AR placement and site scan
+- Outdoor `ARView` with horizontal and vertical plane detection, LiDAR mesh occlusion on supported devices, and plane-raycast placement on devices without LiDAR.
+- **One guided scan** covers both the meter and the breaker panel: point at the meter, step back ~10 steps, pan left / right / along the wall; then repeat around the panel. A live progress readout gates the Done button until both looks complete.
+- **On-device YOLO detector** (`EquipmentScan.mlpackage`, YOLO26n fine-tuned at 640 px) draws candidate meter / panel boxes on the camera at ≥0.30 confidence and auto-locks at ≥0.45. Users can also lock by holding the center reticle steady, or tap to mark manually. Every lock records its source (detector / hold / tap).
+- **Battery preview**: a to-scale Base Core cabinet (30.68 in W × 35.9 in H × 22 in D) is placed on the ground; a separate 3 ft × 3 ft planning footprint and a transfer-switch working space beside the meter are drawn as overlays.
+- Live tint: the cabinet is **green** only when every required rule passes on measured evidence, **amber** if anything is unknown, **red** on an observed conflict.
+- **Keyframe recorder** captures posed camera photos + depth + intrinsics during the scan: an anchor frame at every meter / panel lock, then a new frame after ~0.4 m of movement or a ~20° turn, only while the phone is steady. Up to 120 frames per scan, all rotated upright to match how the phone was held.
+
+### Review and export
+- Reachable from the hub or automatically after placement.
+- Grouped next actions at the top; collapsible cards for property, electrical, placement, and every rule result, each with a direct edit link back to its section.
+- `Share` writes one zip — `BaseSiteSurvey-<yyyy-MM-dd-HHmm>.zip` — unpacking to a single folder with the survey, photos, LiDAR mesh, and the full keyframe stream. See [Export packet](#export-packet).
+
+## Architecture
+
+```
+BaseAR/
+├─ Survey/        SurveySession · SurveyStore (composition root) · ToneStyle
+├─ Onboarding/    Splash + 5-page onboarding
+├─ Location/      PropertyLocationProvider · MapKit AddressCompleter · map view
+├─ Electrical/    Camera picker · LiveLabelScanner · Vision OCR (meter number
+│                 + breaker amperage) · MeterNumberRecognizing protocol
+├─ Placement/     PlacementARView · PlacementMeasuring · KeyframeRecorder
+│                 EquipmentDetecting (Core ML) · BatteryCatalog / Geometry
+│                 EquipmentScan.mlpackage (YOLO26n)
+├─ Grid/          ERCOTLoadZone · LoadZoneLookup · ERCOTPriceSample
+│                 GridService · BatteryCountDecision + card
+├─ Rules/         EligibilityRule · BaseRuleSet · SurveyEvaluating
+└─ Review/        ReviewView · SurveyExporting (zip + PLY writer)
+```
+
+`SurveyStore` is the composition root. The three parallel workstreams meet at three protocols so they can be developed independently and mocked in isolation:
+
+| Workstream | Owns | Protocol |
+|---|---|---|
+| Electrical capture / OCR | Meter photo, meter number, breaker amperage | `MeterNumberRecognizing` |
+| AR placement & measurements | Battery position, meter / panel / gas anchors, distances, LiDAR mesh, keyframes | `PlacementMeasuring` |
+| Rules & review export | Rule outcomes, tone, zip / PLY export | `SurveyEvaluating` |
+
+Every capability is Apple-frameworks only: SwiftUI, ARKit, RealityKit, Vision / VisionKit, Core ML, Core Location, MapKit. No backend, no accounts, no third-party dependencies.
+
+## Getting started
+
+Each teammate does this once per Mac. `git pull` never disturbs signing — those files are gitignored.
+
+1. **Sign in to Xcode with your Apple ID.** Xcode → Settings → Accounts → **+** → Apple ID. Without this Xcode has no cert to sign with and every device build fails with *"No Account for Team … / No profiles for …"*.
 2. **Generate your local signing config.**
-   From the repo root:
    ```sh
    ./scripts/bootstrap-signing.sh
    ```
-   The script reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig`. That file is gitignored, so it is per-machine and never shared. If you'd rather set it up by hand, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
-3. **Open the project and let Xcode fetch a provisioning profile.**
-   Open `BaseAR.xcodeproj`. In *Signing & Capabilities* on the `BaseAR` target, confirm **Automatically manage signing** is checked. The first build (or Product → Clean Build Folder → Build) will pull down a profile for your bundle ID.
-4. **On your iPhone, trust the developer profile.**
-   First device install: Settings → General → VPN & Device Management → tap your developer profile → **Trust**.
-
-That's the whole loop. From this point on, `git pull` just applies code — signing is untouched.
+   Reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig` (gitignored). To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
+3. **Open `BaseAR.xcodeproj`** and confirm *Automatically manage signing* is checked on the `BaseAR` target. The first build pulls down a provisioning profile.
+4. **On device, trust the developer profile** the first time: Settings → General → VPN & Device Management → tap your profile → **Trust**.
 
 ## Running the app
 
-Select the `BaseAR` scheme and a physical iPhone running iOS 17 or later. Allow camera when a photo task starts, and allow While Using location when Site Measurements opens. Location is the phone's property fix (latitude, longitude, time, and reported horizontal accuracy) — it is not the battery position. Run outdoors, or somewhere the phone can see the ground and a wall.
+Select the `BaseAR` scheme and a physical iPhone running **iOS 17+**. Grant camera when a photo task starts, and *While Using* location when Site Measurements opens.
 
-AR placement needs a physical iPhone. The simulator can open the survey, take library photos, and reach review, but world tracking stays unavailable there.
+AR placement requires a device — the simulator can walk the survey and reach review, but world tracking stays unavailable there.
 
-For a signing-free simulator sanity build (useful in CI or a clean checkout):
+**Signing-free simulator build** (useful in CI or a clean checkout):
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
@@ -40,7 +126,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
-For a device build from the command line (after step 1 above):
+**Device build from the command line** (after step 1 above):
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
@@ -51,67 +137,96 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
   -allowProvisioningUpdates build
 ```
 
-If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either prefix with `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` (as above) or run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once.
+If `xcodebuild` says it is using Command Line Tools instead of Xcode, either prefix as above or run `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` once.
 
-## Project structure
+## Export packet
 
-- `BaseAR/Survey` — shared `SurveySession` and `SurveyStore`
-- `BaseAR/Electrical` — meter and breaker capture, live scan, and photo OCR
-- `BaseAR/Placement` — AR placement, battery size, measurements
-- `BaseAR/Rules` — `EligibilityRule`, `BaseRuleSet`, pass / conflict / unknown
-- `BaseAR/Review` — review screen and JSON export
-- `BaseAR/Location` — one-shot property location
-- `tools/viewer` — Site Scan Viewer: a browser tool that maps where a battery can go from an exported `scene.ply`. See [its README](tools/viewer/README.md).
+Sharing from the review screen writes a single zip that unzips to one folder:
 
-`SurveyStore` is the composition root. The three workstreams meet at `MeterNumberRecognizing`, `PlacementMeasuring`, and `SurveyEvaluating`.
+```
+BaseSiteSurvey-2026-09-26-2041/
+├─ survey.json          Full SurveySession (personal, electrical, placement,
+│                       rule results, tone, ERCOT grid context, device provenance)
+├─ meter.jpg            The captured meter photo (upright JPEG)
+├─ placement.jpg        AR screenshot at the time of Save
+├─ scene.ply            ASCII LiDAR mesh — per-vertex RGB from camera,
+│                       per-face ARKit label (wall / floor / window / door /
+│                       ceiling / …), and header `mark` lines for the meter,
+│                       panel, gas meter, battery, footprint, and distance bars,
+│                       coloured pass / conflict / unknown
+└─ capture/
+   ├─ frames.json       Per-frame index, timestamp, intrinsics, camera→world
+   │                    pose, exposure, orientation — in the same AR world as
+   │                    scene.ply
+   ├─ frames/NNNNNN.jpg Upright rotated JPEGs (no EXIF)
+   ├─ NNNNNN.depth.bin  Raw Float32 little-endian depth in meters
+   └─ NNNNNN.conf.bin   UInt8 depth confidence (0 low · 1 medium · 2 high)
+```
 
-## What works
+`scene.ply` opens directly in MeshLab, CloudCompare, or Blender. The keyframe stream is enough to re-photogrammetry the yard or run a downstream 3D pipeline.
 
-- One-screen welcome → three-tile hub (home and personal info, electrical, site measurements). Every tile is open, shows completion progress, and saves as you go.
-- Home and personal info stores a name, email, phone, property address or identifier, own or rent, solar, portable generator, whole-home standby generator, existing whole-home battery, planned battery count (1 or 2), and the phone’s property location fix when allowed. Those choices are radio buttons. The fix requests precise location and is shown on a map. Address suggestions come from MapKit as you type.
-- The Electrical tile photographs the round meter and asks for the meter number and the main-breaker amperage. The meter number and breaker amperage are different fields. On an iPhone, Scan highlights the meter number in a card-style frame and saves that photo. A normal photo can also fill an empty meter number. The typed value is the one that is kept.
-- Outdoor `ARView` with horizontal and vertical plane detection. One scan: point at the electric meter, step back about 10 steps, and look left, right, and along the wall. Then point at the breaker panel and do the same around that box. Done stays off until both looks finish. Clear meter or Clear panel undoes a bad lock. Live detection boxes stay on the camera. The scan hides any battery or equipment cubes already in the scene and does not drop new ones. Meter height and whether the meter and panel share a wall still come from the locks.
-- LiDAR occlusion when the phone supports it. Placement still uses plane raycasts without LiDAR. The mesh is not drawn on screen.
-- Meter height is the vertical rise from the ground under the meter to the meter face. Whether the meter and panel share a wall comes from the two wall locks. The step-back counts distance and a pan left, right, and along the wall, so the mesh can cover the area around each lock. Opening the scan does not erase a battery, gas, or working-space position already saved on the scene.
-- Battery-to-meter, wall, and gas distances, plus the 3 ft pad, working space, and transfer-switch box, still exist in the measurer. This scan does not place those boxes, so those checks stay unmeasured.
-- Review is reachable from the hub (and after placement). It leads with grouped next actions, then provides collapsible property, electrical, placement, and rule details with edit links.
-- A local `survey.json` is saved next to the photos and can be shared from the review screen. When the phone reconstructed a LiDAR mesh, that share also includes `scene.ply` (meters, AR world, camera colors, plus the battery, footprint, equipment marks, and distance bars colored pass/conflict/unknown; the distances are listed in the header comments). Open it in MeshLab, CloudCompare, or Blender.
-- Once the breaker panel locks, the scan keeps posed photos from new viewpoints (one anchor photo at each panel and meter lock, then a new frame after about 0.4 m of movement or a 20° turn, and only while the phone is steady). A small camera chip counts them. Each photo is saved upright as the phone was held; the pixels are rotated (no EXIF tag), and its depth, intrinsics, and pose are rotated to match. At most 120 frames.
-- Share sends one zip, `BaseSiteSurvey-<date>.zip`, that unzips to a single folder: `survey.json`, `meter.jpg`, `placement.jpg`, `scene.ply`, and `capture/` (`frames/NNNNNN.jpg`, raw Float32 LiDAR depth `.depth.bin`, UInt8 confidence `.conf.bin`, and `frames.json` with each camera-to-world pose and intrinsics in the same AR world as `scene.ply`).
-- The battery preview is green only when every required check passed on measured evidence. Unknown stays amber. A measured conflict turns it red.
+## Rules engine
 
-Siting numbers follow Base’s published guidance: Austin main breakers 150–200A, 200A when the home has solar or two batteries, a 3 ft × 3 ft footprint, within 20 ft of the meter, within 1 ft of the wall, at least 3 ft from a gas meter, and space for a transfer switch beside the meter.
+Every eligibility check returns `pass`, `conflict`, or `unknown`, and records whether it used **measured** or **attested** evidence. The battery preview turns green only when every required check passes on measured evidence.
 
-- https://www.basepowercompany.com/specs/core
-- https://help.basepowercompany.com/en/articles/10280705
-- https://help.basepowercompany.com/en/articles/10280641
+| # | Check | Threshold |
+|---|---|---|
+| 1 | Austin main breaker | 150–200 A |
+| 2 | Solar or two batteries | 200 A panel |
+| 3 | Battery footprint | 3 ft × 3 ft clear |
+| 4 | Distance to meter | ≤ 20 ft |
+| 5 | Distance to wall | ≤ 1 ft |
+| 6 | Not in front of a window | Wall clear where cabinet backs onto |
+| 7 | Equipment working space | 30 in × 36 in clear |
+| 8 | Distance to gas meter | ≥ 3 ft |
+| 9 | Meter height | 3–6 ft |
+| 10 | Meter & panel share a wall | Two wall locks aligned |
+| 11 | Transfer-switch space beside meter | ≈ 13 in × 3 ft × 30 in |
+| 12 | Front working space clear | 30 in × 36 in ahead of cabinet |
 
-## Equipment detector
+Austin thresholds live in `BaseAR/Rules/BaseRuleSet.swift` and follow Base's public guidance (linked below).
 
-`BaseAR/Placement/EquipmentScan.mlpackage` is YOLO26n fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). Training data lives in `training/`, which is gitignored, so each machine rebuilds it:
+## On-device equipment detector
+
+`BaseAR/Placement/EquipmentScan.mlpackage` is a YOLO26n model fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). It runs live on the AR camera stream; boxes are drawn at ≥ 0.30 confidence and auto-lock at ≥ 0.45.
+
+Training assets live in `training/` (gitignored) so each machine rebuilds:
 
 1. `uv venv --python 3.12 training/.venv && uv pip install --python training/.venv/bin/python ultralytics coremltools "git+https://github.com/ultralytics/CLIP.git"`
-2. `python3 scripts/fetch_commons.py`: about 400 CC-licensed Wikimedia Commons photos, with credits in `training/raw/sources.csv`.
-3. Put hand-labeled site photos in `training/site/`, each with a YOLO `.txt` label beside it. They are repeated three times in training, and four are held out for validation (`VAL_STEMS` in `autolabel.py`).
-4. `training/.venv/bin/python scripts/autolabel.py`: YOLOE-26l drafts meter boxes for the Commons photos. Check `training/review/` and list bad images in `training/exclude.txt`. Commons panels are skipped because they are European switchboards.
-5. `training/.venv/bin/python scripts/train_equipment.py`: trains on the Apple GPU and writes the Core ML package into the app.
+2. `python3 scripts/fetch_commons.py` — ~400 CC-licensed Wikimedia Commons photos, credits in `training/raw/sources.csv`.
+3. Drop hand-labeled site photos into `training/site/` with a YOLO `.txt` label beside each. They're triplicated in training; four are held out for validation (`VAL_STEMS` in `autolabel.py`).
+4. `training/.venv/bin/python scripts/autolabel.py` — YOLOE-26l drafts meter boxes for the Commons photos. Review `training/review/` and list bad images in `training/exclude.txt`. Commons panels are skipped (European switchboards).
+5. `training/.venv/bin/python scripts/train_equipment.py` — trains on the Apple GPU and writes the Core ML package into the app.
 
-Every panel example so far comes from one demo wall. Expect weaker panel detection at other houses until more site photos are added.
+Every panel example so far comes from one demo wall — expect weaker panel detection at other houses until more site photos are added.
 
-## How this maps to Base
+## Site Scan Viewer (browser tool)
 
-Base’s public request is two steps, researched 26 September 2026. [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. The longer comparison is in `reports/Base battery form vs app.md`.
+`tools/viewer/` is a React + Vite + Tailwind + three.js viewer that opens an exported survey zip (or loose `scene.ply` + `survey.json`) and answers one question: **where on this scan can a Base Core actually stand?**
 
-This app already asks the typed home-form questions and stores one meter photo, a typed meter number, a typed breaker amperage, and an AR screenshot. It does not yet capture Base’s wide meter-yard photos. Meter height (6 ft), working space in front of the meter and panel (about 30 × 36 in), and whether the meter and panel share a wall belong to AR placement, not the home form. The survey stays on the phone.
+- Small coloured squares cover scanned ground within 20 ft of the meter — green (candidate), red (conflict, hover for which check), amber (needs more scan), gray (why not), pale amber (surface scanned too low to confirm as a house wall).
+- Select any square to see the full 3 ft × 3 ft footprint plus both side-clearance regions with every rule result for that spot.
+- View toggles: camera-colour vs ARKit labels, 3D vs top-down, grid, floor layer, cutaway above 2.2 m, ceiling.
+- Runs entirely in the browser — nothing uploads. `npm run build` inlines everything into one ~1 MB `dist/index.html` you can email to a reviewer.
 
-## What is stubbed
+See [`tools/viewer/README.md`](tools/viewer/README.md) for details.
 
-- AR measurements are preliminary raycast estimates and still need physical-device field verification; they do not replace an installer measurement.
-- The wide photo kit (left, right, surrounding, adjacent wall, behind the fence, breaker-area context) is not captured.
-- No ERCOT data, satellite imagery, Base backend, or permitting logic. Meter and panel boxes come from an on-device model; they are not an electrical inspection.
+## How this maps to Base's intake
 
-## Next three tasks
+Base's public request is two steps (researched 2026-09-26). [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a separate [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. Full comparison: [`reports/Base battery form vs app.md`](reports/Base%20battery%20form%20vs%20app.md).
 
-1. **Electrical capture / OCR.** Done for the meter. Vision reads a meter number from a photo, and a live card-style scan can fill that field. Main-breaker amperage is typed. The typed value is still the one the user accepts.
-2. **AR placement and measurements.** Measure pad clearance into `footprintIsClear`, and transfer-switch space beside the meter into `transferSwitchClearanceObserved`. Add meter height, front working space, and whether the meter and panel share a wall. Tighten wall distance against the LiDAR mesh when it exists.
-3. **Rules and review export.** Extend `BaseRuleSet` only when those measurements exist. Keep each check at pass, conflict, or unknown, and keep green reserved for a full set of measured passes.
+This app already asks Base's typed home-form questions and stores one meter photo, a typed meter number, a typed breaker amperage, an AR screenshot, and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
+
+## What's stubbed
+
+- **AR measurements** are preliminary raycast + LiDAR estimates and still need physical-device field verification; they do not replace an installer measurement.
+- **Wide photo kit** (left, right, surrounding, adjacent wall, behind the fence, breaker-area context) is not yet captured — the keyframe recorder captures posed frames but not the specific compositions Base asks for.
+- **No Base backend, no ERCOT live feed, no permitting logic.** ERCOT prices are an embedded sample keyed to load zone; the meter and panel boxes come from an on-device model and are not an electrical inspection.
+
+## References
+
+- Base Core specs: <https://www.basepowercompany.com/specs/core>
+- Base site requirements: <https://help.basepowercompany.com/en/articles/10280705>
+- Base photo kit: <https://help.basepowercompany.com/en/articles/10280641>
+- Detailed home-form vs app comparison: [`reports/Base battery form vs app.md`](reports/Base%20battery%20form%20vs%20app.md)
+- Agent / build conventions: [`AGENTS.md`](AGENTS.md)

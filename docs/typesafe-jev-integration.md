@@ -48,13 +48,15 @@ All files are in `BaseAR/Review/`. Every live-lane file except `JevLiveCoach.swi
 
 ### Modes
 
-The mode comes from the UserDefaults key `JevLiveMode`, set for example with the launch argument `-JevLiveMode show`.
+The mode comes from the UserDefaults key `JevLiveMode`, set for example with the launch argument `-JevLiveMode off`. With no `JevLiveMode`, `-JevLiveShadow YES` picks `shadow`; otherwise the mode is `show` in every build. With no key there is no call in any mode.
 
 | Mode | Behaviour |
 |---|---|
-| `off` | No calls. The Release default. |
-| `shadow` | Ask Jev and log the answer, but show nothing. The DEBUG default. |
-| `show` | Demo toggle. Jev tips, and one-option rule tips, appear on the bottom line. |
+| `off` | No calls. |
+| `shadow` | Ask Jev and log the answer, but show nothing. For tuning (`-JevLiveShadow YES`). |
+| `show` | The default. Jev tips, and one-option rule tips, appear on the bottom line as its lowest cue (`PlacementARView.feedback(_:)`). |
+
+The Live Survey is wired (`PlacementARView`): the view builds a `JevLiveSnapshot` about once a second on the find steps and when the capture cue changes; the controller feeds `JevScanRings` from `logCapture` (every capture-gate verdict) and `absorbRead`, and resets them in `resetCapture`. Not wired yet: the appliance read (`ScanTextParser.isApplianceLabel` is private, so `.appliance` and `appliance_word` never fire) and blur risk.
 
 ### When Jev is asked
 

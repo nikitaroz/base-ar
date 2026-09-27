@@ -235,6 +235,7 @@ enum JevDeviceTip: String, Encodable, Hashable, Sendable, CaseIterable {
         "Get closer to the label": .closerToLabel,
         "Get closer": .getCloser,
         "Take a few steps back": .stepBack,
+        "Step back so the whole panel fits": .stepBack,
         "Look up at it": .lookUp,
         "Point your phone down": .pointDown,
         "Scoot left": .scootLeft,

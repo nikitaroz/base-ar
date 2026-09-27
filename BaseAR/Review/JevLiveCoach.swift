@@ -13,8 +13,8 @@ import os
 // `suggestion` stays nil, so the app behaves exactly as it does today.
 //
 // MODES. `JevLiveCoach.Mode.configured`: UserDefaults "JevLiveMode" (scheme launch argument `-JevLiveMode show`,
-// `shadow`, or `off`) wins; otherwise DEBUG builds run `.shadow` (ask and log, show nothing) and Release is `.off`.
-// `.show` is the demo toggle: Jev tips, and the one-option rule tips, appear on the bottom line.
+// `shadow`, or `off`) wins; then "JevLiveShadow" (`-JevLiveShadow YES`) asks and logs without showing; otherwise every
+// build runs `.show`: with a key, Jev tips and the one-option rule tips appear on the bottom line. No key, no call.
 //
 // 1. BUILD A SNAPSHOT about once a second and whenever the bottom line changes, from state the view already has.
 //
@@ -140,20 +140,17 @@ extension JevTransport: JevLiveSending {}
 final class JevLiveCoach {
     enum Mode: String, Sendable, CaseIterable {
         case off
-        /// Ask and log; show nothing. The default in DEBUG builds.
+        /// Ask and log; show nothing. For tuning: UserDefaults "JevLiveShadow" (`-JevLiveShadow YES`).
         case shadow
-        /// The demo toggle: Jev and one-option rule tips appear on the bottom line.
+        /// Jev and one-option rule tips appear on the bottom line. The default: the owner tried the live tips on the
+        /// phone and kept them. Still nothing without a key (`isEnabled`).
         case show
 
         static var configured: Mode {
             if let raw = UserDefaults.standard.string(forKey: "JevLiveMode"), let mode = Mode(rawValue: raw) {
                 return mode
             }
-            #if DEBUG
-            return .shadow
-            #else
-            return .off
-            #endif
+            return UserDefaults.standard.bool(forKey: "JevLiveShadow") ? .shadow : .show
         }
     }
 

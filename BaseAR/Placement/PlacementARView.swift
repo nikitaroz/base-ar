@@ -514,6 +514,9 @@ struct PlacementARView: View {
     @State private var latestFeedback: Feedback?
     @State private var pacerWait: Duration?
     @State private var pacerWake = 0
+    /// The live Jev lane (`JevLiveCoach.swift`): advisory tips for the find steps, the bottom line's lowest cue.
+    /// With no key it makes no call and shows nothing.
+    @State private var jevCoach = JevLiveCoach()
     /// Steps the scan finished that the scene itself does not show: each lock's capture and a gas meter not seen.
     /// Mirrored on the controller, so coming back to the scan does not ask again.
     @State private var passed: Set<LiveStep>
@@ -762,6 +765,7 @@ struct PlacementARView: View {
             if cameraProblem == nil {
                 controller.resume()
             }
+            jevCoach.begin(surveyID: store.session.id)
             scene = controller.scene
             refreshLiveAssessment()
             lookAround = controller.lookAround
@@ -783,13 +787,15 @@ struct PlacementARView: View {
             // never gets here, so it does not bounce straight back to Review.
             if newStep == .finish, !isLeaving {
                 autoFinishArmed = true
-                store.placementController?.finalizeBatterySuggestion()
                 commitLiveScene()
+                // The spot is planned off the main thread; the scene is saved again once it is placed.
+                store.placementController?.finalizeBatterySuggestion { _ in commitLiveScene() }
             }
         }
         .onChange(of: meterMarked) { _, marked in
             noteLockChange(.electricMeter, marked: marked)
             if marked {
+                jevCoach.noteProgress(.lock)
                 flashTip = .foundMeter
                 // The meter height and the working space are measured at the lock, so save them now.
                 commitLiveScene()
@@ -801,6 +807,7 @@ struct PlacementARView: View {
         .onChange(of: panelMarked) { _, marked in
             noteLockChange(.breakerPanel, marked: marked)
             if marked {
+                jevCoach.noteProgress(.lock)
                 flashTip = .foundPanel
                 // Same wall is measured at the panel lock.
                 commitLiveScene()
@@ -834,8 +841,20 @@ struct PlacementARView: View {
         }
         .onDisappear {
             isVisible = false
+            jevCoach.end()
             commitLiveScene()
             store.placementController?.pauseIfIdle()
+        }
+        // The Jev lane pulls a snapshot about once a second on the find steps, and when the capture cue changes.
+        .task(id: jevStep) {
+            jevCoach.update(jevSnapshot(liveAssessment))
+            guard jevStep != nil else { return }
+            while await waitFor(.seconds(1)) {
+                jevCoach.update(jevSnapshot(liveAssessment))
+            }
+        }
+        .onChange(of: scanFeedback) { _, _ in
+            if jevStep != nil { jevCoach.update(jevSnapshot(liveAssessment)) }
         }
         .onChange(of: scenePhase) { _, phase in
             // Under the number scanner or the Electrical sheet the session stays paused until that closes.
@@ -1105,8 +1124,26 @@ struct PlacementARView: View {
     }
 
     /// One bottom line at a time: an error, then tracking, then a fresh confirmation, then capture feedback, then the
-    /// detector, then the step.
+    /// detector, then a live Jev tip, then the step.
     private func feedback(_ assessment: SurveyAssessment?) -> Feedback? {
+        if let above = feedbackAboveJev(assessment) { return above }
+        // Jev is advisory and the lowest cue: every error, tracking, confirmation, capture, and detector line wins.
+        // The coach keeps a tip up 3–8 s and never re-shows it within 15 s; the pacer paces it like any other line.
+        if let tip = jevCoach.suggestion {
+            return Feedback(text: tip.text, symbol: tip.symbol, tint: .primary, pulses: true)
+        }
+        return stepFeedback(assessment)
+    }
+
+    /// The phone's own line, for the Jev snapshot. Never reads `jevCoach`, or the coach would see its own tip as a
+    /// change of the device line.
+    private func deviceFeedback(_ assessment: SurveyAssessment?) -> Feedback? {
+        feedbackAboveJev(assessment) ?? stepFeedback(assessment)
+    }
+
+    /// Everything above the Jev slot: error, status, paused, tracking, flash, capture tip, detector, gas hint. Nil
+    /// means the step line (or a Jev tip).
+    private func feedbackAboveJev(_ assessment: SurveyAssessment?) -> Feedback? {
         if let cameraProblem {
             return Feedback(
                 text: cameraProblem.guidance,
@@ -1155,7 +1192,40 @@ struct PlacementARView: View {
         if step == .gas, let hint = scanFeedback.hint, hint != .pointAtIt {
             return Feedback(hint)
         }
-        return stepFeedback(assessment)
+        return nil
+    }
+
+    // MARK: - Live Jev lane
+
+    /// The coach runs only on the find steps; any other step clears and idles it.
+    private var jevStep: JevLiveContext.Step? {
+        switch step {
+        case .findMeter: .findMeter
+        case .findPanel: .findPanel
+        default: nil
+        }
+    }
+
+    /// What the coach reads: the step, the phone's own line, the controller's bucketed scan signals, and what holds
+    /// Jev back. Built from state the view already has; nothing here changes a step, a clock, or a rule.
+    private func jevSnapshot(_ assessment: SurveyAssessment?) -> JevLiveSnapshot {
+        var holds: JevLiveHolds = []
+        if statusMessage != nil || cameraProblem != nil { holds.insert(.error) }
+        if pausedForCapture { holds.insert(.paused) }
+        if trackingMessage != nil { holds.insert(.tracking) }
+        if coachingIsActive { holds.insert(.coaching) }
+        if flashTip != nil { holds.insert(.flash) }
+        if scanFeedback.detector != .ok { holds.insert(.detectorDown) }
+        if labelBeingRead { holds.insert(.reading) }
+        if (step == .findMeter && meterMarked) || (step == .findPanel && panelMarked) { holds.insert(.locked) }
+        if !isVisible || isLeaving { holds.insert(.leaving) }
+        return JevLiveSnapshot(
+            step: jevStep,
+            deviceTip: deviceFeedback(assessment).map { JevDeviceTip(copy: $0.text) },
+            deviceTipIsCaptureHint: lockTarget != nil && scanFeedback.hint != nil,
+            scan: store.placementController?.jevScanSignals() ?? JevScanSignals(),
+            holds: holds
+        )
     }
 
     private func stepFeedback(_ assessment: SurveyAssessment?) -> Feedback? {
@@ -1486,6 +1556,7 @@ struct PlacementARView: View {
     /// The photo of a locked meter or panel arrived, so that item's "Keep it in view" step is done. The meter's crop
     /// from its lock counts. Hook any other capture callback here.
     private func noteCaptured(_ kind: EquipmentKind) {
+        jevCoach.noteProgress(.capture)
         switch kind {
         // A meter photo without its number does not finish the meter step (owner rule, 27 Sep).
         case .electricMeter: if recordedMeterNumber != nil { pass(.readMeter) }
@@ -1573,6 +1644,10 @@ struct PlacementARView: View {
     /// Review opens. The dwell pauses with the other clocks. A finished scan opened again is not armed and waits.
     private func runFinishClock() async {
         guard step == .finish, autoFinishArmed, !clockHeld else { return }
+        // The suggested spot is planned off the main thread: the dwell starts once it is on screen.
+        while store.placementController?.batteryFinalizing == true {
+            guard await waitFor(.milliseconds(100)), step == .finish, autoFinishArmed, !clockHeld else { return }
+        }
         guard await waitFor(Self.finishDwell), step == .finish, autoFinishArmed, !clockHeld else { return }
         submit()
     }
@@ -2171,6 +2246,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var batteryPlanGeneration = 0
         private var batteryPlanInFlight = false
         private var batteryPlanAt: CFTimeInterval = 0
+        /// The finish's plan is running off the main thread. The finish waits for it before it saves.
+        private(set) var batteryFinalizing = false
+        private var batteryFinalizeWaiters: [(Bool) -> Void] = []
+        /// The live Jev lane's per-packet memory (`JevScanRings`): fed by the capture gate and label reads, reset with
+        /// the capture state, read by the view about once a second. Never published at packet rate.
+        private var jevRings = JevScanRings()
         /// How far the siding sits behind the meter's lock point, from the mesh at the lock. 0 when it did not say.
         private var meterWallBehind: Float = 0
         /// The lock normal came from the mesh's wall, not the lock's own patch.
@@ -2907,27 +2988,50 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private static let batteryPlanInterval: CFTimeInterval = 1
 
         /// Places the best battery spot along the meter wall and shows it with its transfer-switch box, at the end of
-        /// the scan. Planned again here on the current scene, so the pick sees every face the look-around added.
-        /// False, with nothing placed, when there is no meter, no wall beside it, or no candidate clears; the reason is
-        /// in the snapshot's `batterySpot` and the battery checks stay unknown. A battery already placed stays.
-        @discardableResult
-        func finalizeBatterySuggestion() -> Bool {
-            if batteryConfirmed, batteryRig != nil { return true }
-            // A background plan still running is stale now.
+        /// the scan. Planned again on the current scene, so the pick sees every face the look-around added. The plan
+        /// runs off the main thread (a whole-scan re-measure on it froze the phone on 26 Sep); `batteryFinalizing`
+        /// stays true until it is applied, and `done` runs then, on the main actor, with whether a spot was placed.
+        /// Nothing is placed when there is no meter, no wall beside it, or no candidate clears; the reason is in the
+        /// snapshot's `batterySpot` and the battery checks stay unknown. A battery already placed stays.
+        func finalizeBatterySuggestion(then done: ((Bool) -> Void)? = nil) {
+            if let done { batteryFinalizeWaiters.append(done) }
+            if batteryConfirmed, batteryRig != nil {
+                finishBatteryFinalize(placed: true)
+                return
+            }
+            // A background plan still running is stale now, and so is an earlier final plan.
             batteryPlanGeneration += 1
             guard let input = batteryPlanInput(final: true) else {
                 scene.batterySpot = BatterySpotSummary(status: .noMeter)
                 emit()
-                return false
+                finishBatteryFinalize(placed: false)
+                return
             }
-            let plan = BatterySpotPlanner.plan(input, measurer: placementMeasurer)
+            batteryFinalizing = true
+            let generation = batteryPlanGeneration
+            let measurer = placementMeasurer
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let plan = BatterySpotPlanner.plan(input, measurer: measurer)
+                await self?.applyFinalBatteryPlan(plan, input: input, generation: generation)
+            }
+        }
+
+        /// The final plan is back. A plan from before a newer finalize, a resuggest, or a restart is dropped: that
+        /// newer call owns the waiters.
+        private func applyFinalBatteryPlan(_ plan: BatterySpotPlanner.Plan, input: BatterySpotPlanner.Input, generation: Int) {
+            guard generation == batteryPlanGeneration, batteryFinalizing else { return }
+            if batteryConfirmed, batteryRig != nil {
+                finishBatteryFinalize(placed: true)
+                return
+            }
             batteryPlan = plan
             logBatteryPlan(plan, final: true)
             guard let winner = plan.winner,
                   let axis = unitVector(simd_cross(SIMD3<Float>(0, 1, 0), input.outward)) else {
                 scene.batterySpot = plan.summary
                 emit()
-                return false
+                finishBatteryFinalize(placed: false)
+                return
             }
             let wall = input.meterPoint - input.outward * input.wallBehindMeters
             batterySlide = BatterySlide(
@@ -2944,14 +3048,33 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             scene.transferSwitchOnLeft = winner.offsetMeters > 0
             scene.batterySpot = plan.summary
             emitGestureEnded()
-            return true
+            finishBatteryFinalize(placed: true)
+        }
+
+        private func finishBatteryFinalize(placed: Bool) {
+            batteryFinalizing = false
+            let waiters = batteryFinalizeWaiters
+            batteryFinalizeWaiters = []
+            waiters.forEach { $0(placed) }
+        }
+
+        /// Runs `action` once the final plan in flight is applied. Nothing runs when none is in flight.
+        func afterBatteryFinalize(_ action: @escaping (Bool) -> Void) {
+            guard batteryFinalizing else { return }
+            batteryFinalizeWaiters.append(action)
+        }
+
+        /// A restart: a final plan in flight is dropped with its waiters.
+        private func cancelBatteryFinalize() {
+            batteryFinalizing = false
+            batteryFinalizeWaiters = []
         }
 
         /// A meter lock cleared or a gas mark removed: the battery chosen from them goes, and the search starts over.
-        /// A battery that was already placed at the finish is placed again right away from the new scene, so Review
-        /// keeps a spot; otherwise the next finish chooses.
+        /// A battery that was already placed at the finish (or was being placed) is placed again from the new scene,
+        /// off the main thread, so Review keeps a spot; otherwise the next finish chooses.
         func resuggestBattery() {
-            let wasPlaced = batteryConfirmed && batteryRig != nil
+            let wasPlaced = (batteryConfirmed && batteryRig != nil) || batteryFinalizing
             batteryConfirmed = false
             clearUnconfirmedBattery()
             scene.batterySpot = nil
@@ -2962,6 +3085,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 finalizeBatterySuggestion()
             } else {
                 emit()
+                finishBatteryFinalize(placed: false)
             }
         }
 
@@ -2987,7 +3111,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// From the meter lock on, on the display tick: replans off the main thread when the mesh grew by 2% or a mark
         /// or the look-around changed, at most once a second. Nothing is drawn; the finish places the pick.
         private func updateBatterySuggestion() {
-            guard !batteryConfirmed, meterWallHit != nil, !batteryPlanInFlight else { return }
+            guard !batteryConfirmed, !batteryFinalizing, meterWallHit != nil, !batteryPlanInFlight else { return }
             let now = CACurrentMediaTime()
             guard now - batteryPlanAt >= Self.batteryPlanInterval else { return }
             let key = BatteryPlanKey(
@@ -3972,6 +4096,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             batteryPlan = nil
             batteryPlanKey = nil
             batteryPlanGeneration += 1
+            cancelBatteryFinalize()
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
             relockBan = nil
@@ -4290,7 +4415,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             ) + debugHeight(landing.position, normal: landing.normal)
             if let problem {
                 capture.breakStreak()
-                logCapture(target, "fail:\(problem)", measured, packet: packet)
+                logCapture(target, "fail:\(problem)", measured, packet: packet, area: area)
                 return problem
             }
             capture.streak += 1
@@ -4310,7 +4435,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             requestRead(target, packet: packet, region: region, textFirst: candidate.textFirst, landing: landing.position,
                         landingNormal: landing.normal, candidateBox: candidate.textFirst ? nil : candidate.box,
                         source: candidate.source, now: now)
-            logCapture(target, "pass streak=\(capture.streak) reads=\(capture.records.count)", measured, packet: packet)
+            logCapture(target, "pass streak=\(capture.streak) reads=\(capture.records.count)", measured, packet: packet, area: area)
             if tryCapture() { return nil }
             switch target {
             case .electricMeter:
@@ -4452,6 +4577,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 capture.readsWithoutMain += 1
                 capture.lastReadLabelMode = read.panel?.labelMode ?? false
             }
+            noteJevRead(read, value: value)
             guard let value else {
                 if !read.textFirst || capture.textCandidate != nil { capture.emptyReads += 1 }
                 return
@@ -4751,10 +4877,65 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return min(max(meters / 2, 0.10), 0.35)
         }
 
+        /// The bucketed scan signals for the live Jev lane. No digits or label text: only counts and verdicts.
+        func jevScanSignals() -> JevScanSignals {
+            jevRings.signals()
+        }
+
+        /// One capture-gate exit for the Jev rings, from the decision `logCapture` already gets. Exits that are not a
+        /// gate verdict (IDENTIFIED, CAPTURED, WAIT-WHOLE-PANEL) and calls without a packet are skipped.
+        private func noteJevGate(_ target: EquipmentKind, _ decision: String, packet: EquipmentScanFrame?, area: CGFloat?) {
+            guard let packet, let outcome = JevGateOutcome(gateDecision: decision) else { return }
+            let targetSeen = packet.detections.contains { $0.kind == target && $0.confidence >= Self.captureMinConfidence }
+            let light: JevLiveContext.Light?
+            switch outcome {
+            case .dark: light = .dark
+            case .bright: light = .bright
+            case .blocked: light = nil
+            case .noCandidate:
+                switch packet.centerQuality.flatMap(CaptureQuality.problem) {
+                case .tooDark?: light = .dark
+                case .tooBright?: light = .bright
+                default: light = packet.centerQuality == nil ? nil : .ok
+                }
+            default: light = .ok
+            }
+            let onWall: Bool?
+            switch outcome {
+            case .notOnWall: onWall = false
+            case .noCandidate, .blocked: onWall = nil
+            default: onWall = true
+            }
+            jevRings.record(JevPacketSignal(
+                targetSeen: targetSeen,
+                outcome: outcome,
+                area: area.map(Double.init),
+                onWall: onWall,
+                light: light
+            ))
+        }
+
+        /// One label read for the Jev rings: whether it read a value and whether that value agrees with the reads in
+        /// the window. The value itself never leaves the phone.
+        private func noteJevRead(_ read: ScanTextRead, value: String?) {
+            var cues: Set<JevLiveContext.Cue> = []
+            if read.meter?.hasMeterCue == true { cues.insert(.meterWord) }
+            if read.kind == .breakerPanel, value != nil { cues.insert(.panelWord) }
+            guard let value else {
+                jevRings.record(read: .empty, cues: cues, textFirst: read.textFirst)
+                return
+            }
+            // Panel evidence ("a panel, no MAIN") agrees with anything; a number disagrees with a different number.
+            let earlier = capture.records.compactMap(\.read.value).filter { $0 != ScanTextRead.panelEvidence }
+            let agrees = value == ScanTextRead.panelEvidence || earlier.allSatisfy { $0 == value }
+            jevRings.record(read: .value(agreesWithEarlier: agrees), cues: cues, textFirst: read.textFirst)
+        }
+
         private func resetCapture() {
             let generation = capture.generation + 1
             capture = ScanCaptureState()
             capture.generation = generation
+            jevRings.reset()
             shownCaptureHint = nil
             proposedCaptureHint = nil
             proposedCaptureHintCount = 0
@@ -4808,7 +4989,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         /// The capture gate's DEBUG line. With the frame recorder on, a decision on a detector packet also saves that
         /// packet's frame, labeled with the boxes, the decision, and the gate's readings.
-        private func logCapture(_ target: EquipmentKind, _ decision: String, _ detail: String, packet: EquipmentScanFrame? = nil) {
+        private func logCapture(
+            _ target: EquipmentKind, _ decision: String, _ detail: String,
+            packet: EquipmentScanFrame? = nil, area: CGFloat? = nil
+        ) {
+            noteJevGate(target, decision, packet: packet, area: area)
             #if DEBUG
             Self.captureLog.debug("\(target.rawValue, privacy: .public) \(decision, privacy: .public) \(detail, privacy: .public)")
             guard let packet, let pixels = packet.pixels, FrameRecorder.shared.isRecording else { return }

@@ -167,7 +167,7 @@ enum BaseRuleSet {
             if let observed = session.placement.transferSwitchClearanceObserved {
                 return observed
                     ? .pass("The wall beside the meter was measured clear for a transfer switch (13 in wide, about 3 ft tall, 30 in out from the wall).")
-                    : .conflict("The wall beside the meter was measured as blocked for the transfer switch.")
+                    : .conflict(transferSwitchBlocked(session.placement))
             }
             if session.placement.transferSwitchSpaceAttested == true {
                 return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The user attested transfer-switch space beside the meter is available. Not a measurement.")
@@ -178,6 +178,14 @@ enum BaseRuleSet {
             return .unknown("Space for a transfer switch beside the meter was not measured. Without a mesh scan it stays unknown.")
         }
     )
+
+    /// The conflict with the free wall the scan measured on each blocked side, so Review can see how short it is.
+    private static func transferSwitchBlocked(_ placement: PlacementEvidence) -> String {
+        let sides = [("left", placement.transferSwitchFreeLeftInches), ("right", placement.transferSwitchFreeRightInches)]
+            .compactMap { side, inches in inches.map { "\(Int($0.rounded())) in on the \(side)" } }
+        guard !sides.isEmpty else { return "The wall beside the meter was measured as blocked for the transfer switch." }
+        return "The scan measured about \(sides.joined(separator: " and ")) of clear wall beside the meter (facing it) before something is in the way; a transfer switch needs 13 in."
+    }
 
     private static let frontWorkingSpace = EligibilityRule(
         id: "front-working-space",

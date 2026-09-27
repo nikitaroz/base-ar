@@ -153,6 +153,9 @@ struct PlacementMeasurements: Sendable, Equatable {
     var meterAndPanelShareWall: Bool?
     var workingSpacePosition: PlacementAnchor?
     var workingSpaceYawRadians: Float?
+    /// Clear wall beside the meter on each side (facing it) when the transfer-switch space is blocked, in inches.
+    var transferSwitchFreeLeftInches: Double? = nil
+    var transferSwitchFreeRightInches: Double? = nil
 }
 
 /// AR placement boundary. Turns a scene snapshot into distances the rule set can read.
@@ -199,6 +202,10 @@ extension PlacementMeasuring {
         let keepTransfer = !measured.lidarMeshAvailable && measured.meterPosition == placement.meterPosition
         updated.transferSwitchClearanceObserved = measured.transferSwitchClearanceObserved
             ?? (keepTransfer ? placement.transferSwitchClearanceObserved : nil)
+        if measured.transferSwitchClearanceObserved != nil || !keepTransfer {
+            updated.transferSwitchFreeLeftInches = measured.transferSwitchFreeLeftInches
+            updated.transferSwitchFreeRightInches = measured.transferSwitchFreeRightInches
+        }
         updated.meterAndPanelShareWall = measured.meterAndPanelShareWall
         updated.workingSpacePosition = measured.workingSpacePosition
         updated.workingSpaceYawRadians = measured.workingSpaceYawRadians
@@ -240,7 +247,8 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let access = keepsEquipmentAccess(snapshot)
         let working = workingSpaceClearance(snapshot, scan: scan)
         let transfer = transferSwitch(snapshot, scan: scan)?.clear
-        return PlacementMeasurements(
+        let free = transfer == false ? transferSwitchFreeInches(snapshot, scan: scan) : (left: nil, right: nil)
+        var measurements = PlacementMeasurements(
             batteryPlaced: snapshot.batteryPosition != nil,
             meterMarked: snapshot.meterPosition != nil,
             gasMeterMarked: snapshot.gasMeterPosition != nil,
@@ -265,6 +273,9 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             workingSpacePosition: snapshot.workingSpacePosition,
             workingSpaceYawRadians: snapshot.workingSpacePosition == nil ? nil : snapshot.workingSpaceYawRadians
         )
+        measurements.transferSwitchFreeLeftInches = free.left
+        measurements.transferSwitchFreeRightInches = free.right
+        return measurements
     }
 
     /// Live 1 ft check. Classified wall faces win; a real vertical plane is the fallback. Estimated-plane tape never counts.
@@ -547,6 +558,33 @@ struct CorePlacementMeasurer: PlacementMeasuring {
                 && abs(simd_dot(delta, frame.up)) <= frame.halfHeight
                 && abs(simd_dot(delta, frame.normal)) <= frame.halfOut
         }
+    }
+
+    /// The conflict's numbers: on each side measured blocked, how far the wall runs clear from the enclosure's edge
+    /// (where the reservation starts) to the nearest obstacle in the reservation's height and depth. The second
+    /// nearest face counts, as one stray face is noise in `isBlocked`. The demo wall had about 6 to 8 in of free wall
+    /// on each side (the return corner on the left, the panel on the right) where 13 in is needed.
+    private func transferSwitchFreeInches(_ snapshot: PlacementSceneSnapshot, scan: ScanIndex) -> (left: Double?, right: Double?) {
+        func free(onLeft: Bool) -> Double? {
+            guard let frame = transferSwitchFrame(snapshot, onLeft: onLeft),
+                  transferSwitchClearance(frame, snapshot: snapshot, scan: scan) == false else { return nil }
+            let mounting = WallFrame(point: frame.wallPoint, normal: frame.normal)
+            let edge = frame.center - frame.along * frame.halfAlong
+            let reach: Float = 1.0
+            var distances: [Float] = []
+            for sample in snapshot.classifiedMesh where occupiesVolume(sample, ignoring: mounting) {
+                let delta = sample.point - frame.center
+                guard abs(simd_dot(delta, frame.up)) <= frame.halfHeight,
+                      abs(simd_dot(delta, frame.normal)) <= frame.halfOut else { continue }
+                let along = simd_dot(sample.point - edge, frame.along)
+                if along >= 0, along <= reach { distances.append(along) }
+            }
+            distances.sort()
+            let index = max(minObstacleSamples, 1) - 1
+            let meters = distances.count > index ? distances[index] : reach
+            return Double(meters / BatteryGeometry.inchesToMeters)
+        }
+        return (free(onLeft: true), free(onLeft: false))
     }
 
     private func isBlocked(_ samples: [ClassifiedMeshSample], by occupies: (ClassifiedMeshSample) -> Bool) -> Bool {

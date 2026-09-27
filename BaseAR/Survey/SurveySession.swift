@@ -440,6 +440,10 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var keepsEquipmentAccess: Bool?
     /// Set after transfer-switch space beside the meter is actually measured. Nil stays unknown.
     var transferSwitchClearanceObserved: Bool?
+    /// With the transfer-switch space measured blocked: clear wall the scan saw on each side of the meter (facing
+    /// it), from the enclosure's edge to the nearest obstacle, in inches. Nil for a side not measured blocked.
+    var transferSwitchFreeLeftInches: Double?
+    var transferSwitchFreeRightInches: Double?
     /// User attestation (not measurement) that the 3 ft × 3 ft pad is clear. Rule engine falls back to this only if the measured field is nil.
     var footprintClearAttested: Bool?
     /// User attestation (not measurement) that space for a transfer switch beside the meter is available.

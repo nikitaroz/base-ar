@@ -2734,6 +2734,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let snapshot = makeSnapshot()
             scene = snapshot
             updateTransferBox(snapshot)
+            refreshMeterGround(from: snapshot)
             let cost = CACurrentMediaTime() - started
             lastEmitCost = cost
             let change = onSceneChange
@@ -2766,6 +2767,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             enqueueMesh(anchors, frame: session.currentFrame)
         }
 
+        nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+            upsertPlanes(from: anchors)
+            enqueueMesh(anchors, frame: session.currentFrame)
+        }
+
         /// The session delivers anchors on the main thread, and classifying and coloring a big mesh update there took
         /// 0.42 s of a 0.6 s hang (27 Sep 10:35:44). Nikita's `upsertMesh(from:frame:)` runs unchanged on a serial
         /// queue instead: one batch at a time, anchors that update meanwhile coalesced by id with the newest frame,
@@ -2779,11 +2785,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                     self.upsertMesh(from: batch.anchors, frame: batch.frame)
                 }
             }
-        }
-
-        nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-            upsertPlanes(from: anchors)
-            enqueueMesh(anchors, frame: session.currentFrame)
         }
 
         /// LiDAR mesh anchors update many times a second; skip the hop to the main actor when no wall changed.
@@ -4124,6 +4125,36 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard meterGroundPosition == nil || abs(current.y - y) > 0.02 else { return }
             meterGroundPosition = SIMD3(current.x, y, current.z)
         }
+
+        /// The meter's ground from the lock often comes from a few floor faces or ARKit's plane raycast. On 27 Sep
+        /// 10:43 it sat 8 cm under the 628-face floor median, so the working space's floor seam counted as an obstacle
+        /// in its one clear slide and read red; `refineLockGeometry` never got the faces (panel lock) or the chance
+        /// (the look-around never ended). While the mesh grows the ground is read again off the main thread, about
+        /// every 2 s, by the same rule: 20+ floor faces, a move over 2 cm.
+        private func refreshMeterGround(from snapshot: PlacementSceneSnapshot) {
+            guard !groundRefreshInFlight, let wall = meterWallHit else { return }
+            let now = CACurrentMediaTime()
+            guard now - groundRefreshAt >= Self.groundRefreshInterval else { return }
+            groundRefreshAt = now
+            groundRefreshInFlight = true
+            let samples = snapshot.classifiedMesh
+            Task { [weak self] in
+                let y = await Task.detached(priority: .utility) {
+                    CorePlacementMeasurer.floorMedianY(samples, near: wall.position, outward: wall.normal, minSamples: 20)
+                }.value
+                guard let self else { return }
+                self.groundRefreshInFlight = false
+                guard let y, let current = self.meterWallHit, current.position == wall.position else { return }
+                let ground = self.meterGroundPosition ?? SIMD3(wall.position.x, y, wall.position.z)
+                guard self.meterGroundPosition == nil || abs(ground.y - y) > 0.02 else { return }
+                self.meterGroundPosition = SIMD3(ground.x, y, ground.z)
+                self.emit()
+            }
+        }
+
+        private var groundRefreshAt: CFTimeInterval = 0
+        private var groundRefreshInFlight = false
+        private static let groundRefreshInterval: CFTimeInterval = 2
 
         /// The locked meter cut from the same frame as its box, for a fallback meter photo. From 1–3 m the number is
         /// seldom legible, so the store keeps it only when the survey has no meter photo; the number scan up close is

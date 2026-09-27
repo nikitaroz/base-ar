@@ -56,7 +56,7 @@ The scan picks the battery spot by itself; nobody places it. `PlacementSceneCont
 
 | Check | Measured when | Final at |
 |---|---|---|
-| `meter-height` | At the meter lock (floor median under the meter, then the plane raycast). Refined at the panel lock and at the end of the look-around if the floor median moved more than 2 cm with 20 or more floor samples | finish |
+| `meter-height` | At the meter lock (floor median under the meter, then the plane raycast). Refined at the panel lock, at the end of the look-around, and about every 2 s while the mesh grows (off the main thread) if the floor median moved more than 2 cm with 20 or more floor samples | finish |
 | `meter-panel-same-wall` | At the panel lock, from snapped wall normals | finish |
 | `front-working-space` | From the meter lock. The working-space slab comes from the meter wall with no battery (the entity is never drawn). Recomputed on each emit | finish |
 | `transfer-switch-space` | From the meter lock. Independent of the battery | finish |
@@ -108,6 +108,7 @@ New optional fields; older files still decode.
 - `placement.batterySpot`: `status` (`placed`, `noMeter`, `noWall`, `allRejected`), `source` (`autoSuggested`), `alongWallFeet` (positive toward the panel), `towardPanel`, `candidatesTried`, `rejections`.
 - `electrical.gasMeterPhotoFilename`: `gas.jpg`, which is also in the export zip.
 - `electrical.mainBreakerAmperageBasis`: `mainRow`, `mainNeighbor`, or `largestHandle`.
+- `placement.transferSwitchFreeLeftInches`, `placement.transferSwitchFreeRightInches`: with the transfer-switch space measured blocked, the clear wall on that side (facing the meter) from the enclosure's edge to the nearest obstacle. Nil for a side not measured blocked. The conflict's explanation quotes them.
 
 `SurveyStore.checkpointScan()` runs at the finish and on the left-edge exit. It writes `scene.ply` through the existing `writePointCloud()`, finalizes the keyframes (idempotent) so an unfinished run keeps `capture/frames.json`, and writes `survey.json`. Share does not overwrite `scene.ply` when there is no exportable mesh or when the live battery is more than 5 cm from `placement.batteryPosition`. It only calls Nikita's functions and changes no format; **it is awaiting Nikita's review.**
 

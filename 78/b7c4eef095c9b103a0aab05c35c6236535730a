@@ -1,0 +1,29 @@
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_a62ff6695b60a3 148
+  s_535a502178fe4f::t_4f7feaa3e03462 507-508,583,590-591,607,614-615,636-644
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_7885ca40459ba2 60-99,2765
+  s_535a502178fe4f::t_76cdc681e1e4c9 43-59
+  s_535a502178fe4f::t_a89dbdd9cc4485 2270-2272
+  s_535a502178fe4f::t_e06b0574cc4cca 2831-2832
+  s_535a502178fe4f::t_d26518c803d18c 2745-2760,2836
+  s_535a502178fe4f::t_216d1bc3626d62 2787,2833-2835,2837
+BaseAR/ContentView.swift
+  s_535a502178fe4f::t_5296a3fa9013cf 94-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "78b7c4eef095c9b103a0aab05c35c6236535730a",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

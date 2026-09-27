@@ -1,0 +1,31 @@
+docs/context/README.md
+  s_535a502178fe4f::t_0d7a02c76cc54f 1-67
+docs/context/electrical-equipment-guide.md
+  s_535a502178fe4f::t_ea061b589c87b4 1-303
+docs/context/repo-status-2026-09-26.md
+  s_535a502178fe4f::t_0e85d2c76e624a 1-178
+docs/context/scan-coverage-design.md
+  s_535a502178fe4f::t_117c199432a51e 1-323
+docs/context/sources/electrical-path-explainer.md
+  s_535a502178fe4f::t_4682c5dd97a31c 1-50
+docs/context/sources/repo-review-2026-09-26.md
+  s_535a502178fe4f::t_daab4afa07ffbc 1-71
+docs/context/sources/scan-completeness-research.md
+  s_535a502178fe4f::t_c9886bf49b5c94 1-69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9eb3f040817b8b010208070816d936ec1fe267d8",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

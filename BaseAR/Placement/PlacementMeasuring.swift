@@ -261,8 +261,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Drawn on the side the check used: the chosen side, or the other side when only that one is clear.
     func transferSwitchBox(in snapshot: PlacementSceneSnapshot) -> TransferSwitchBox? {
-        guard let frame = transferSwitch(snapshot, scan: ScanIndex.of(snapshot))?.frame else { return nil }
-        return TransferSwitchBox(
+        transferSwitchBoxAndClearance(in: snapshot)?.box
+    }
+
+    /// The box and `transferSwitchClearanceObserved` from one pass, for the live box and its color. A full
+    /// `measure` for that one field ran every mesh check again on the main thread on each redraw.
+    func transferSwitchBoxAndClearance(in snapshot: PlacementSceneSnapshot) -> (box: TransferSwitchBox, clear: Bool?)? {
+        guard let transfer = transferSwitch(snapshot, scan: ScanIndex.of(snapshot)) else { return nil }
+        let frame = transfer.frame
+        let box = TransferSwitchBox(
             center: frame.center,
             wallPoint: frame.wallPoint,
             along: frame.along,
@@ -272,6 +279,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             heightMeters: frame.halfHeight * 2,
             outMeters: frame.halfOut * 2
         )
+        return (box, transfer.clear)
     }
 
     private func confirmed(_ kind: PlacementMeasurementKind, in snapshot: PlacementSceneSnapshot) -> ConfirmedPlacementMeasurement? {

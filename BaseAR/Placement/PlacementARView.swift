@@ -521,6 +521,9 @@ struct PlacementARView: View {
     @State private var finishWaitsForSlide = false
     /// Camera access is off or the AR session failed. Holds the step clocks and keeps its message up.
     @State private var cameraProblem: CameraProblem?
+    /// Worked out once per new scene or answer (`refreshLiveAssessment`), not in `body`: the body also runs for the
+    /// photo count, tracking, and feedback, and each assessment measures the LiDAR scan again on the main thread.
+    @State private var liveAssessment: SurveyAssessment?
 
     private static let breakerChips = [100, 125, 150, 200]
     /// Touches that start inside this leading strip leave the scan; pans anywhere else reach the AR view.
@@ -696,13 +699,12 @@ struct PlacementARView: View {
         return preview
     }
 
-    /// The full survey assessment with the ghost or placed battery applied: every required rule, including the
-    /// breaker and panel-rating ones, so the preview is green only when the survey itself would be.
+    /// `liveAssessment` is the full survey assessment with the ghost or placed battery applied: every required rule,
+    /// including the breaker and panel-rating ones, so the preview is green only when the survey itself would be.
     /// Nil with no battery on screen, since there is nothing to tint.
-    private var liveAssessment: SurveyAssessment? {
+    private func refreshLiveAssessment() {
         let preview = guidedScene
-        guard preview.batteryPosition != nil else { return nil }
-        return store.assessment(applying: preview)
+        liveAssessment = preview.batteryPosition == nil ? nil : store.assessment(applying: preview)
     }
 
     /// The step clocks stop while the user cannot see the two lines or the scan is not running.
@@ -758,6 +760,7 @@ struct PlacementARView: View {
                 controller.resume()
             }
             scene = controller.scene
+            refreshLiveAssessment()
             lookAround = controller.lookAround
             yawRadians = controller.yawRadians
             // The controller reports tracking only on change, so a view pushed again picks up the current state.
@@ -790,6 +793,10 @@ struct PlacementARView: View {
             } else {
                 unpass(.readBreaker)
             }
+        }
+        .onChange(of: store.session) { _, _ in
+            // An answer, a typed number, or a scan read changes the rules as much as the scene does.
+            refreshLiveAssessment()
         }
         .onChange(of: scene.gasMeterPosition != nil) { _, marked in
             if marked { flashTip = .gasMarked }
@@ -919,7 +926,7 @@ struct PlacementARView: View {
     }
 
     private var arScreen: some View {
-        // One assessment per update: it tints the battery and writes the tone line.
+        // One assessment per scene or answer change: it tints the battery and writes the tone line.
         let assessment = liveAssessment
         return ZStack {
             if let controller = store.placementController {
@@ -1776,6 +1783,7 @@ struct PlacementARView: View {
         current.verticalPlanes = []
         guard incoming != current else { return }
         scene = snapshot
+        refreshLiveAssessment()
     }
 
     private func restart() {
@@ -1801,6 +1809,9 @@ struct PlacementARView: View {
     private func submit(withoutBattery: Bool = false) {
         guard !isLeaving, step == .confirm || (withoutBattery && step == .placeBattery) else { return }
         commitLiveScene()
+        // Pause now, not in `onDisappear` after the transition: mesh updates on the main thread would keep
+        // arriving while Review opens and writes the export. Coming back resumes the session in `onAppear`.
+        store.placementController?.pauseIfIdle()
         statusMessage = nil
         onContinue()
     }
@@ -2189,6 +2200,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var rotationStartYaw: Float = 0
         var appliedTone: PlacementTone?
         var lastPlaneEmit = Date.distantPast
+        /// Main-thread seconds the last `emit` took, with the view's handling of the new scene. Paces `emitPlanesIfNeeded`.
+        private var lastEmitCost: CFTimeInterval = 0
         var aimLink: CADisplayLink?
         var reticle: ModelEntity?
         var liveLine: ModelEntity?
@@ -2294,7 +2307,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onScanFeedback = onScanFeedback
             self.onMeterCrop = onMeterCrop
             hideWorldBoxesIfNeeded()
-            let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
             updateDetectorGate()
             updateKeyframeGate()
@@ -2308,7 +2320,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onFailure = onFailure
             self.onTrackingStatus = onTrackingStatus
             self.onCoachingActiveChange = onCoachingActiveChange
-            if startedScanning, !reportedScanLoadError, let loadError = equipmentBridge.detector.loadError {
+            // The model loads in the background, so a failure can show up on a later update, not only the first.
+            if scanning, !reportedScanLoadError, let loadError = equipmentBridge.detector.loadError {
                 reportedScanLoadError = true
                 // The Live Survey has nothing to tap, so say what happens instead: the steps move on and Review lists them.
                 var message = "This phone can’t spot the meter or panel. Review lists them."
@@ -2519,13 +2532,19 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func emit() {
+            let started = CACurrentMediaTime()
             placeDerivedWorkingSpace()
             let snapshot = makeSnapshot()
             scene = snapshot
             updateTransferBox(snapshot)
+            let cost = CACurrentMediaTime() - started
+            lastEmitCost = cost
             let change = onSceneChange
             Task { @MainActor in
+                let delivered = CACurrentMediaTime()
                 change?(snapshot)
+                // The view works out its live assessment for the new scene here, so that counts toward the redraw.
+                self.lastEmitCost = cost + (CACurrentMediaTime() - delivered)
             }
         }
 
@@ -2633,7 +2652,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func emitPlanesIfNeeded() {
             guard batteryRig != nil else { return }
             let now = Date()
-            guard now.timeIntervalSince(lastPlaneEmit) > 0.4 else { return }
+            // A redraw slower than the throttle would start the next one as soon as it ends, and the main thread
+            // would never get free while the mesh keeps updating. Leave at least twice its cost idle.
+            guard now.timeIntervalSince(lastPlaneEmit) > max(0.4, 3 * lastEmitCost) else { return }
             lastPlaneEmit = now
             emit()
         }
@@ -4842,7 +4863,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         private func updateTransferBox(_ snapshot: PlacementSceneSnapshot) {
             let show = batteryRig != nil && (walkStep == .battery || walkStep == .finish)
-            guard show, let box = placementMeasurer.transferSwitchBox(in: snapshot) else {
+            // One pass gives the box and its clearance. A full `measure` for the color was most of each redraw.
+            guard show, let (box, clear) = placementMeasurer.transferSwitchBoxAndClearance(in: snapshot) else {
                 transferBox?.isEnabled = false
                 return
             }
@@ -4865,7 +4887,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             transferBox.orientation = simd_quatf(simd_float3x3(columns: (along, box.up, box.normal)))
             // Same pass / conflict / unknown colors as the battery tone.
             let color: UIColor
-            switch placementMeasurer.measure(snapshot).transferSwitchClearanceObserved {
+            switch clear {
             case true: color = ToneStyle.uiColor(.clear)
             case false: color = ToneStyle.uiColor(.conflict)
             case nil: color = ToneStyle.uiColor(.incomplete)

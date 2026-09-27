@@ -63,7 +63,8 @@ enum BaseRuleSet {
                     return .unknown("\(reason). Main-breaker amperage is not the panel bus rating; confirm the panel's bus rating from the panel label.")
                 }
                 if busRating >= panelAmpsForSolarOrTwoBatteries {
-                    return .pass("\(reason) and the panel label's bus rating is \(busRating)A, which meets the 200A requirement.")
+                    // Typed from the panel label: the user's reading, not a measurement.
+                    return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "\(reason) and the bus rating typed from the panel label is \(busRating)A, which meets the 200A requirement.")
                 }
                 return .conflict("\(reason) and the panel label's bus rating is \(busRating)A. This case needs a 200A panel.")
             }
@@ -71,7 +72,7 @@ enum BaseRuleSet {
                 return .pass("Solar was reported as not present and fewer than two batteries are planned, so the 200A panel requirement is not triggered.")
             }
             if let busRating, busRating >= panelAmpsForSolarOrTwoBatteries {
-                return .pass("The panel label's bus rating is \(busRating)A, which meets the 200A requirement whether or not solar or two batteries apply.")
+                return RuleOutcome(status: .pass, usedMeasuredEvidence: false, explanation: "The bus rating typed from the panel label is \(busRating)A, which meets the 200A requirement whether or not solar or two batteries apply.")
             }
             return .unknown("Solar or planned battery count is still missing, so the 200A panel requirement cannot be decided. Main-breaker amperage is not the panel bus rating.")
         }

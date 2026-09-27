@@ -646,8 +646,9 @@ struct PlacementARView: View {
     /// With no spot yet by then, the bottom line says where gas meters sit (Yes) or that the step moves on by itself.
     private static let gasNudgeDelay: Duration = .seconds(10)
     /// A tight side yard, or indoors, can keep the user from stepping back about 10 steps, and a wall can fail to fill
-    /// in: the look-around ends by then, and the site check judges what was covered (never a conflict). Tune on device.
-    private static let lookAroundWait: Duration = .seconds(60)
+    /// in: the look-around ends after this much time on the step with the lines up (it adds up across the clock's
+    /// restarts and visits), and the site check judges what was covered (never a conflict). Tune on device.
+    private static let lookAroundWait: Duration = .seconds(120)
     /// "Scanned" stays on screen this long before the scan saves.
     private static let finishDwell: Duration = .seconds(1.5)
     /// The finish waits at most this long for the site check before it saves; a check still running leaves the
@@ -1680,10 +1681,15 @@ struct PlacementARView: View {
         case .lookAround:
             // The look-around is measured from the meter wall, and the site check needs the meter. Without a meter
             // there is nothing to look around from, so it is skipped at once.
-            if meterMarked {
+            if meterMarked, let controller = store.placementController {
                 // The site check still judges what was covered, and an unfinished look-around never makes it a
-                // conflict, so moving on claims nothing.
-                guard await waitFor(Self.lookAroundWait), step == .lookAround else { return }
+                // conflict, so moving on claims nothing. The time adds up on the controller: a plain sleep started
+                // over each time the coaching overlay came and went, so on a wall that ends in a corner (coverage
+                // never complete, 27 Sep 10:43) the look-around never ended and the site check never ran.
+                while controller.lookAroundElapsed < Self.lookAroundWait {
+                    guard await waitFor(.milliseconds(500)), step == .lookAround else { return }
+                    controller.lookAroundElapsed += .milliseconds(500)
+                }
             }
             store.placementController?.skipLookAround()
         case .findMeter:
@@ -1762,6 +1768,14 @@ struct PlacementARView: View {
     private func leave(slidingOut width: CGFloat? = nil) {
         guard !isLeaving else { return }
         isLeaving = true
+        // Left during the look-around: the site check runs on what was scanned, and the scan is saved again with its
+        // answer when it lands, so Review does not wait for a look-around that never ended.
+        if step == .lookAround, let controller = store.placementController, controller.startProvisionalSiteCheck() {
+            controller.afterSiteCheck { _ in
+                commitLiveScene()
+                store.checkpointScan()
+            }
+        }
         commitLiveScene()
         store.placementController?.pauseIfIdle()
         guard let width else {
@@ -2250,7 +2264,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var panelWallHit: (position: SIMD3<Float>, normal: SIMD3<Float>)?
         var gasMarker: ModelEntity?
         var gasPoint: SIMD3<Float>?
-        fileprivate var lookAround = LookAround()
+        fileprivate var lookAround = LookAround() {
+            didSet { if lookAround == LookAround() { lookAroundElapsed = .zero } }
+        }
+        /// Time on the look-around step with the two lines up, kept across the step clock's restarts (the coaching
+        /// overlay or a capture pause restarts it) and across visits, so its limit is real. Starts over with the look-around.
+        var lookAroundElapsed: Duration = .zero
         private var onLookAround: ((LookAround) -> Void)?
         private var requestedLock: EquipmentKind?
         var planes: [UUID: PlaneSample] = [:]
@@ -2329,6 +2348,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var siteCheckTask: Task<Void, Never>?
         private var siteCheckGeneration = 0
         private var siteCheckWaiters: [(Bool) -> Void] = []
+        /// The site check ran before the look-around was done (`startProvisionalSiteCheck`).
+        private var siteCheckProvisional = false
         /// The Live Survey is on its look-around step: coverage is measured off the main thread about once a second.
         private var lookingAround = false
         private var coverageInFlight = false
@@ -3096,6 +3117,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// A check already run or running for this scene is left alone; `invalidateSiteCheck` starts over.
         func startSiteCheck() {
             guard siteCheckTask == nil, scene.batterySpot == nil || scene.batterySpot?.status == .noMeter else { return }
+            siteCheckProvisional = false
             siteCheckGeneration += 1
             let generation = siteCheckGeneration
             guard let input = siteCheckInput() else {
@@ -3110,6 +3132,18 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 }.value
                 self?.acceptSiteCheck(plan, generation: generation)
             }
+        }
+
+        /// The Live Survey is left during the look-around: the site check runs now on what was scanned, so Review has
+        /// an answer (found, blocked only with full coverage, else not enough scanned) instead of waiting for a
+        /// look-around that may never end (27 Sep 10:43: left after 40 s, four visits, no answer). The look-around's
+        /// own end runs it again. False when nothing started.
+        func startProvisionalSiteCheck() -> Bool {
+            guard !lookAround.done, meterWallHit != nil else { return false }
+            startSiteCheck()
+            guard siteCheckTask != nil else { return false }
+            siteCheckProvisional = true
+            return true
         }
 
         /// Runs `action` once the running site check lands (true when it found a spot). Nothing runs when no check is
@@ -4220,6 +4254,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func lookAroundFinished() {
             refineLockGeometry()
             emit()
+            // A check run when the user left mid look-around judged less of the mesh: ask again on this one.
+            if siteCheckProvisional {
+                siteCheckProvisional = false
+                invalidateSiteCheck()
+            }
             startSiteCheck()
         }
 

@@ -368,12 +368,12 @@ final class SurveyStore {
 
     /// "Start over" on the scan: the scan's evidence goes with it, so Review and the hub cannot show marks or a meter
     /// height the scene no longer has. The live scene is not committed until it has content again.
-    /// Kept: the homeowner's no-gas answer (the scan screen decides that one) and whether the phone has LiDAR.
+    /// Kept: whether the phone has LiDAR. The no-gas statement comes from the Home Info answer again: a gas mark that
+    /// won over a "No" is gone now, so "No" must stand on its own or the gas check stays unknown with the step skipped.
     func resetPlacementEvidence() {
-        let gasMeterNotPresent = session.placement.gasMeterNotPresent
         let lidarMeshAvailable = session.placement.lidarMeshAvailable
         session.placement = PlacementEvidence()
-        session.placement.gasMeterNotPresent = gasMeterNotPresent
+        session.placement.gasMeterNotPresent = session.electrical.gasMeterAnswer == .no
         session.placement.lidarMeshAvailable = lidarMeshAvailable
         refreshAssessment()
     }

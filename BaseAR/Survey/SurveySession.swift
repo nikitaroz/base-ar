@@ -7,7 +7,8 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     /// 7: adds optional `gridContext` — ERCOT load zone + sample prices captured at survey time.
     /// 8: adds optional `placement.gasMeterMarkSource`, `placement.gasStepOutcome`, `placement.batterySpot`,
     /// `electrical.gasMeterPhotoFilename`, and `electrical.mainBreakerAmperageBasis`.
-    var schemaVersion: Int = 8
+    /// 9: adds optional `photoKit` — which saved scan frame best matches each of Base's nine photos.
+    var schemaVersion: Int = SurveySession.currentSchemaVersion
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -34,6 +35,11 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     var buildNumber: String
     var iosVersion: String
     var deviceModel: String
+    /// Base's nine-photo kit, tagged to the scan's saved frames when the survey is written (v9, optional).
+    /// Nil until the first write, and for older files.
+    var photoKit: PhotoKit?
+
+    static let currentSchemaVersion = 9
 
     static let locationDisclaimer = "Latitude, longitude, timestamp, and horizontal accuracy are the phone's reported property location, not the battery position."
     static let prototypeDisclaimer = "Preliminary survey only. This is not an electrical inspection, a code review, or installation approval."
@@ -63,6 +69,133 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
             deviceModel: DeviceProvenance.deviceModel()
         )
     }
+}
+
+extension SurveySession {
+    /// False for a survey nobody has answered or scanned yet. Launch cleanup deletes those, and autosave skips them.
+    var hasUserContent: Bool {
+        let typed = [propertyIdentifier, contactName, email, phone].contains {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return typed
+            || homeownership != nil
+            || propertyLocation != nil
+            || electrical != ElectricalEvidence()
+            || placement.meterMarked
+            || placement.panelMarked
+            || placement.gasMeterMarked
+            || placement.batteryPlaced
+            || placement.snapshotTimestamp != nil
+            || placement.pointCloudFilename != nil
+            || placement.captureManifestPath != nil
+    }
+}
+
+/// Base's photo list (help article 10280641), matched to what the survey already holds: meter.jpg and panel.jpg,
+/// and the scan's posed keyframes in capture/frames.json. A tag is the app's best guess from camera poses; it is
+/// a prototype aid for Base's engineers, never a statement that the photo is good enough.
+struct PhotoKit: Codable, Sendable, Equatable {
+    /// One entry per Base shot, keyed by `BaseShot.key` ("1-meter" … "9-panel-area").
+    var shots: [String: PhotoKitShot] = [:]
+    /// Look-around milestones the Live Survey reported, on the same clock as capture/frames.json.
+    var moments: [PhotoKitMoment] = []
+    /// The meter's and panel's wall normals from the locks. They tell left from right; nil before a lock.
+    var meterWallNormal: PlacementAnchor?
+    var panelWallNormal: PlacementAnchor?
+    /// How many saved frames the tags were chosen from.
+    var framesConsidered = 0
+    var method = "Each shot names the saved scan frame whose camera pose best matches it: the meter, panel, or wall stretch in view, and the distance back. Prototype tags; a Base engineer decides whether each photo is good enough."
+
+    /// Review's order: Base's numbering.
+    var orderedShots: [PhotoKitShot] {
+        BaseShot.allCases.compactMap { shots[$0.key] }
+    }
+}
+
+/// Base's nine photos, numbered as Base numbers them.
+enum BaseShot: Int, CaseIterable, Sendable {
+    case meter = 1
+    case meterArea
+    case meterRight
+    case meterLeft
+    case adjacentWall
+    case behindFence
+    case panel
+    case mainDisconnect
+    case panelArea
+
+    var key: String {
+        let slug = switch self {
+        case .meter: "meter"
+        case .meterArea: "meter-area"
+        case .meterRight: "meter-right"
+        case .meterLeft: "meter-left"
+        case .adjacentWall: "adjacent-wall"
+        case .behindFence: "behind-fence"
+        case .panel: "main-breaker-box"
+        case .mainDisconnect: "main-disconnect"
+        case .panelArea: "panel-area"
+        }
+        return "\(rawValue)-\(slug)"
+    }
+
+    var title: String {
+        switch self {
+        case .meter: "Electric meter, number readable"
+        case .meterArea: "Area around the meter, 10 steps back"
+        case .meterRight: "Area to the right of the meter"
+        case .meterLeft: "Area to the left of the meter"
+        case .adjacentWall: "Wall next to the meter wall"
+        case .behindFence: "Behind the fence, if there is one"
+        case .panel: "Main breaker box"
+        case .mainDisconnect: "Main disconnect amperage, close up"
+        case .panelArea: "Area around the main breaker box"
+        }
+    }
+}
+
+enum PhotoKitShotStatus: String, Codable, Sendable {
+    /// A saved photo or frame matches the shot as Base asks for it.
+    case covered
+    /// A frame is close (too near, or the app cannot confirm what is in it). The note says what to check.
+    case partial
+    /// Nothing saved matches.
+    case missing
+    /// The app never tags this shot (behind the fence). Base's own photo upload asks for it.
+    case notTagged
+}
+
+struct PhotoKitShot: Codable, Sendable, Equatable, Identifiable {
+    var number: Int
+    var title: String
+    var status: PhotoKitShotStatus
+    /// Relative to survey.json: "meter.jpg", "panel.jpg", or "capture/frames/000012.jpg".
+    var image: String?
+    var keyframeIndex: Int?
+    /// ARFrame timestamp of that keyframe, as in capture/frames.json.
+    var keyframeTimestamp: TimeInterval?
+    /// Horizontal distance from the camera to what the shot is about.
+    var distanceFeet: Double?
+    /// "photo", "pose", or "pose+lookAround.<milestone>" when a look-around milestone picked the frame.
+    var source: String?
+    var note: String
+
+    var id: Int { number }
+}
+
+/// A look-around milestone as it happened: which one, and the ARFrame timestamp then.
+struct PhotoKitMoment: Codable, Sendable, Equatable {
+    enum Kind: String, Codable, Sendable {
+        case movedFarther
+        case lookedLeft
+        case lookedRight
+        /// All three at once: the look-around was skipped or timed out, so the moment says nothing about a shot.
+        case skipped
+    }
+
+    var kind: Kind
+    var frameTimestamp: TimeInterval
+    var cameraPosition: PlacementAnchor?
 }
 
 struct SurveyUnits: Codable, Sendable, Equatable {

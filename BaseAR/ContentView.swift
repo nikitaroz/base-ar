@@ -130,6 +130,8 @@ struct ContentView: View {
         case .scan:
             PlacementARView(
                 store: store,
+                // The left-edge swipe (and VoiceOver's escape) leaves the Live Survey for Home Info.
+                onExit: { leaveLiveSurvey() },
                 onContinue: { go(to: .review) },
                 onReturnToSurvey: { leaveLiveSurvey() }
             )

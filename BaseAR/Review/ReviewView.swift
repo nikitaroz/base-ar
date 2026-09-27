@@ -57,7 +57,7 @@ struct ReviewView: View {
                 onEdit(.placement)
             }
         } message: {
-            Text("This clears the meter and panel marks, the battery spot, and the scan photos. Your Home Info and typed numbers stay.")
+            Text("This clears the meter and panel marks, the battery spot, the scan photos, and numbers only the scan read. Your Home Info and typed numbers stay.")
         }
         .task {
             store.exportForSharing()
@@ -137,6 +137,16 @@ struct ReviewView: View {
                 }
                 Divider()
             }
+            if store.session.electrical.mainBreakerAmperageSource == .ocr {
+                reviewRow(
+                    title: "Check the main breaker",
+                    detail: "Read by scan — check it matches the main breaker",
+                    symbol: "text.viewfinder"
+                ) {
+                    onEdit(.electrical)
+                }
+                Divider()
+            }
             if meterLocked {
                 reviewRow(
                     title: "Redo the meter",
@@ -210,6 +220,32 @@ struct ReviewView: View {
         }
         .buttonStyle(PressableCardStyle())
         .accessibilityElement(children: .combine)
+    }
+
+    /// "Read by scan — check it" for a number the Live Survey read: open Electrical to fix it, or say it matches.
+    /// Until then it is a suggestion, and a check that uses it stays unknown.
+    private func scanReadCheck(_ what: String, confirm: @escaping () -> Void) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                onEdit(.electrical)
+            } label: {
+                Label {
+                    Text(SurveyStore.scanReadNote)
+                        .foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: "text.viewfinder")
+                        .foregroundStyle(ToneStyle.color(.incomplete))
+                }
+                .font(.footnote.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens Electrical to check or correct the \(what).")
+            Spacer(minLength: 0)
+            Button("Looks right", systemImage: "checkmark", action: confirm)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityHint("Says the \(what) matches what you see. It then counts as your answer, not a measurement.")
+        }
     }
 
     /// Saved or only on the live scan: Review can show while the scan holds marks it has not saved.
@@ -297,31 +333,28 @@ struct ReviewView: View {
 
     private var electricalDetails: some View {
         VStack(alignment: .leading, spacing: 10) {
-            evidenceImage(store.meterImage, label: "Round electric meter")
+            evidenceImage(
+                store.meterImage,
+                label: store.meterPhotoIsScanCrop ? "Round electric meter (photo from the Live Survey)" : "Round electric meter"
+            )
             LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
             switch store.session.electrical.meterNumberSource {
             case .ocr?:
                 // A scan's read is a suggestion until the homeowner checks it against the meter.
-                Button {
-                    onEdit(.electrical)
-                } label: {
-                    Label {
-                        Text("Read by scan — check it")
-                            .foregroundStyle(.primary)
-                    } icon: {
-                        Image(systemName: "text.viewfinder")
-                            .foregroundStyle(ToneStyle.color(.incomplete))
-                    }
-                    .font(.footnote.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens Electrical to check or correct the meter number.")
+                scanReadCheck("meter number") { store.confirmScannedMeterNumber() }
             case .manual?:
                 LabeledContent("Meter number source", value: "Typed")
             case nil:
                 EmptyView()
             }
+            if store.panelImage != nil || store.session.placement.panelMarked || store.livePanelMarked {
+                evidenceImage(store.panelImage, label: "Breaker panel (photo from the Live Survey)")
+            }
             LabeledContent("Main breaker", value: breakerText)
+            if store.session.electrical.mainBreakerAmperageSource == .ocr {
+                // Never the panel bus rating: only the number beside "MAIN" is read, and the user confirms it.
+                scanReadCheck("main breaker") { store.confirmScannedMainBreaker() }
+            }
             if store.session.electrical.needsPanelBusRating || store.session.electrical.panelBusRatingAmps != nil {
                 LabeledContent("Panel bus rating", value: store.session.electrical.panelBusRatingAmps.map { "\($0) A" } ?? "Not entered")
             }
@@ -528,7 +561,9 @@ struct ReviewView: View {
         [
             store.session.electrical.meterPhotoFilename == nil,
             (store.session.electrical.meterNumber ?? "").isBlank,
+            store.session.electrical.meterNumberSource == .ocr && !(store.session.electrical.meterNumber ?? "").isBlank,
             store.session.electrical.mainBreakerAmperage == nil,
+            store.session.electrical.mainBreakerAmperage != nil && store.session.electrical.mainBreakerAmperageSource == .ocr,
             store.session.electrical.needsPanelBusRating && store.session.electrical.panelBusRatingAmps == nil
         ].filter { $0 }.count
     }
@@ -538,7 +573,8 @@ struct ReviewView: View {
     }
 
     private var breakerText: String {
-        store.session.electrical.mainBreakerAmperage.map { "\($0) A" } ?? "Not confirmed"
+        guard let amps = store.session.electrical.mainBreakerAmperage else { return "Not confirmed" }
+        return store.session.electrical.mainBreakerAmperageSource == .ocr ? "\(amps) A (read by scan)" : "\(amps) A"
     }
 
     private var ownershipText: String {

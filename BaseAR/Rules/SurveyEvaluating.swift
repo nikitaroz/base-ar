@@ -55,9 +55,13 @@ enum MissingInformation {
         let meterNumber = session.electrical.meterNumber?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if meterNumber.isEmpty {
             items.append("Meter number")
+        } else if session.electrical.meterNumberSource == .ocr {
+            items.append("Check the meter number the scan read")
         }
         if session.electrical.mainBreakerAmperage == nil {
             items.append("Confirmed main breaker amperage")
+        } else if session.electrical.mainBreakerAmperageSource == .ocr {
+            items.append("Check the main breaker amperage the scan read")
         }
         if session.electrical.needsPanelBusRating, session.electrical.panelBusRatingAmps == nil {
             items.append("Panel bus rating from the panel label, for solar or two batteries")

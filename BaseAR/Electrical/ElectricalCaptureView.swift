@@ -148,7 +148,17 @@ struct ElectricalCaptureView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            if store.session.electrical.meterNumberSource == .ocr, !(store.session.electrical.meterNumber ?? "").isEmpty {
+                scanReadConfirm("meter number") { store.confirmScannedMeterNumber() }
+            }
         }
+    }
+
+    /// A number the scan read stays a suggestion until the user says it matches, or types over it.
+    private func scanReadConfirm(_ what: String, confirm: @escaping () -> Void) -> some View {
+        Button("Looks right", systemImage: "checkmark", action: confirm)
+            .frame(maxWidth: .infinity)
+            .accessibilityHint("Says the \(what) the scan read matches what you see. It then counts as your answer.")
     }
 
     private var breakerSection: some View {
@@ -181,8 +191,15 @@ struct ElectricalCaptureView: View {
             }
             // A typed value is a record of what the user read, not a confirmation, so it stays neutral.
             if let amps = store.session.electrical.mainBreakerAmperage {
-                Text("Recorded: \(amps) A")
-                    .foregroundStyle(.secondary)
+                if store.session.electrical.mainBreakerAmperageSource == .ocr {
+                    Text("\(amps) A, read by scan. Check it against the main breaker: the scan reads the number beside MAIN, never the panel bus rating.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    scanReadConfirm("main breaker") { store.confirmScannedMainBreaker() }
+                } else {
+                    Text("Recorded: \(amps) A")
+                        .foregroundStyle(.secondary)
+                }
                 if !BaseRuleSet.austinMainBreakerRange.contains(amps) {
                     Label("\(amps) A is outside the 150–200A Austin guidance and will be flagged for review.", systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)

@@ -486,6 +486,8 @@ struct PlacementARView: View {
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
     @State private var capturedFrames = 0
+    @State private var cachedLiveAssessment: SurveyAssessment?
+    @State private var cachedLiveScene: PlacementSceneSnapshot?
     /// The bottom line as shown, paced so it does not flicker at the detector's rate.
     @State private var pacer = FeedbackPacer()
     @State private var latestFeedback: Feedback?
@@ -1020,6 +1022,12 @@ struct PlacementARView: View {
             while !Task.isCancelled {
                 capturedFrames = store.placementController?.keyframes.count ?? 0
                 try? await Task.sleep(for: .seconds(0.5))
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                refreshLiveAssessment()
+                try? await Task.sleep(for: .seconds(1.5))
             }
         }
     }
@@ -4860,6 +4868,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             return result
         }
+
+        /// The box colour only needs a fresh clearance every couple of seconds. A full measure() on every mesh
+        /// update was most of the 26 Sep main-thread hangs (it runs longer than the update interval).
+        private var transferBoxClearance: Bool?
+        private var transferBoxMeasuredAt = Date.distantPast
+        private static let transferBoxRemeasureInterval: TimeInterval = 2
 
         private func updateTransferBox(_ snapshot: PlacementSceneSnapshot) {
             let show = batteryRig != nil && (walkStep == .battery || walkStep == .finish)

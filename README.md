@@ -124,8 +124,10 @@ Each teammate does this once per Mac. `git pull` never disturbs signing — thos
    ```sh
    ./scripts/bootstrap-signing.sh
    ```
-   Reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig` (gitignored). To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
+   Reads the Team ID from your certificate's team field, derives a bundle ID like `com.<your-username>.BaseAR`, and writes both to `Config/Local.xcconfig` (gitignored). If your certificates belong to several teams, pass one: `./scripts/bootstrap-signing.sh TEAM_ID`. It also turns on the repo's git hooks. To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`, fill in the two lines, and run `git config core.hooksPath .githooks`.
 3. **Open `BaseAR.xcodeproj`** and confirm *Automatically manage signing* is checked on the `BaseAR` target. The first build pulls down a provisioning profile.
+
+   **Don't pick a team in Signing & Capabilities.** Xcode writes that choice into `project.pbxproj`, where it overrides every teammate's `Local.xcconfig` and breaks their builds. The pre-commit hook blocks a committed `DEVELOPMENT_TEAM`.
 4. **On device, trust the developer profile** the first time: Settings → General → VPN & Device Management → tap your profile → **Trust**.
 
 ## Running the app

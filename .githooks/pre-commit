@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Signing is personal: DEVELOPMENT_TEAM belongs in the gitignored Config/Local.xcconfig.
+# Xcode writes it into the project when someone picks a team in Signing & Capabilities,
+# and a committed team overrides every teammate's Local.xcconfig.
+if git diff --cached -U0 -- '*.pbxproj' | grep -qE '^\+.*DEVELOPMENT_TEAM = [A-Z0-9]'; then
+  cat >&2 <<'MSG'
+Commit blocked: a DEVELOPMENT_TEAM is staged in BaseAR.xcodeproj/project.pbxproj.
+
+Set your team in Config/Local.xcconfig instead (./scripts/bootstrap-signing.sh), then
+remove the line from the project, e.g.:
+  sed -i '' '/DEVELOPMENT_TEAM = /d' BaseAR.xcodeproj/project.pbxproj && git add BaseAR.xcodeproj/project.pbxproj
+MSG
+  exit 1
+fi

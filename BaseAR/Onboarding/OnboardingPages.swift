@@ -92,7 +92,7 @@ struct OnboardingIntroPage: View {
         OnboardingPageLayout(
             illustration: OnboardingIllustration(assetName: "OnboardingIntro", fallbackSymbol: "checklist"),
             title: "Let’s get you set up",
-            subtitle: "A few quick questions so we can tailor the survey to your home. You can skip anything and finish it later.",
+            subtitle: "A few quick questions so we can tailor the survey to your home. You can skip anything and finish it in Home Info.",
             primaryTitle: "Get started",
             primaryEnabled: true,
             onPrimary: onNext,
@@ -302,8 +302,8 @@ struct OnboardingDonePage: View {
         OnboardingPageLayout(
             illustration: OnboardingIllustration(assetName: "OnboardingDone", fallbackSymbol: "checkmark.circle.fill"),
             title: "You’re all set",
-            subtitle: "The Home tile is prefilled with what you shared. You can edit it anytime from the survey hub.",
-            primaryTitle: "Continue to survey",
+            subtitle: "What you shared is in Home Info, step 1 of 3. Finish the rest there, then the Live Survey takes you outside with the camera. Step 3 is review and share.",
+            primaryTitle: "Continue to Home Info",
             primaryEnabled: true,
             onPrimary: onContinue,
             onSkip: nil,

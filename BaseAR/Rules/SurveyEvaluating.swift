@@ -80,6 +80,9 @@ enum MissingInformation {
         if session.electrical.plannedBatteryCount == nil {
             items.append("Planned battery count")
         }
+        if !session.gasMeterQuestionAnswered {
+            items.append("Whether there is a gas meter outside")
+        }
         if session.placement.screenshotFilename == nil {
             items.append("AR placement screenshot")
         }
@@ -118,5 +121,12 @@ enum MissingInformation {
             items.append("Whether the meter and breaker panel share a wall")
         }
         return items
+    }
+}
+
+extension SurveySession {
+    /// Home Info's gas question. A gas meter marked on the scan answers it too.
+    var gasMeterQuestionAnswered: Bool {
+        electrical.gasMeterAnswer != nil || placement.gasMeterMarked
     }
 }

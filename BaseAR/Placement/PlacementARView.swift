@@ -2920,7 +2920,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         /// Clears the scan's marks, battery, look-around, and skipped steps. The view also resets the survey's saved
         /// placement evidence.
-        fileprivate func restartScan() {
+        func restartScan() {
             passedLiveSteps = []
             clearBattery()
             clearEquipmentLock(.meter)

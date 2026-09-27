@@ -6,9 +6,9 @@ enum OnboardingUI {
     static let focusDelay: TimeInterval = 0.35
 }
 
-/// Six-step first-launch wizard that collects the essential Home & Personal Info fields.
-/// Writes through the same `SurveyStore` setters the Home tile uses, so skipped fields
-/// stay empty and are still fillable from the tile later.
+/// Six-screen wizard that opens a new survey (the first one, and each one after Start over) and collects the
+/// essential Home Info fields. Writes through the same `SurveyStore` setters the Home Info form uses, so skipped
+/// fields stay empty and are still fillable in step 1 later.
 struct OnboardingContainerView: View {
     var store: SurveyStore
     var onFinish: () -> Void

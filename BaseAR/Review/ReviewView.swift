@@ -7,6 +7,7 @@ struct ReviewView: View {
 
     @State private var showShare = false
     @State private var confirmStartOver = false
+    @State private var confirmScanRestart = false
     @State private var propertyExpanded = false
     @State private var electricalExpanded = false
     @State private var placementExpanded = false
@@ -17,9 +18,7 @@ struct ReviewView: View {
             VStack(alignment: .leading, spacing: 16) {
                 disclaimer
                 readinessCard
-                if !nextActions.isEmpty {
-                    nextActionsCard
-                }
+                whatsMissingCard
                 details
                 jsonPreviewSection
                 shareSection
@@ -49,6 +48,15 @@ struct ReviewView: View {
             Button("Delete survey", role: .destructive, action: onStartOver)
         } message: {
             Text("This deletes the current answers, photos, placement, and local survey file. This can’t be undone.")
+        }
+        .alert("Start the scan over?", isPresented: $confirmScanRestart) {
+            Button("Cancel", role: .cancel) {}
+            Button("Start over", role: .destructive) {
+                store.restartLiveSurvey()
+                onEdit(.placement)
+            }
+        } message: {
+            Text("This clears the meter and panel marks, the battery spot, and the scan photos. Your Home Info and typed numbers stay.")
         }
         .task {
             store.exportForSharing()
@@ -89,41 +97,133 @@ struct ReviewView: View {
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private var nextActionsCard: some View {
+    /// Missing items by step, then the fixes that used to live in the camera's menu.
+    private var whatsMissingCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Next actions")
+            Text("What’s missing")
                 .font(.headline)
                 .padding(.bottom, 8)
-            ForEach(nextActions) { action in
-                Button {
-                    onEdit(action.route)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: action.symbol)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(action.title)
-                                .foregroundStyle(.primary)
-                            Text("\(action.count) missing")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+            if nextActions.isEmpty {
+                Label("Nothing is missing.", systemImage: "checkmark.circle")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                     .padding(.vertical, 10)
-                    .contentShape(Rectangle())
+            }
+            ForEach(nextActions) { action in
+                reviewRow(
+                    title: action.title,
+                    detail: "\(action.count) missing",
+                    symbol: action.symbol
+                ) {
+                    onEdit(action.route)
                 }
-                .buttonStyle(PressableCardStyle())
                 if action.id != nextActions.last?.id {
                     Divider()
+                }
+            }
+            Text("Fix something")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.top, 16)
+                .padding(.bottom, 4)
+            if store.session.electrical.meterNumberSource == .ocr {
+                reviewRow(
+                    title: "Check the meter number",
+                    detail: "Read by scan — check it matches the meter",
+                    symbol: "text.viewfinder"
+                ) {
+                    onEdit(.electrical)
+                }
+                Divider()
+            }
+            if meterLocked {
+                reviewRow(
+                    title: "Redo the meter",
+                    detail: "The Live Survey looks for it again. The battery spot goes too.",
+                    symbol: "arrow.counterclockwise"
+                ) {
+                    store.redoLiveSurveyItem(.electricMeter)
+                    onEdit(.placement)
+                }
+                Divider()
+            }
+            if panelLocked {
+                reviewRow(
+                    title: "Redo the panel",
+                    detail: "The Live Survey looks for it again.",
+                    symbol: "arrow.counterclockwise"
+                ) {
+                    store.redoLiveSurveyItem(.breakerPanel)
+                    onEdit(.placement)
+                }
+                Divider()
+            }
+            reviewRow(
+                title: "Type the electrical numbers",
+                detail: "Meter number, main breaker, and panel rating",
+                symbol: "keyboard"
+            ) {
+                onEdit(.electrical)
+            }
+            if scanHasContent {
+                Divider()
+                reviewRow(
+                    title: "Start the scan over",
+                    detail: "Clears the marks and the battery spot",
+                    symbol: "arrow.uturn.backward"
+                ) {
+                    confirmScanRestart = true
                 }
             }
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func reviewRow(
+        title: String,
+        detail: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableCardStyle())
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Saved or only on the live scan: Review can show while the scan holds marks it has not saved.
+    private var meterLocked: Bool {
+        store.session.placement.meterMarked || store.liveMeterMarked
+    }
+
+    private var panelLocked: Bool {
+        store.session.placement.panelMarked || store.livePanelMarked
+    }
+
+    private var scanHasContent: Bool {
+        let placement = store.session.placement
+        return meterLocked || panelLocked || placement.batteryPlaced || placement.gasMeterMarked
+            || store.placementController?.scene.hasPlacedContent == true
     }
 
     private var details: some View {
@@ -133,7 +233,7 @@ struct ReviewView: View {
 
             detailCard(title: "Property", symbol: "house.fill", isExpanded: $propertyExpanded) {
                 propertyDetails
-                editButton("Edit home information", route: .home)
+                editButton("Edit Home Info", route: .home)
             }
 
             detailCard(title: "Electrical evidence", symbol: "bolt.fill", isExpanded: $electricalExpanded) {
@@ -143,7 +243,7 @@ struct ReviewView: View {
 
             detailCard(title: "Site measurements", symbol: "arkit", isExpanded: $placementExpanded) {
                 placementDetails
-                editButton("Edit site measurements", route: .placement)
+                editButton("Open the Live Survey", route: .placement)
             }
 
             detailCard(title: "Eligibility checks", symbol: "checklist", isExpanded: $checksExpanded) {
@@ -198,8 +298,27 @@ struct ReviewView: View {
         VStack(alignment: .leading, spacing: 10) {
             evidenceImage(store.meterImage, label: "Round electric meter")
             LabeledContent("Meter number", value: display(store.session.electrical.meterNumber))
-            if let source = store.session.electrical.meterNumberSource {
-                LabeledContent("Meter number source", value: source == .ocr ? "OCR" : "Manual")
+            switch store.session.electrical.meterNumberSource {
+            case .ocr?:
+                // A scan's read is a suggestion until the homeowner checks it against the meter.
+                Button {
+                    onEdit(.electrical)
+                } label: {
+                    Label {
+                        Text("Read by scan — check it")
+                            .foregroundStyle(.primary)
+                    } icon: {
+                        Image(systemName: "text.viewfinder")
+                            .foregroundStyle(ToneStyle.color(.incomplete))
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens Electrical to check or correct the meter number.")
+            case .manual?:
+                LabeledContent("Meter number source", value: "Typed")
+            case nil:
+                EmptyView()
             }
             LabeledContent("Main breaker", value: breakerText)
             if store.session.electrical.needsPanelBusRating || store.session.electrical.panelBusRatingAmps != nil {
@@ -210,6 +329,7 @@ struct ReviewView: View {
             LabeledContent("Standby generator", value: yesNo(store.session.electrical.hasStandbyGenerator))
             LabeledContent("Existing whole-home battery", value: yesNo(store.session.electrical.hasExistingWholeHomeBattery))
             LabeledContent("Planned batteries", value: batteryCountText)
+            LabeledContent("Gas meter outside", value: gasAnswerText)
         }
     }
 
@@ -379,9 +499,9 @@ struct ReviewView: View {
 
     private var nextActions: [ReviewAction] {
         [
-            ReviewAction(route: .home, title: "Home and personal info", symbol: "house.fill", count: homeMissingCount),
-            ReviewAction(route: .electrical, title: "Electrical", symbol: "bolt.fill", count: electricalMissingCount),
-            ReviewAction(route: .placement, title: "Site measurements", symbol: "arkit", count: placementMissingCount)
+            ReviewAction(route: .home, title: "Home Info", symbol: "house.fill", count: homeMissingCount),
+            ReviewAction(route: .electrical, title: "Electrical numbers", symbol: "bolt.fill", count: electricalMissingCount),
+            ReviewAction(route: .placement, title: "Live Survey", symbol: "arkit", count: placementMissingCount)
         ].filter { $0.count > 0 }
     }
 
@@ -398,6 +518,7 @@ struct ReviewView: View {
             session.electrical.hasStandbyGenerator == nil,
             session.electrical.hasExistingWholeHomeBattery == nil,
             session.electrical.plannedBatteryCount == nil,
+            !session.gasMeterQuestionAnswered,
             session.propertyLocation == nil
         ].filter { $0 }.count
     }
@@ -431,10 +552,22 @@ struct ReviewView: View {
         store.session.electrical.plannedBatteryCount.map(String.init) ?? "Not captured"
     }
 
+    /// A marked gas meter is measured; "none" is the homeowner's answer and says so.
     private var gasMeterText: String {
-        if store.session.placement.gasMeterMarked { return "Marked" }
-        if store.gasMeterNotVisible { return "Not visible" }
-        return "Not answered"
+        if store.session.placement.gasMeterMarked { return "Marked on the scan" }
+        if store.gasMeterNotVisible || store.session.electrical.gasMeterAnswer == .no {
+            return "None (your answer, not measured)"
+        }
+        return store.session.electrical.gasMeterAnswer == nil ? "Not answered" : "Not found on the scan yet"
+    }
+
+    private var gasAnswerText: String {
+        switch store.session.electrical.gasMeterAnswer {
+        case .yes?: "Yes"
+        case .no?: "No"
+        case .notSure?: "Not sure"
+        case nil: "Not answered"
+        }
     }
 
     private var measurementMethods: String {
@@ -527,6 +660,34 @@ private struct ReviewAction: Identifiable {
     var count: Int
 
     var id: HubRoute { route }
+}
+
+// MARK: - Fix-its
+
+/// Review's "Redo the meter", "Redo the panel", and "Start the scan over": the Live Survey's own fixes, run from
+/// outside the camera. Each saves the scene as it now is, so Review stops listing a mark the scan dropped.
+extension SurveyStore {
+    /// Drops that lock and keeps the same spot from relocking right away, so the Live Survey asks for it again.
+    /// Redoing the meter drops the battery and look-around too, and a meter photo that was only the scan's crop.
+    func redoLiveSurveyItem(_ kind: EquipmentKind) {
+        guard let controller = placementController else { return }
+        controller.rejectLock(kind)
+        if kind == .electricMeter {
+            dropScanMeterPhoto()
+        }
+        commitPlacement(controller.scene)
+    }
+
+    /// Clears the scan's marks, battery, look-around, and skipped steps, and the placement evidence and scan photos
+    /// that came from them. The Home Info gas answer stays, so "No" still skips the gas step.
+    func restartLiveSurvey() {
+        placementController?.restartScan()
+        resetPlacementEvidence()
+        dropScanMeterPhoto()
+        if session.electrical.gasMeterAnswer != .no {
+            setGasMeterNotVisible(false)
+        }
+    }
 }
 
 private extension String {

@@ -1,0 +1,16 @@
+{
+  "sitemap_pages_discovered": 176,
+  "sitemap_pages_retrieved": 165,
+  "help_articles_discovered": 92,
+  "help_articles_retrieved": 92,
+  "missing_main": [],
+  "missing_articles": [],
+  "inventory_records": 293,
+  "limitations": [
+    "Coverage is the public sitemap plus linked English help articles, not private or unlinked pages.",
+    "Videos, interactive signup branches, and images were not exhaustively interpreted.",
+    "Source retrieval is not proof that every statement is current or internally consistent.",
+    "Legacy help collection URL returned 404; reachable category articles were collected.",
+    "ICC direct section returned interface text only; model-code wording corroborated via official public worksheet."
+  ]
+}

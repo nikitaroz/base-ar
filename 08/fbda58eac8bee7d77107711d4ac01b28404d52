@@ -1,0 +1,35 @@
+BaseAR/Placement/CaptureQuality.swift
+  s_535a502178fe4f::t_202b935943af80 225-227,238,303,352
+BaseAR/Placement/PlacementMeasuring.swift
+  s_535a502178fe4f::t_c71ed22f5b6b2a 578-579,585-587
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_429ba70b8d6329 310-313
+BaseARTests/BaseARTests.swift
+  s_535a502178fe4f::t_9124d209770f03 1-2,12-383
+BaseAR/Placement/PlacementARView.swift
+  s_bad36b7625845c::t_817887669294c6 1972-1973,2834,3463,3555-3564,3566-3567,3686-3687,3708,4366-4369,4371,4381-4400,4405-4408,4557-4559,4576-4583,4585-4589,4600-4603,4608,4610-4622,4625-4650,4653-4654,4667-4671,4673-4684,4688-4699,4702-4719,4722-4723,4726,4730-4755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "08fbda58eac8bee7d77107711d4ac01b28404d52",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    },
+    "s_bad36b7625845c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a408ce85cae9a9695",
+        "model": "unknown"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

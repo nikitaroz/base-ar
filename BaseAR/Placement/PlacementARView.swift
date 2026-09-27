@@ -88,7 +88,7 @@ private enum LiveStep: Equatable {
         case .findPanel: "Find the breaker panel"
         case .readBreaker: "Open the panel door to show the breakers"
         case .gas: "Show the gas meter"
-        case .lookAround: "Look around the meter"
+        case .lookAround: "Scan around the meter"
         case .finish: "Scan done"
         }
     }
@@ -118,10 +118,10 @@ private enum CoachTip: String {
     case lookLeft = "Turn to look left"
     case lookRight = "Turn to look right"
     // The look-around, guided by what the mesh holds. Left and right are as seen facing the meter.
-    case scanGroundByWall = "Point down at the ground along the wall"
-    case scanWallLeft = "Show the wall left of the meter"
-    case scanWallRight = "Show the wall right of the meter"
-    case tenStepsBack = "Take about 10 steps back"
+    case scanGroundByWall = "1 of 4: Step back 2–3 steps, then point the phone down at the ground by the wall"
+    case scanWallLeft = "2 of 4: Slowly turn left and show the wall beside the meter"
+    case scanWallRight = "3 of 4: Slowly turn right and show the wall on the other side"
+    case tenStepsBack = "4 of 4: Walk about 10 steps back so the whole wall is in view"
     // The Live Survey has no buttons: a hold on the center ring marks what the detector cannot.
     case holdOnMeter = "Hold the ring on the meter"
     case holdOnPanel = "Hold the ring on the panel"

@@ -1,5 +1,11 @@
 import SwiftUI
 
+/// Shared UI timing so the step animation and the focus delay stay coupled.
+enum OnboardingUI {
+    static let stepAnimation: Animation = .spring(response: 0.5, dampingFraction: 0.85)
+    static let focusDelay: TimeInterval = 0.35
+}
+
 /// Six-step first-launch wizard that collects the essential Home & Personal Info fields.
 /// Writes through the same `SurveyStore` setters the Home tile uses, so skipped fields
 /// stay empty and are still fillable from the tile later.
@@ -20,7 +26,7 @@ struct OnboardingContainerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(.systemBackground))
-        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: step)
+        .animation(OnboardingUI.stepAnimation, value: step)
     }
 
     private var header: some View {
@@ -49,16 +55,16 @@ struct OnboardingContainerView: View {
             OnboardingIntroPage(onNext: advance)
                 .transition(pageTransition)
         case .name:
-            OnboardingNamePage(store: store, onNext: advance, onSkip: advance)
+            OnboardingNamePage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
         case .address:
-            OnboardingAddressPage(store: store, onNext: advance, onSkip: advance)
+            OnboardingAddressPage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
         case .ownership:
-            OnboardingOwnershipPage(store: store, onNext: advance, onSkip: advance)
+            OnboardingOwnershipPage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
         case .batteryCount:
-            OnboardingBatteryCountPage(store: store, onNext: advance, onSkip: advance)
+            OnboardingBatteryCountPage(store: store, onNext: advance, onSkip: onFinish)
                 .transition(pageTransition)
         case .done:
             OnboardingDonePage(onContinue: onFinish)
@@ -100,8 +106,9 @@ enum OnboardingStep: Int, CaseIterable, Equatable {
 }
 
 #Preview {
-    OnboardingContainerView(
-        store: try! SurveyStore(propertyIdentifier: ""),
-        onFinish: {}
-    )
+    if let store = try? SurveyStore(propertyIdentifier: "preview") {
+        OnboardingContainerView(store: store, onFinish: {})
+    } else {
+        Text("Preview unavailable")
+    }
 }

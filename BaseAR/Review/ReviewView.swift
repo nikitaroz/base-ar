@@ -351,8 +351,8 @@ struct ReviewView: View {
     }
 
     private var readinessColor: Color {
-        if store.session.ruleResults.contains(where: { $0.status == .conflict }) { return .red }
-        return missingCount == 0 ? .green : ToneStyle.color(.incomplete)
+        if store.session.ruleResults.contains(where: { $0.status == .conflict }) { return ToneStyle.color(.conflict) }
+        return missingCount == 0 ? ToneStyle.color(.clear) : ToneStyle.color(.incomplete)
     }
 
     private var missingCount: Int { store.session.missingInformation.count }
@@ -470,8 +470,8 @@ struct ReviewView: View {
 
     private func statusColor(_ status: CheckStatus) -> Color {
         switch status {
-        case .pass: .green
-        case .conflict: .red
+        case .pass: ToneStyle.color(.clear)
+        case .conflict: ToneStyle.color(.conflict)
         case .unknown: ToneStyle.color(.incomplete)
         }
     }

@@ -142,7 +142,7 @@ struct OnboardingNamePage: View {
         }
         .onAppear {
             if name.isEmpty { name = store.session.contactName }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { focused = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingUI.focusDelay) { focused = true }
         }
     }
 
@@ -222,7 +222,7 @@ struct OnboardingAddressPage: View {
         }
         .onAppear {
             if address.isEmpty { address = store.session.propertyIdentifier }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { focused = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + OnboardingUI.focusDelay) { focused = true }
         }
     }
 

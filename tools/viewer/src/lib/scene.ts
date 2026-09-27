@@ -106,6 +106,7 @@ export class SiteScene {
     }
     this.objects = []
     this.meshes = this.grid = this.battery = this.parts = null
+    this.cellBounds = null
     this.floorLayers = []
   }
 
@@ -339,7 +340,15 @@ export class SiteScene {
       }
       return nearest?.cell ?? null
     }
+    // A click only selects when the pointer barely moved: releasing an orbit or a battery drag is not a click.
+    let down = { x: 0, y: 0 }
+    const endDrag = () => {
+      if (!this.dragging) return
+      this.dragging = false
+      this.controls.enabled = true
+    }
     el.addEventListener("pointerdown", (e) => {
+      down = { x: e.clientX, y: e.clientY }
       if (!this.battery?.visible || !this.parts) return
       aim(e)
       if (this.ray.intersectObject(this.parts.body).length) {
@@ -365,15 +374,13 @@ export class SiteScene {
       el.style.cursor = cell && cell.status !== "offwall" ? "pointer" : ""
       this.handlers.onHover(cell, e.clientX - r.left, e.clientY - r.top)
     })
-    el.addEventListener("pointerup", () => {
-      if (!this.dragging) return
-      this.dragging = false
-      this.controls.enabled = true
-    })
+    el.addEventListener("pointerup", endDrag)
+    el.addEventListener("pointercancel", endDrag)
+    el.addEventListener("lostpointercapture", endDrag)
     el.addEventListener("pointerleave", () => this.handlers.onHover(null, 0, 0))
     el.addEventListener("click", (e) => {
       const a = this.analysis
-      if (!a?.grid) return
+      if (!a?.grid || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return
       aim(e)
       const cell = cellAt()
       if (!cell || cell.status === "offwall") return

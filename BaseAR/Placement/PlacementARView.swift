@@ -22,38 +22,6 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
-/// Visual coaching tips with motion graphics
-enum CoachTip: Equatable {
-    case pointDown
-    case stepBack
-    case scoofLeft
-    case scoofRight
-    case lookUp
-    case rotatePhone
-    
-    var message: String {
-        switch self {
-        case .pointDown: "Point your phone down at the ground"
-        case .stepBack: "Take a few steps back"
-        case .scoofLeft: "Scoot left to see more"
-        case .scoofRight: "Scoot right to see more"
-        case .lookUp: "Look up at the equipment"
-        case .rotatePhone: "Slowly turn around"
-        }
-    }
-    
-    var symbol: String {
-        switch self {
-        case .pointDown: "arrow.down.circle.fill"
-        case .stepBack: "arrow.backward.circle.fill"
-        case .scoofLeft: "arrow.left.circle.fill"
-        case .scoofRight: "arrow.right.circle.fill"
-        case .lookUp: "arrow.up.circle.fill"
-        case .rotatePhone: "arrow.clockwise.circle.fill"
-        }
-    }
-}
-
 /// Walk back from a locked meter or panel, then pan so the mesh sees the wall.
 /// One step is about 2.5 ft. The wide look is done only after the distance and the three views.
 private struct ScanGuide: Equatable {
@@ -147,7 +115,6 @@ struct PlacementARView: View {
     @State private var manualMark: PlacementTarget? = nil
     @State private var liveReadout: (text: String?) = (nil)
     @State private var hasStartedAR = false
-    @State private var coachTip: CoachTip? = nil
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -175,48 +142,6 @@ struct PlacementARView: View {
     }
     
     /// Determines the appropriate coaching tip based on current state
-    private var suggestedCoachTip: CoachTip? {
-        // Only show tips during scan and battery placement steps
-        guard step == .scan || step == .battery else { return nil }
-        
-        // During scan: equipment detection tips
-        if step == .scan {
-            if !meterIsMarked || !panelIsMarked {
-                // Looking for equipment - suggest looking up
-                return .lookUp
-            }
-            return nil
-        }
-        
-        // During battery placement: spatial guidance from scene state
-        if step == .battery {
-            // No battery placed yet - need to find floor
-            guard scene.batteryPosition != nil else {
-                return .pointDown
-            }
-            
-            // Check wall distance
-            if let wallDist = scene.automaticWallClearanceFeet {
-                if wallDist > 2.0 {
-                    return .stepBack // Too far from wall
-                }
-            }
-            
-            // Check if we need more scanning around the area
-            if !guide.meterSurroundDone && meterIsMarked {
-                if guide.meterSteps < ScanGuide.wideLookSteps {
-                    return .stepBack
-                } else if !guide.meterLookedLeft {
-                    return .scoofLeft
-                } else if !guide.meterLookedRight {
-                    return .scoofRight
-                }
-            }
-        }
-        
-        return nil
-    }
-
     /// Center-dot lock only while the prompt is asking for one object. Stepping back should not lock a random wall.
     private var holdTarget: EquipmentKind? {
         switch cue {
@@ -291,8 +216,6 @@ struct PlacementARView: View {
             if new != .scan {
                 manualMark = nil
             }
-            // Update coaching tip for new step
-            coachTip = suggestedCoachTip
         }
     }
 
@@ -327,18 +250,6 @@ struct PlacementARView: View {
                         onEquipmentStatus: { equipmentMessage = $0 },
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
-                }
-                
-                // Top coaching banner
-                if !coachingIsActive {
-                    VStack {
-                        if let tip = coachTip {
-                            coachingBanner(tip)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 8)
-                        }
-                        Spacer()
-                    }
                 }
             }
             if !coachingIsActive {
@@ -498,30 +409,6 @@ struct PlacementARView: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-    
-    private func coachingBanner(_ tip: CoachTip) -> some View {
-        HStack(spacing: 12) {
-            // Animated motion graphic
-            ZStack {
-                Circle()
-                    .fill(.blue.opacity(0.2))
-                    .frame(width: 44, height: 44)
-                Image(systemName: tip.symbol)
-                    .font(.system(size: 24))
-                    .foregroundStyle(.blue)
-                    .symbolEffect(.pulse, options: .repeating)
-            }
-            
-            Text(tip.message)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-            
-            Spacer()
-        }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
     }
 
     @ViewBuilder
@@ -945,9 +832,9 @@ struct PlacementARView: View {
 
     private var scanInstruction: String {
         switch (meterIsMarked, panelIsMarked) {
-        case (false, false): "Point at the electric meter — it will detect automatically."
-        case (true, false): "Now point at the breaker panel."
-        case (false, true): "Point at the electric meter."
+        case (false, false): "Find the meter"
+        case (true, false): "Find the breaker panel"
+        case (false, true): "Find the meter"
         case (true, true): "Both found! Tap Next."
         }
     }
@@ -963,9 +850,6 @@ struct PlacementARView: View {
         }
         guard snapshot != scene else { return }
         scene = snapshot
-        
-        // Update coaching tip based on new scene state
-        coachTip = suggestedCoachTip
     }
 
     private func acceptLiveFeet(_ feet: Double?) {
@@ -1913,17 +1797,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             emitPlanesIfNeeded()
         }
 
-        /// ASCII PLY of every current mesh anchor plus the measurement overlay. Nil without a LiDAR mesh,
-        /// so Review's scene.ply wording matches what is shared.
-        func pointCloudPLYData() -> Data? {
-            guard hasExportableMesh else { return nil }
-            let overlay = MeasurementOverlay.build(scene, measurer: placementMeasurer)
-            return PointCloudPLY.data(from: Array(meshClouds.values) + [overlay.chunk], comments: overlay.comments)
-        }
-
-        var hasExportableMesh: Bool {
-            meshClouds.values.contains { !$0.positions.isEmpty }
-        }
 
         private func upsertMesh(_ updates: [ClassifiedMeshUpdate]) {
             for update in updates {
@@ -2542,7 +2415,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard let observation = equipmentBridge.latestObservation else {
                 clearTransientEquipmentObservations()
                 publishEquipmentStatus(trackingBlockedMessage == nil
-                    ? "Waiting for a fresh equipment scan. You can also mark equipment manually." : nil)
+                    ? "Hold still" : nil)
                 return
             }
             if observation.generation != lastEquipmentGeneration {
@@ -2554,10 +2427,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 publishEquipmentStatus(nil)
             case .noDetections:
                 clearTransientEquipmentObservations()
-                publishEquipmentStatus("No meter or panel detected in this frame. Reframe or mark it manually.")
+                publishEquipmentStatus("Look around")
             case .modelUnavailable, .inferenceFailed, .frameUnavailable:
                 clearTransientEquipmentObservations()
-                publishEquipmentStatus("Automatic equipment scanning is unavailable. Mark the meter and panel manually.")
+                publishEquipmentStatus(nil)
             }
         }
 
@@ -2731,8 +2604,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterWallHit = (sample.point, sample.normal)
                 meterWallNormalIsMeasured = sample.normalIsMeasured
                 meterGroundPosition = ground
-                // Auto-advance coaching: "Got it — now the breaker box"
-                publishEquipmentStatus("Got it — now the breaker box")
+                publishEquipmentStatus("Located")
             case .breakerPanel:
                 panelWallMarker?.removeFromParent()
                 panelWallMarker = nil
@@ -2741,8 +2613,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelWallHit = (sample.point, sample.normal)
                 panelWallNormalIsMeasured = sample.normalIsMeasured
                 panelGroundPosition = ground
-                // Auto-advance coaching: "Got the panel"
-                publishEquipmentStatus("Got the panel")
+                publishEquipmentStatus("Scanned")
             }
         }
 
@@ -2965,6 +2836,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 }
             }
             return false
+        }
+        
+        /// Check if relocking equipment at a new position is allowed (always true for now)
+        private func relockAllowed(_ kind: EquipmentKind, point: SIMD3<Float>) -> Bool {
+            return true
         }
 
         private func holdSample(at viewPoint: CGPoint) -> EquipmentLock.Sample? {

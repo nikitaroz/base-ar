@@ -16,50 +16,7 @@ struct RealtimeSurveyView: View {
                 // onContinue: user can save and exit from AR controls
             }
             
-            // Overlay: Status chips + Jev coaching
-            VStack(spacing: 12) {
-                // Live status chips
-                HStack(spacing: 8) {
-                    statusChip(
-                        icon: "location.circle.fill",
-                        text: locationStatus,
-                        color: store.session.propertyLocation != nil ? .green : .orange
-                    )
-                    statusChip(
-                        icon: "bolt.circle.fill",
-                        text: electricalStatus,
-                        color: electricalColor
-                    )
-                    statusChip(
-                        icon: "cube.box.fill",
-                        text: placementStatus,
-                        color: placementColor
-                    )
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                
-                // Jev coaching chip (when available)
-                if let action = jevNextAction {
-                    Button {
-                        showingJevCoaching.toggle()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "sparkles")
-                            Text(action)
-                                .font(.subheadline)
-                                .lineLimit(2)
-                            Spacer()
-                            Image(systemName: showingJevCoaching ? "chevron.up" : "chevron.down")
-                        }
-                        .padding(12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .padding(.horizontal, 16)
-                }
-                
-                Spacer()
-            }
+            Spacer()
         }
         .navigationTitle("Live Scan")
         .navigationBarTitleDisplayMode(.inline)
@@ -96,59 +53,6 @@ struct RealtimeSurveyView: View {
         }
     }
     
-    private func statusChip(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption)
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.medium)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.gradient, in: Capsule())
-    }
-    
-    private var locationStatus: String {
-        store.session.propertyLocation != nil ? "Located" : "Tap for location"
-    }
-    
-    private var electricalStatus: String {
-        let hasMeter = store.session.electrical.meterNumber != nil
-        let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
-        if hasMeter && hasBreaker { return "Scanned" }
-        if hasMeter || hasBreaker { return "Partial" }
-        return "Point at meter"
-    }
-    
-    private var electricalColor: Color {
-        let hasMeter = store.session.electrical.meterNumber != nil
-        let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
-        if hasMeter && hasBreaker { return .green }
-        if hasMeter || hasBreaker { return .yellow }
-        return .orange
-    }
-    
-    private var placementStatus: String {
-        if store.session.placement.batteryPlaced {
-            switch store.session.placementTone {
-            case .clear: return "Looking good"
-            case .conflict: return "Check placement"
-            case .incomplete, .attested: return "Placed"
-            }
-        }
-        return "Preview battery"
-    }
-    
-    private var placementColor: Color {
-        guard store.session.placement.batteryPlaced else { return .orange }
-        switch store.session.placementTone {
-        case .clear: return .green
-        case .conflict: return .orange
-        case .incomplete, .attested: return .yellow
-        }
-    }
     
     private func fetchJevCoaching() {
         guard !isLoadingJev else { return }

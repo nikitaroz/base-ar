@@ -138,6 +138,7 @@ private enum CoachTip: String {
     case foundPanel = "Found the panel"
     case gotNumber = "Got the number"
     case breakerSaved = "Main breaker saved"
+    case panelPhotoSaved = "Panel photo saved"
     case gasMarked = "Gas meter marked"
     case scanned = "Scanned"
     // Automatic capture: the scan photographs the label and reads it by itself. Appended by the capture gate.
@@ -191,7 +192,7 @@ private enum CoachTip: String {
         case .moveSlowly: "iphone.gen3.radiowaves.left.and.right"
         case .moreDetail: "sparkle.magnifyingglass"
         case .paused: "pause.circle.fill"
-        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned: "checkmark.seal.fill"
+        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .panelPhotoSaved, .gasMarked, .scanned: "checkmark.seal.fill"
         case .closerToLabel: "plus.magnifyingglass"
         case .tooDark: "flashlight.on.fill"
         case .tooBright: "sun.max.fill"
@@ -217,7 +218,7 @@ private enum CoachTip: String {
     /// Motion cues keep pulsing so the phone movement reads at a glance. Confirmations and Paused do not.
     var pulses: Bool {
         switch self {
-        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned, .paused,
+        case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .panelPhotoSaved, .gasMarked, .scanned, .paused,
              .gotBreaker, .movingOn, .swipeBack, .gasSaved, .gasNotShown, .scanDone: false
         default: true
         }
@@ -539,6 +540,8 @@ struct PlacementARView: View {
     @State private var passed: Set<LiveStep>
     /// A confirmation that holds the bottom line for a moment.
     @State private var flashTip: CoachTip?
+    /// The locked panel's photo arrived. Until then the panel step asks the user to hold still, not to open the door.
+    @State private var panelPhotoSaved = false
     /// A confirmation earned while a cover hid the screen, shown once it closes.
     @State private var flashAfterCapture: CoachTip?
     @State private var valueEntry: ValueEntry?
@@ -801,6 +804,8 @@ struct PlacementARView: View {
         .onChange(of: step) { _, newStep in
             statusMessage = nil
             gasNudgeDue = false
+            // A new panel search waits for its own photo before asking for the door.
+            if newStep == .findPanel { panelPhotoSaved = false }
             syncGuide()
             // Reached on this visit, so it finishes by itself: the site check is already running off the main
             // thread (the look-around's end started it; this starts one if not), and `runFinishClock` saves once it
@@ -1092,6 +1097,8 @@ struct PlacementARView: View {
     private var taskText: String {
         if let cameraProblem { return cameraProblem.task }
         if step == .gas, gasAnswer != .yes { return "Show the gas meter, if there is one" }
+        // Photo first, then the door: the panel photo is saved before the step asks for the breakers.
+        if step == .readBreaker, !panelPhotoSaved { return "Hold still — saving the panel photo" }
         return step.task
     }
 
@@ -1273,7 +1280,7 @@ struct PlacementARView: View {
             return Feedback(.holdStill)
         case .readBreaker:
             // The lock came from a close or label-only read: the scan wants one wider photo of the panel.
-            return Feedback(scanFeedback.widePanelPhotoPending ? .stepBackWholePanel : .openPanelDoor)
+            return Feedback(scanFeedback.widePanelPhotoPending ? .stepBackWholePanel : (panelPhotoSaved ? .openPanelDoor : .holdStill))
         case .gas:
             // No spot yet after a while: "Yes" says where gas meters sit; otherwise the step says it moves on.
             guard gasNudgeDue else { return Feedback(.pointAtIt) }
@@ -1588,7 +1595,10 @@ struct PlacementARView: View {
         case .electricMeter: if recordedMeterNumber != nil { pass(.readMeter) }
         // The panel photo alone no longer finishes the step (owner, 27 Sep): it waits for the MAIN amps read
         // (see onChange of mainBreakerAmperage) or the patient captureGrace clock.
-        case .breakerPanel: if store.session.electrical.mainBreakerAmperage != nil { pass(.readBreaker) }
+        case .breakerPanel:
+            panelPhotoSaved = true
+            flashTip = .panelPhotoSaved
+            if store.session.electrical.mainBreakerAmperage != nil { pass(.readBreaker) }
         }
     }
 

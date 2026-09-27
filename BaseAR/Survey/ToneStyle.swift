@@ -32,6 +32,20 @@ enum ToneStyle {
         }
     }
 
+    /// Same symbols as Review's readiness card, so the tone never rests on color alone.
+    static func symbol(_ tone: PlacementTone) -> String {
+        switch tone {
+        case .clear:
+            "checkmark.circle.fill"
+        case .attested:
+            "checkmark.circle"
+        case .incomplete:
+            "questionmark.circle.fill"
+        case .conflict:
+            "exclamationmark.triangle.fill"
+        }
+    }
+
     static func statusTitle(_ status: CheckStatus) -> String {
         switch status {
         case .pass:

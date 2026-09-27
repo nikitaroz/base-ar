@@ -259,7 +259,7 @@ private struct SurveyHubView: View {
                     animatedTile(index: 2) {
                         hubTile(
                             title: "Site measurements",
-                            subtitle: "Find the meter and panel, then step back.",
+                            subtitle: "Find the meter and panel, step back, then place the battery.",
                             symbol: "arkit",
                             progress: placementProgress,
                             route: .placement

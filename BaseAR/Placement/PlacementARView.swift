@@ -22,7 +22,8 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
-/// One look-around after the panel, meter, and gas question. Farther is about 8 ft from the panel.
+/// One look-around after the meter, panel, and gas question. Farther is about 8 ft from the meter, where the
+/// battery, pad, and transfer switch go, so the mesh covers that stretch of wall.
 private struct LookAround: Equatable {
     var movedFarther = false
     var lookedLeft = false
@@ -30,11 +31,13 @@ private struct LookAround: Equatable {
     var done: Bool { movedFarther && lookedLeft && lookedRight }
 }
 
+/// Meter, panel, gas, look-around, then the battery. `ready` means the battery is placed and Submit is on.
 private enum ScanCue: Equatable {
-    case findPanel
     case findMeter
+    case findPanel
     case gas
     case lookAround
+    case placeBattery
     case ready
 }
 
@@ -73,7 +76,8 @@ private struct ScanFeedback: Equatable {
     var detector: EquipmentObservationStatus = .ok
 }
 
-/// Kept so older placement code can stay idle. This screen does not walk these steps.
+/// The controller's view of the scan step. `battery` shows the suggested spot beside the meter; `finish` keeps
+/// the placed battery and its transfer-switch box on screen through Submit.
 private enum WalkStep: Equatable {
     case scan
     case gas
@@ -121,6 +125,8 @@ struct PlacementARView: View {
     @State private var isVisible = false
     @State private var coachingIsActive = false
     @State private var scanFeedback = ScanFeedback()
+    /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
+    @State private var recentLock: (kind: EquipmentKind, token: UUID)?
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -149,20 +155,58 @@ struct PlacementARView: View {
         scene.gasMeterPosition != nil || store.gasMeterNotVisible
     }
 
+    /// The suggested spot beside the meter is showing and has not been confirmed yet.
+    private var hasBatteryGhost: Bool {
+        scene.batteryPosition == nil && scene.suggestedBatteryPosition != nil
+    }
+
     private var cue: ScanCue {
-        if !panelMarked { return .findPanel }
         if !meterMarked { return .findMeter }
+        if !panelMarked { return .findPanel }
         if !gasResolved { return .gas }
         if !lookAround.done { return .lookAround }
+        // Only "Put it here" sets batteryPosition; the ghost is `suggestedBatteryPosition`.
+        if scene.batteryPosition == nil { return .placeBattery }
         return .ready
     }
 
     private var lockTarget: EquipmentKind? {
         switch cue {
-        case .findPanel: .breakerPanel
         case .findMeter: .electricMeter
-        case .gas, .lookAround, .ready: nil
+        case .findPanel: .breakerPanel
+        case .gas, .lookAround, .placeBattery, .ready: nil
         }
+    }
+
+    /// Controller step for the current cue. The battery ghost only exists in `battery`; `finish` keeps the placed
+    /// battery and its transfer-switch box. Any other step drops an unconfirmed ghost.
+    private var guideStep: WalkStep {
+        switch cue {
+        case .findMeter, .findPanel, .lookAround: .scan
+        case .gas: .gas
+        case .placeBattery: .battery
+        case .ready: .finish
+        }
+    }
+
+    /// Confirmed battery wins. Until "Put it here", the ghost stands in as the battery, so its tone is the tone
+    /// the spot would get if placed there.
+    private var guidedScene: PlacementSceneSnapshot {
+        var preview = scene
+        if preview.batteryPosition == nil, let suggested = preview.suggestedBatteryPosition {
+            preview.batteryPosition = suggested
+            preview.batteryYawRadians = preview.suggestedBatteryYawRadians
+        }
+        return preview
+    }
+
+    /// The full survey assessment with the ghost or placed battery applied: every required rule, including the
+    /// breaker and panel-rating ones, so the preview is green only when the survey itself would be.
+    /// Nil with no battery on screen, since there is nothing to tint.
+    private var liveAssessment: SurveyAssessment? {
+        let preview = guidedScene
+        guard preview.batteryPosition != nil else { return nil }
+        return store.assessment(applying: preview)
     }
 
     var body: some View {
@@ -184,6 +228,17 @@ struct PlacementARView: View {
             scene = controller.scene
             lookAround = controller.lookAround
             yawRadians = controller.yawRadians
+            syncGuide()
+        }
+        .onChange(of: cue) { _, _ in
+            statusMessage = nil
+            syncGuide()
+        }
+        .onChange(of: meterMarked) { _, marked in
+            noteLockChange(.electricMeter, marked: marked)
+        }
+        .onChange(of: panelMarked) { _, marked in
+            noteLockChange(.breakerPanel, marked: marked)
         }
         .onDisappear {
             isVisible = false
@@ -202,7 +257,9 @@ struct PlacementARView: View {
     }
 
     private var arScreen: some View {
-        VStack(spacing: 0) {
+        // One assessment per update: it tints the battery and writes the tone line.
+        let assessment = liveAssessment
+        return VStack(spacing: 0) {
             ZStack {
                 if let controller = store.placementController {
                     PlacementARRepresentable(
@@ -211,13 +268,15 @@ struct PlacementARView: View {
                         measurementMode: false,
                         measurementKind: .batteryToMeter,
                         editingWorkingSpace: false,
-                        inputEnabled: cue == .gas,
+                        // Battery step: one finger slides it along the meter wall, a tap on the ground moves it there,
+                        // two fingers turn it. After "Put it here" it stays put until "Move it".
+                        inputEnabled: cue == .gas || cue == .placeBattery,
                         aimEnabled: cue == .gas && scene.gasMeterPosition == nil,
-                        tapEnabled: cue == .gas && scene.gasMeterPosition == nil,
+                        tapEnabled: (cue == .gas && scene.gasMeterPosition == nil) || cue == .placeBattery,
                         scanning: true,
                         lockTarget: lockTarget,
                         yawRadians: yawRadians,
-                        tone: .incomplete,
+                        tone: assessment?.placementTone ?? .incomplete,
                         screenshotToken: screenshotToken,
                         onSceneChange: acceptScene,
                         onYawChange: { yawRadians = $0 },
@@ -232,7 +291,7 @@ struct PlacementARView: View {
                 }
             }
             if !coachingIsActive {
-                bottomBar
+                bottomBar(assessment)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
                     .padding(.bottom, 8)
@@ -240,7 +299,7 @@ struct PlacementARView: View {
         }
     }
 
-    private var bottomBar: some View {
+    private func bottomBar(_ assessment: SurveyAssessment?) -> some View {
         VStack(spacing: 12) {
             Text(instruction)
                 .font(.body)
@@ -249,6 +308,13 @@ struct PlacementARView: View {
                 Label(hint.rawValue, systemImage: hint.symbol)
                     .font(.subheadline.weight(.semibold))
                     .symbolEffect(.pulse)
+            }
+            if cue == .placeBattery || cue == .ready, let assessment {
+                // Words and an icon with the tint, never color alone, and no distances on the camera.
+                Label(toneLine(assessment), systemImage: ToneStyle.symbol(assessment.placementTone))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(ToneStyle.color(assessment.placementTone))
+                    .multilineTextAlignment(.center)
             }
             if let trackingMessage {
                 Text(trackingMessage)
@@ -280,6 +346,7 @@ struct PlacementARView: View {
                     }
                     if let wrong = rejectableLock {
                         Button {
+                            recentLock = nil
                             store.placementController?.rejectLock(wrong)
                         } label: {
                             Text("Not the \(wrong.title.lowercased())")
@@ -305,20 +372,58 @@ struct PlacementARView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
             }
-            Button {
-                submit()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
+            if cue == .placeBattery {
+                if hasBatteryGhost {
+                    Button("Other side") {
+                        store.placementController?.flipBatterySide()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isSaving)
                 } else {
-                    Text("Submit")
-                        .frame(maxWidth: .infinity)
+                    // No ground found beside the meter yet. Saving still works; the battery checks stay unknown (amber).
+                    Button("Save without battery") {
+                        submit(withoutBattery: true)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isSaving)
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isSaving || cue != .ready)
+            if cue == .ready {
+                Button("Move it") {
+                    store.placementController?.unconfirmBatterySpot()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isSaving)
+            }
+            if cue == .placeBattery, hasBatteryGhost {
+                Button {
+                    store.placementController?.confirmBatterySpot()
+                } label: {
+                    Text("Put it here")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(isSaving)
+            } else {
+                Button {
+                    submit()
+                } label: {
+                    if isSaving {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Text("Submit")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(isSaving || cue != .ready)
+            }
             if panelMarked || meterMarked || gasResolved {
                 Button("Start over") { restart() }
                     .buttonStyle(.bordered)
@@ -363,25 +468,53 @@ struct PlacementARView: View {
         return lockTarget
     }
 
-    /// The lock the previous step just made. "Not the …" clears it and keeps it from relocking on the same spot.
+    /// A lock "Not the …" may still undo: for 5 s after it locks, and while the next item is being searched for.
+    /// It clears the lock and keeps it from relocking on the same spot. Later, only Start over (or a Redo) undoes it.
     private var rejectableLock: EquipmentKind? {
         switch cue {
-        case .findMeter: panelMarked ? .breakerPanel : nil
-        case .gas: meterMarked ? .electricMeter : nil
-        case .findPanel, .lookAround, .ready: nil
+        case .findPanel where meterMarked: return .electricMeter
+        case .gas where panelMarked: return .breakerPanel
+        default: break
+        }
+        guard let kind = recentLock?.kind else { return nil }
+        return (kind == .electricMeter ? meterMarked : panelMarked) ? kind : nil
+    }
+
+    /// Answered on the Home and Electrical screens, not by where the battery sits. They still count toward the tone;
+    /// the tone line names a siting rule first, since that is what moving the battery can change.
+    private static let electricalRuleIDs: Set<String> = ["austin-main-breaker", "solar-or-two-batteries"]
+
+    /// Words for the tone line: the tone's title, plus the first rule holding it there.
+    private func toneLine(_ assessment: SurveyAssessment) -> String {
+        let required = assessment.results.filter(\.isRequired)
+        func first(_ status: CheckStatus) -> RuleResult? {
+            required.first { $0.status == status && !Self.electricalRuleIDs.contains($0.id) }
+                ?? required.first { $0.status == status }
+        }
+        switch assessment.placementTone {
+        case .clear:
+            return "\(ToneStyle.title(.clear)). Preview only, not approval."
+        case .attested:
+            return "\(ToneStyle.title(.attested)). Some passes are your answers, not measurements."
+        case .conflict:
+            guard let rule = first(.conflict) else { return ToneStyle.title(.conflict) }
+            return "\(ToneStyle.title(.conflict)): \(rule.title)"
+        case .incomplete:
+            guard let rule = first(.unknown) else { return ToneStyle.title(.incomplete) }
+            return "\(ToneStyle.title(.incomplete)): \(rule.title)"
         }
     }
 
     private var instruction: String {
         switch cue {
-        case .findPanel:
-            return manualTargetForCue == nil
-                ? "Looking for the panel."
-                : "Put the dot on the panel, then tap Mark it myself."
         case .findMeter:
             return manualTargetForCue == nil
                 ? "Looking for the meter."
                 : "Put the dot on the meter, then tap Mark it myself."
+        case .findPanel:
+            return manualTargetForCue == nil
+                ? "Looking for the panel."
+                : "Put the dot on the panel, then tap Mark it myself."
         case .gas:
             return scene.gasMeterPosition == nil
                 ? "Gas meter? Tap it, or say there isn’t one."
@@ -391,8 +524,30 @@ struct PlacementARView: View {
             if !lookAround.lookedLeft { return "Look left." }
             if !lookAround.lookedRight { return "Look right." }
             return "Move farther away."
+        case .placeBattery:
+            return hasBatteryGhost
+                ? "Drag or tap the ground to slide the battery along the wall. Then tap Put it here."
+                : "Point your phone at the ground beside the meter, or tap the ground there."
         case .ready:
             return "Tap Submit."
+        }
+    }
+
+    private func syncGuide() {
+        store.placementController?.syncGuide(step: guideStep, gasResolved: gasResolved)
+    }
+
+    /// Opens the 5 s "Not the …" window when a lock appears, and closes it if that lock goes away.
+    private func noteLockChange(_ kind: EquipmentKind, marked: Bool) {
+        guard marked else {
+            if recentLock?.kind == kind { recentLock = nil }
+            return
+        }
+        let token = UUID()
+        recentLock = (kind, token)
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            if recentLock?.token == token { recentLock = nil }
         }
     }
 
@@ -408,11 +563,15 @@ struct PlacementARView: View {
     private func restart() {
         store.setGasMeterNotVisible(false)
         store.placementController?.restartScan()
+        // The live scene is empty now, so it would never be committed over the old marks, height, and photo.
+        store.resetPlacementEvidence()
         statusMessage = nil
+        recentLock = nil
     }
 
-    private func submit() {
-        guard !isSaving, cue == .ready else { return }
+    /// Submit once the battery is placed. "Save without battery" saves from the battery step when no spot showed up.
+    private func submit(withoutBattery: Bool = false) {
+        guard !isSaving, cue == .ready || (withoutBattery && cue == .placeBattery) else { return }
         commitLiveScene()
         let token = UUID()
         pendingSave = token
@@ -931,7 +1090,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             var didPlace = false
             switch mode {
             case .battery:
-                break
+                // Only the battery step moves it, so a stray tap during the scan cannot drop one.
+                guard walkStep == .battery else { break }
+                didPlace = moveBattery(toGroundAt: point)
             case .meter, .panel:
                 // Two-stage: try a wall hit first (user tilting at the meter/panel on a vertical plane); fall back to a ground hit.
                 if let wallHit = wallHit(in: arView, at: point) {
@@ -1332,7 +1493,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 emit()
                 return
             }
-            guard mode != .battery else { return }
+            if mode == .battery {
+                guard walkStep == .battery, moveBattery(toGroundAt: point) else { return }
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                emitGestureEnded()
+                return
+            }
             guard let position = markerPosition(at: point) else {
                 onFailure?(mode == .gasMeter
                     ? "Point the dot at the gas meter and try again."
@@ -1871,12 +2037,20 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             relockBan = nil
         }
 
-        /// "Not the meter" / "Not the panel": drops that lock and bans the same spot from relocking right away.
-        fileprivate func rejectLock(_ kind: EquipmentKind) {
-            guard let hit = kind == .electricMeter ? meterWallHit : panelWallHit else { return }
+        /// "Not the meter" / "Not the panel", and the call for a "Redo meter" / "Redo panel" menu item: drops that lock
+        /// and bans the same spot from relocking right away, so the scan asks for that item again. The battery and the
+        /// look-around are measured from the meter wall, so redoing the meter drops them too. A redone panel keeps a
+        /// placed battery; its checks rerun once the panel locks again.
+        func rejectLock(_ kind: EquipmentKind) {
+            let hit = kind == .electricMeter ? meterWallHit : panelWallHit
             clearEquipmentLock(kind == .electricMeter ? .meter : .panel)
-            banRelock(kind, point: hit.position)
+            if let hit { banRelock(kind, point: hit.position) }
             resetHold()
+            if kind == .electricMeter {
+                clearBattery()
+                lookAround = LookAround()
+                onLookAround?(lookAround)
+            }
         }
 
         /// One short phone-motion cue for the target, from its best box this frame.
@@ -2121,7 +2295,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return locked ? nil : requestedLock
         }
 
+        /// Clears the scan's marks, battery, and look-around. The view also resets the survey's saved placement evidence.
         fileprivate func restartScan() {
+            clearBattery()
             clearEquipmentLock(.meter)
             clearEquipmentLock(.panel)
             relockBan = nil
@@ -2138,10 +2314,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onLookAround?(lookAround)
         }
 
-        /// After the equipment is locked, one step back and a pan left and right finish the scan.
+        /// After the equipment is locked, one step back and a pan left and right finish the scan. Measured from the
+        /// meter wall first, since the battery, pad, and transfer switch sit beside the meter and need mesh there.
         private func noteLookAround() {
-            let origin = panelWallHit?.position ?? meterWallHit?.position
-            let normal = panelWallHit?.normal ?? meterWallHit?.normal
+            let origin = meterWallHit?.position ?? panelWallHit?.position
+            let normal = meterWallHit?.normal ?? panelWallHit?.normal
             guard let origin else { return }
             let camera = arView.cameraTransform.translation
             let forward = -SIMD3<Float>(
@@ -2301,12 +2478,58 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
         }
 
+        /// "Put it here": the ghost becomes the placed battery, so the snapshot reports it as `batteryPosition`.
         func confirmBatterySpot() {
             guard batteryRig != nil else { return }
             batteryConfirmed = true
             applyTone()
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             emitGestureEnded()
+        }
+
+        /// "Move it": the placed battery goes back to a ghost at the same spot, ready to slide again.
+        func unconfirmBatterySpot() {
+            guard batteryConfirmed else { return }
+            batteryConfirmed = false
+            applyTone()
+            emitGestureEnded()
+        }
+
+        /// Drops the battery, placed or not, with the slab that hangs off it. The transfer box hides on the next emit.
+        private func clearBattery() {
+            batteryConfirmed = false
+            clearUnconfirmedBattery()
+        }
+
+        /// A tap on the ground slides the battery along the meter wall to that spot. When no spot was suggested yet
+        /// (no ground found under the meter), the tapped ground gives the height and the battery starts there.
+        /// Either way it stays against the meter wall; the tap does not set the meter's own ground or height.
+        private func moveBattery(toGroundAt point: CGPoint) -> Bool {
+            guard let ground = groundPosition(in: arView, at: point) else {
+                onFailure?("Point at the ground beside the meter and tap again.")
+                return false
+            }
+            if var slide = batterySlide {
+                slide.along = simd_dot(ground - slide.origin, slide.axis)
+                batterySlide = slide
+                applyBatterySlide(resetYaw: false)
+                return true
+            }
+            guard let wall = meterWallHit, let outward = horizontalUnit(wall.normal),
+                  let axis = unitVector(simd_cross(SIMD3<Float>(0, 1, 0), outward)) else {
+                onFailure?("Lock the meter on the wall first.")
+                return false
+            }
+            let origin = SIMD3<Float>(wall.position.x, ground.y, wall.position.z)
+            batterySlide = BatterySlide(
+                origin: origin,
+                outward: outward,
+                axis: axis,
+                groundY: ground.y,
+                along: simd_dot(ground - origin, axis)
+            )
+            applyBatterySlide(resetYaw: true)
+            return true
         }
 
         func flipBatterySide() {
@@ -2338,7 +2561,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 groundY: groundY,
                 along: along
             )
-            if let gas = gasMarker?.position(relativeTo: nil),
+            // The gas mark is a point now (`gasPoint`); `gasMarker` is only left over from older scenes.
+            if let gas = gasPoint ?? gasMarker?.position(relativeTo: nil),
                horizontalFeet(batteryWorldPosition(slide), gas) < BaseRuleSet.minGasMeterDistanceFeet {
                 slide.along = -slide.along
             }
@@ -2730,11 +2954,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let basis = simd_float3x3(columns: (along, box.up, box.normal))
             if simd_determinant(basis) < 0 { along = -along }
             transferBox.orientation = simd_quatf(simd_float3x3(columns: (along, box.up, box.normal)))
+            // Same pass / conflict / unknown colors as the battery tone.
             let color: UIColor
             switch placementMeasurer.measure(snapshot).transferSwitchClearanceObserved {
-            case true: color = .systemGreen
-            case false: color = .systemRed
-            case nil: color = .systemOrange
+            case true: color = ToneStyle.uiColor(.clear)
+            case false: color = ToneStyle.uiColor(.conflict)
+            case nil: color = ToneStyle.uiColor(.incomplete)
             }
             transferBox.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.35))]
         }

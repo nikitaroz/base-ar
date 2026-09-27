@@ -213,6 +213,23 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// "Start over" on the scan: the scan's evidence goes with it, so Review and the hub cannot show marks, a meter
+    /// height, or a photo the scene no longer has. The live scene is not committed until it has content again.
+    /// Kept: the homeowner's no-gas answer (the scan screen decides that one) and whether the phone has LiDAR.
+    func resetPlacementEvidence() {
+        let gasMeterNotPresent = session.placement.gasMeterNotPresent
+        let lidarMeshAvailable = session.placement.lidarMeshAvailable
+        session.placement = PlacementEvidence()
+        session.placement.gasMeterNotPresent = gasMeterNotPresent
+        session.placement.lidarMeshAvailable = lidarMeshAvailable
+        placementImage = nil
+        let photo = directory.appendingPathComponent("placement.jpg")
+        if FileManager.default.fileExists(atPath: photo.path) {
+            try? FileManager.default.removeItem(at: photo)
+        }
+        refreshAssessment()
+    }
+
     func attachPlacementScreenshot(_ image: UIImage) {
         placementImage = image
         session.placement.screenshotFilename = write(Self.uprightJPEG(image), filename: "placement.jpg")

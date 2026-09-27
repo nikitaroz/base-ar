@@ -146,7 +146,7 @@ private enum CoachTip: String {
     case tooBright = "Too bright — shade the label"
     case faceLabel = "Turn so the label faces you"
     case readingBreaker = "Reading the main breaker…"
-    case openPanelDoor = "Open the panel door, not the cover"
+    case openPanelDoor = "Open the panel door to show the breakers — not the inner cover"
     // `holdOnGas` (the gas hold) is declared with the other ring holds above.
     // Integration: a panel read has its own confirmation, and a find step that runs out of time moves on.
     case gotBreaker = "Got the main breaker"
@@ -573,7 +573,8 @@ struct PlacementARView: View {
     /// Touches that start inside this leading strip leave the scan; pans anywhere else reach the AR view.
     private static let edgeWidth: CGFloat = 24
     /// How long a locked meter or panel waits for its photo before the scan moves on. Review lists a missing photo.
-    private static let captureGrace: Duration = .seconds(3)
+    /// Patient on purpose (Logan, 27 Sep): the user needs time to open the panel door and hold the label steady.
+    private static let captureGrace: Duration = .seconds(90)
     /// A panel locked from a close or label-only read waits this long for the controller's wider panel photo.
     private static let widePanelPhotoWait: Duration = .seconds(4)
     /// A gas meter not shown by then is left unknown ("Review asks"). "Yes" on Home Info waits longer, since there
@@ -595,8 +596,8 @@ struct PlacementARView: View {
     private static let blindCameraDelay: Duration = .seconds(5)
     /// A panel the scan cannot capture by then is left unmarked, so the scan still ends (amber) instead
     /// of waiting forever. With the detector down nothing can capture, so the wait is short. Tune on device.
-    private static let findWait: Duration = .seconds(60)
-    private static let findWaitNoDetector: Duration = .seconds(10)
+    private static let findWait: Duration = .seconds(180)
+    private static let findWaitNoDetector: Duration = .seconds(60)
     /// A label mid-read at the deadline gets this much longer.
     private static let findReadingGrace: Duration = .seconds(10)
 

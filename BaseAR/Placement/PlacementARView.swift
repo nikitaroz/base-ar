@@ -2779,11 +2779,16 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private nonisolated func enqueueMesh(_ anchors: [ARAnchor], frame: ARFrame?) {
             let meshAnchors = anchors.filter { $0 is ARMeshAnchor }
             guard !meshAnchors.isEmpty, meshBacklog.add(meshAnchors, frame: frame) else { return }
+            drainMesh()
+        }
+
+        /// Classifies one waiting batch, then queues the next as its own block, so a removal queued meanwhile (see
+        /// `session(_:didRemove:)`) runs right after the batch in flight instead of after the whole backlog.
+        private nonisolated func drainMesh() {
             meshQueue.async { [weak self] in
-                guard let self else { return }
-                while let batch = self.meshBacklog.take() {
-                    self.upsertMesh(from: batch.anchors, frame: batch.frame)
-                }
+                guard let self, let batch = self.meshBacklog.take() else { return }
+                self.upsertMesh(from: batch.anchors, frame: batch.frame)
+                self.drainMesh()
             }
         }
 
@@ -2816,6 +2821,29 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 }
                 self.emitPlanesIfNeeded()
             }
+            // A batch being classified on `meshQueue` right now can still hold these anchors, and its main-actor
+            // update would put them back for good (in `scene.ply` and the obstacle checks). Remove them again after
+            // it: this block runs after that batch on the serial queue, so its hop to the main actor lands after the
+            // batch's.
+            meshQueue.async { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    guard self.removeMesh(ids) else { return }
+                    self.emitPlanesIfNeeded()
+                }
+            }
+        }
+
+        /// Drops these anchors' mesh; true when any was there.
+        private func removeMesh(_ ids: [UUID]) -> Bool {
+            var removed = false
+            for id in ids {
+                let hadSamples = meshSamples.removeValue(forKey: id) != nil
+                let hadCloud = meshClouds.removeValue(forKey: id) != nil
+                removed = removed || hadSamples || hadCloud
+            }
+            if removed { meshVersion += 1 }
+            return removed
         }
 
         nonisolated func session(_ session: ARSession, didFailWithError error: Error) {

@@ -119,6 +119,8 @@ Every capability is Apple-frameworks only: SwiftUI, ARKit, RealityKit, Vision / 
 
 Each teammate does this once per Mac. `git pull` never disturbs signing — those files are gitignored.
 
+> **Already set up before 27 September 2026?** Re-run `./scripts/bootstrap-signing.sh` once to turn on the git hooks (your `Local.xcconfig` is kept), and check that its `DEVELOPMENT_TEAM` matches your team in Xcode → Settings → Accounts. Older versions of the script could write the wrong ID.
+
 1. **Sign in to Xcode with your Apple ID.** Xcode → Settings → Accounts → **+** → Apple ID. Without this Xcode has no cert to sign with and every device build fails with *"No Account for Team … / No profiles for …"*.
 2. **Generate your local signing config.**
    ```sh

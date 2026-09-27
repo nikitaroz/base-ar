@@ -3283,7 +3283,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 format: "%@ area=%.3f c=(%.2f,%.2f) iou=%.2f oblique=%.0f %@",
                 candidate.source, Double(area), Double(centerX), Double(centerY), Double(iou), Double(oblique),
                 Self.describe(candidate.quality)
-            )
+            ) + debugHeight(landing.position, normal: landing.normal)
             if let problem {
                 capture.breakStreak()
                 logCapture(target, "fail:\(problem)", measured)
@@ -3477,6 +3477,16 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 format: "sharp=%.0f luma=%.0f dark=%.2f clip=%.2f",
                 Double(quality.sharpness), Double(quality.meanLuma), Double(quality.darkFraction), Double(quality.clippedFraction)
             )
+        }
+
+        /// Height above the ground under the spot, for tuning the 0.3–2.5 m gate. DEBUG only: it costs a raycast.
+        private func debugHeight(_ point: SIMD3<Float>, normal: SIMD3<Float>) -> String {
+            #if DEBUG
+            guard let ground = groundUnder(point, normal: normal) else { return " height=-" }
+            return String(format: " height=%.2f", Double(point.y - ground.y))
+            #else
+            return ""
+            #endif
         }
 
         private func logCapture(_ target: EquipmentKind, _ decision: String, _ detail: String) {

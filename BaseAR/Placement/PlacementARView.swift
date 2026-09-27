@@ -40,6 +40,63 @@ private struct LookAround: Equatable {
     var done: Bool { timedOut || (covered && movedFarther) }
 }
 
+/// RealityKit starts its engine on the main thread the first time an ARView is made, and that can only run there:
+/// 0.45–0.5 s of the hangs when the Live Survey first opened (27 Sep 10:34:12, 10:42:46). One view made under the
+/// splash pays it while nothing moves; it runs no session and is released once the scan's own controller exists.
+@MainActor
+enum RealityKitWarmup {
+    private static var view: ARView?
+
+    static func start() {
+        guard view == nil, ARWorldTrackingConfiguration.isSupported else { return }
+        view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+    }
+
+    static func release() {
+        view = nil
+    }
+}
+
+/// Mesh anchors waiting to be classified off the main thread, keyed by id so a newer update replaces an older one,
+/// with the newest frame for their colors. `add` is true when no drain is scheduled yet.
+final class MeshBacklog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var anchors: [UUID: ARAnchor] = [:]
+    private var frame: ARFrame?
+    private var scheduled = false
+
+    func add(_ updated: [ARAnchor], frame newest: ARFrame?) -> Bool {
+        lock.withLock {
+            for anchor in updated { anchors[anchor.identifier] = anchor }
+            if let newest { frame = newest }
+            guard !scheduled else { return false }
+            scheduled = true
+            return true
+        }
+    }
+
+    /// The waiting batch, or nil (and the drain ends) when there is none.
+    func take() -> (anchors: [ARAnchor], frame: ARFrame?)? {
+        lock.withLock {
+            guard !anchors.isEmpty else {
+                scheduled = false
+                frame = nil
+                return nil
+            }
+            let batch = (Array(anchors.values), frame)
+            anchors.removeAll()
+            frame = nil
+            return batch
+        }
+    }
+
+    func drop(_ ids: [UUID]) {
+        lock.withLock {
+            for id in ids { anchors.removeValue(forKey: id) }
+        }
+    }
+}
+
 /// Why the Live Survey's camera cannot run. It stays on screen, unlike an error line that clears after 4 s.
 private enum CameraProblem: Equatable {
     /// Camera access is off for the app (denied or restricted).
@@ -2210,6 +2267,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated let equipmentBridge = EquipmentScanBridge()
         /// Camera colors for `scene.ply`, remembered per mesh anchor so a nudge of the anchor does not miss.
         nonisolated let meshColors = MeshColorCache()
+        /// Mesh anchors waiting for `upsertMesh(from:frame:)` off the main thread (see `enqueueMesh`).
+        nonisolated let meshBacklog = MeshBacklog()
+        nonisolated let meshQueue = DispatchQueue(label: "BaseAR.meshClassify", qos: .userInitiated)
         /// Posed photos and depth from new viewpoints during the scan, zipped next to `scene.ply`.
         nonisolated let keyframes = KeyframeRecorder()
         private let boxOverlay = EquipmentBoxOverlay(frame: .zero)
@@ -2682,12 +2742,27 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
-            upsertMesh(from: anchors, frame: session.currentFrame)
+            enqueueMesh(anchors, frame: session.currentFrame)
+        }
+
+        /// The session delivers anchors on the main thread, and classifying and coloring a big mesh update there took
+        /// 0.42 s of a 0.6 s hang (27 Sep 10:35:44). Nikita's `upsertMesh(from:frame:)` runs unchanged on a serial
+        /// queue instead: one batch at a time, anchors that update meanwhile coalesced by id with the newest frame,
+        /// so at most two frames are held.
+        private nonisolated func enqueueMesh(_ anchors: [ARAnchor], frame: ARFrame?) {
+            let meshAnchors = anchors.filter { $0 is ARMeshAnchor }
+            guard !meshAnchors.isEmpty, meshBacklog.add(meshAnchors, frame: frame) else { return }
+            meshQueue.async { [weak self] in
+                guard let self else { return }
+                while let batch = self.meshBacklog.take() {
+                    self.upsertMesh(from: batch.anchors, frame: batch.frame)
+                }
+            }
         }
 
         nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
             upsertPlanes(from: anchors)
-            upsertMesh(from: anchors, frame: session.currentFrame)
+            enqueueMesh(anchors, frame: session.currentFrame)
         }
 
         /// LiDAR mesh anchors update many times a second; skip the hop to the main actor when no wall changed.
@@ -2709,6 +2784,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
             let ids = anchors.map(\.identifier)
+            meshBacklog.drop(ids)
             Task { @MainActor in
                 for id in ids {
                     self.planes.removeValue(forKey: id)
@@ -2750,6 +2826,13 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         func pointCloudParts() -> (chunks: [MeshPointCloudChunk], comments: [String]) {
             let overlay = MeasurementOverlay.build(makeSnapshot(), measurer: placementMeasurer)
             return (Array(meshClouds.values) + [overlay.chunk], overlay.comments)
+        }
+
+        /// What `pointCloudParts` builds from, copied here, so the caller can run `MeasurementOverlay.build` off the
+        /// main actor: on the main thread it was 0.12–0.16 s of the 27 Sep 10:35:51 and 10:43:42 hangs (Share and
+        /// the left-edge checkpoint). The parts come out the same.
+        func pointCloudInputs() -> (clouds: [MeshPointCloudChunk], snapshot: PlacementSceneSnapshot, measurer: CorePlacementMeasurer) {
+            (Array(meshClouds.values), makeSnapshot(), placementMeasurer)
         }
 
         var hasExportableMesh: Bool {

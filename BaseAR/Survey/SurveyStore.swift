@@ -145,6 +145,7 @@ final class SurveyStore {
         created.surveyID = session.id
         created.keyframes.setDirectory(directory.appendingPathComponent("capture", isDirectory: true))
         placementController = created
+        RealityKitWarmup.release()
         return created
     }
 
@@ -503,7 +504,8 @@ final class SurveyStore {
     /// Saves the scan without sharing it: at the Live Survey's finish and when it is left. Writes survey.json, the
     /// capture manifest (so an unfinished run keeps `frames.json`), and scene.ply through the same guard as Share.
     /// Queued behind any export in flight and written off the main actor, like Share; nothing is zipped.
-    /// Uses Nikita's point-cloud functions unchanged (`pointCloudParts`, `hasExportableMesh`, `finalize`).
+    /// Uses Nikita's point-cloud functions unchanged (`MeasurementOverlay`, `hasExportableMesh`, `finalize`); the overlay is
+    /// built off the main actor (`pointCloudInputs`, then `pointCloudParts` in a detached task).
     func checkpointScan() {
         let previous = exportTask
         exportTask = Task { @MainActor in
@@ -578,11 +580,13 @@ final class SurveyStore {
         isExporting = true
         defer { isExporting = false }
         // No mesh parts means "keep the saved scene.ply" (see `keepsSavedScene`).
-        let parts = keepsSavedScene() ? nil : placementController?.pointCloudParts()
+        let inputs = keepsSavedScene() ? nil : placementController?.pointCloudInputs()
         let keyframes = placementController?.keyframes
         let snapshot = sessionForWriting()
         let directory = directory
         let exporter = exporter
+        // The overlay's measuring runs here, off the main actor, not in `pointCloudInputs`.
+        let parts = await Task.detached(priority: .userInitiated) { inputs.map(Self.pointCloudParts) }.value
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 try Self.writeExport(session: snapshot, mesh: parts, keyframes: keyframes, directory: directory, exporter: exporter)
@@ -601,11 +605,13 @@ final class SurveyStore {
     /// `checkpointScan`'s write: the same files as Share, without the zip, and the share list is left alone.
     private func runCheckpoint() async {
         refreshAssessment()
-        let parts = keepsSavedScene() ? nil : placementController?.pointCloudParts()
+        let inputs = keepsSavedScene() ? nil : placementController?.pointCloudInputs()
         let keyframes = placementController?.keyframes
         let snapshot = sessionForWriting()
         let directory = directory
         let exporter = exporter
+        // The overlay's measuring runs here, off the main actor, not in `pointCloudInputs`.
+        let parts = await Task.detached(priority: .userInitiated) { inputs.map(Self.pointCloudParts) }.value
         do {
             let result = try await Task.detached(priority: .userInitiated) {
                 try Self.writeSurveyFiles(session: snapshot, mesh: parts, keyframes: keyframes, directory: directory, exporter: exporter)
@@ -627,6 +633,15 @@ final class SurveyStore {
         // The export wrote survey.json from an older snapshot than a queued autosave may hold; write it once more
         // so the file on disk ends with every field, the export's included.
         scheduleAutosave()
+    }
+
+    /// `PlacementSceneController.pointCloudParts`, built off the main actor from `pointCloudInputs`: the same mesh
+    /// and Nikita's `MeasurementOverlay`, unchanged. Its measuring was most of two checkpoint hangs on 27 Sep.
+    private nonisolated static func pointCloudParts(
+        _ inputs: (clouds: [MeshPointCloudChunk], snapshot: PlacementSceneSnapshot, measurer: CorePlacementMeasurer)
+    ) -> (chunks: [MeshPointCloudChunk], comments: [String]) {
+        let overlay = MeasurementOverlay.build(inputs.snapshot, measurer: inputs.measurer)
+        return (inputs.clouds + [overlay.chunk], overlay.comments)
     }
 
     private struct ExportResult: Sendable {

@@ -91,7 +91,14 @@ struct ContentView: View {
         }
         .task {
             guard phase == .splash else { return }
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            // The splash is drawn by now; RealityKit's one-time engine start blocks here instead of on the tap that
+            // opens the Live Survey. The splash keeps its 0.7 s.
+            let clock = ContinuousClock()
+            let shown = clock.now
+            try? await Task.sleep(for: .milliseconds(100))
+            RealityKitWarmup.start()
+            let left = Duration.milliseconds(700) - (clock.now - shown)
+            if left > .zero { try? await Task.sleep(for: left) }
             withAnimation(.spring(response: 0.55, dampingFraction: 0.85)) {
                 phase = .welcome
             }

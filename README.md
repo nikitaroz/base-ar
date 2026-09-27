@@ -12,9 +12,9 @@ Not an electrical inspection, code review, or installation approval.
 
 ## Demo
 
-https://github.com/nikitaroz/base-ar/raw/main/docs/media/demo.mp4
+![Base Site Survey demo](docs/media/demo.gif)
 
-> If your Markdown viewer does not render the video inline, open [`docs/media/demo.mp4`](docs/media/demo.mp4) directly.
+> Prefer the higher-quality clip? Grab [`docs/media/demo.mp4`](docs/media/demo.mp4).
 
 ## Contents
 

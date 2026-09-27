@@ -121,11 +121,20 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     /// The panel's bus rating in amps, typed from the panel label. Distinct from mainBreakerAmperage:
     /// the main breaker never stands in for the bus rating. Nil until the user enters it.
     var panelBusRatingAmps: Int?
+    /// Home Info answer that decides whether the Live Survey looks for a gas meter. Nil means not answered.
+    var gasMeterAnswer: GasMeterAnswer?
 
     /// Solar or two batteries need a 200A panel, so only then does the bus rating matter.
     var needsPanelBusRating: Bool {
         hasSolar == true || (plannedBatteryCount ?? 0) >= 2
     }
+}
+
+/// "No" is the homeowner's statement, not a measurement: it skips the gas step and records the gas check as their answer.
+enum GasMeterAnswer: String, Codable, Sendable, CaseIterable {
+    case yes
+    case no
+    case notSure
 }
 
 struct PlacementAnchor: Codable, Sendable, Equatable {

@@ -145,6 +145,18 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// "No" stands in for the Live Survey's gas step. A gas meter already marked on the scan still wins.
+    func setGasMeterAnswer(_ value: GasMeterAnswer?) {
+        session.electrical.gasMeterAnswer = value
+        if value == .no, !session.placement.gasMeterMarked {
+            session.placement.gasMeterNotPresent = true
+            placementController?.clearGasMarker()
+        } else if value != .no {
+            session.placement.gasMeterNotPresent = false
+        }
+        refreshAssessment()
+    }
+
     func setHasPortableGenerator(_ value: Bool?) {
         session.electrical.hasPortableGenerator = value
         refreshAssessment()

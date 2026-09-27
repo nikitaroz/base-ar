@@ -320,7 +320,7 @@ private struct OffScreenAnchorIndicator: View {
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: pointers.isEmpty)) { _ in
                 ZStack {
                     ForEach(pointers) { pointer in
                         indicator(for: pointer, in: geo.size)
@@ -486,11 +486,11 @@ private extension PlacementSceneSnapshot {
 }
 
 /// Step 2, the Live Survey: the camera with one task line on top and one feedback line at the bottom. No top bar
-/// and no buttons: each step advances by itself once the scan has what it needs, and a swipe right from the left
-/// edge leaves. The ••• menu, the typed-number sheets, and the step buttons below stay in the code but are not shown.
+/// and no capture buttons: each step advances by itself once the scan has what it needs. A small back button in the
+/// top-left corner, or a swipe right from the left edge, leaves. The ••• menu, the typed-number sheets, and the step buttons below stay in the code but are not shown.
 struct PlacementARView: View {
     var store: SurveyStore
-    /// Leaves the Live Survey from the left-edge swipe or VoiceOver's escape, after the scene is committed and the
+    /// Leaves the Live Survey from the back button, the left-edge swipe, or VoiceOver's escape, after the scene is committed and the
     /// session paused. Called without an animation, since the slide already happened. Nil pops with `dismiss`.
     var onExit: (() -> Void)?
     var onContinue: () -> Void
@@ -997,7 +997,8 @@ struct PlacementARView: View {
                 VStack(spacing: 0) {
                     if !coachingIsActive || cameraProblem != nil {
                         taskLineView
-                            .padding(.horizontal, 16)
+                            // Room for the back button and the photo counter on either side.
+                            .padding(.horizontal, 56)
                             .padding(.top, 8)
                     }
                     Spacer(minLength: 0)
@@ -1008,6 +1009,19 @@ struct PlacementARView: View {
                 // Nothing on the lines takes a touch, so a drag that starts on them still reaches the AR view.
                 .allowsHitTesting(false)
             }
+        }
+        .overlay(alignment: .topLeading) {
+            // The one control on the camera: a way out that doesn't need the edge swipe. It stays up during
+            // coaching and camera failures, so the scan never traps anyone.
+            Button { leave() } label: {
+                Image(systemName: "chevron.backward")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+            .accessibilityLabel("Leave the Live Survey")
         }
         .overlay(alignment: .topTrailing) {
             if capturedFrames > 0 && !coachingIsActive {
@@ -1624,7 +1638,7 @@ struct PlacementARView: View {
         (try? await Task.sleep(for: duration)) != nil
     }
 
-    /// The left-edge swipe and VoiceOver's escape: keep the scan, pause the camera, and leave. The swipe slides the
+    /// The back button, the left-edge swipe, and VoiceOver's escape: keep the scan, pause the camera, and leave. The swipe slides the
     /// screen out first, so the navigation itself runs without an animation.
     private func leave(slidingOut width: CGFloat? = nil) {
         guard !isLeaving else { return }
@@ -2139,6 +2153,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var planes: [UUID: PlaneSample] = [:]
         /// Classified face samples, keyed by ARMeshAnchor identifier so removals stay cheap.
         var meshSamples: [UUID: [ClassifiedMeshSample]] = [:]
+        /// Bumped on every change to `meshSamples`, so the near-placement list is rebuilt only when it can differ.
+        private var meshVersion = 0
+        private var nearMesh: (version: Int, origins: [SIMD3<Float>], samples: [ClassifiedMeshSample], key: Int)?
         /// World-space mesh kept for `scene.ply`. Classification stays in the samples; it is not drawn on the camera.
         private var meshClouds: [UUID: MeshPointCloudChunk] = [:]
         var transferBox: ModelEntity?
@@ -2637,6 +2654,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 for id in ids {
                     self.planes.removeValue(forKey: id)
                     self.meshSamples.removeValue(forKey: id)
+                    self.meshVersion += 1
                     self.meshClouds.removeValue(forKey: id)
                 }
                 self.emitPlanesIfNeeded()
@@ -2665,8 +2683,14 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// ASCII PLY of every current mesh anchor plus the measurement overlay: battery, marks, distance bars,
         /// and each check as a header comment. Offline tools read the marks from here. Nil when the scan has no vertices.
         func pointCloudPLYData() -> Data? {
+            let parts = pointCloudParts()
+            return PointCloudPLY.data(from: parts.chunks, comments: parts.comments)
+        }
+
+        /// The mesh and overlay for `scene.ply`, copied off the scene so the slow ASCII write can run off the main actor.
+        func pointCloudParts() -> (chunks: [MeshPointCloudChunk], comments: [String]) {
             let overlay = MeasurementOverlay.build(makeSnapshot(), measurer: placementMeasurer)
-            return PointCloudPLY.data(from: Array(meshClouds.values) + [overlay.chunk], comments: overlay.comments)
+            return (Array(meshClouds.values) + [overlay.chunk], overlay.comments)
         }
 
         var hasExportableMesh: Bool {
@@ -2676,6 +2700,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func upsertMesh(_ updates: [ClassifiedMeshUpdate]) {
             for update in updates {
                 meshSamples[update.id] = update.samples
+                meshVersion += 1
                 meshClouds[update.id] = update.cloud
             }
             emitPlanesIfNeeded()
@@ -5375,7 +5400,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             } else {
                 snapshot.workingSpacePosition = nil
             }
-            snapshot.classifiedMesh = classifiedSamplesNearPlacement()
+            (snapshot.classifiedMesh, snapshot.classifiedMeshKey) = classifiedSamplesNearPlacement()
             if let feet = placementMeasurer.wallClearance(in: snapshot)?.distanceFeet {
                 snapshot.automaticWallClearanceFeet = (feet * 12).rounded() / 12
             } else {
@@ -5476,13 +5501,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         /// Samples near the battery, meter, panel, or working space. The long tape stays a raycast.
-        private func classifiedSamplesNearPlacement() -> [ClassifiedMeshSample] {
+        /// The same list keeps the same key, so measuring reuses its scan index.
+        private func classifiedSamplesNearPlacement() -> ([ClassifiedMeshSample], Int) {
             var origins: [SIMD3<Float>] = []
             if let batteryRig { origins.append(batteryRig.position(relativeTo: nil)) }
             if let meterWallHit { origins.append(meterWallHit.position) }
             if let panelWallHit { origins.append(panelWallHit.position) }
             if let workingSpaceOverlay { origins.append(workingSpaceOverlay.position(relativeTo: nil)) }
-            guard !origins.isEmpty else { return [] }
+            guard !origins.isEmpty else { return ([], 0) }
+            if let nearMesh, nearMesh.version == meshVersion, nearMesh.origins == origins {
+                return (nearMesh.samples, nearMesh.key)
+            }
+            let samples = samplesNear(origins)
+            let key = nearMesh.flatMap { $0.samples == samples ? $0.key : nil } ?? PlacementSceneSnapshot.newMeshKey()
+            nearMesh = (meshVersion, origins, samples, key)
+            return (samples, key)
+        }
+
+        private func samplesNear(_ origins: [SIMD3<Float>]) -> [ClassifiedMeshSample] {
             let limit: Float = 8 * 8
             var result: [ClassifiedMeshSample] = []
             for samples in meshSamples.values {

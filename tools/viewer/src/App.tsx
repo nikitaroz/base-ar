@@ -3,7 +3,6 @@ import { ChevronDown, CircleAlert, CircleCheck, CircleHelp, CircleX, Upload } fr
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { analyze, parsePLY, type Analysis, type Check, type FloorCell, type GridCell, type PLY, type Rules, type Spot, type Status } from "@/lib/checker.js"
@@ -36,12 +35,14 @@ const VERDICTS: Record<Analysis["verdict"], { tone: Status; title: string; text:
 }
 
 const TONE = {
-  pass: { text: "text-emerald-600 dark:text-emerald-400", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400", label: "Pass" },
-  conflict: { text: "text-destructive", badge: "bg-destructive/10 text-destructive dark:bg-destructive/20", label: "Blocked" },
-  unknown: { text: "text-amber-600 dark:text-amber-400", badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400", label: "Unknown" },
+  pass: { text: "text-emerald-600 dark:text-emerald-400", badge: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400", label: "Pass", hint: "every measured check passes" },
+  conflict: { text: "text-destructive", badge: "bg-destructive/10 text-destructive dark:bg-destructive/20", label: "Blocked", hint: "a check fails" },
+  unknown: { text: "text-amber-600 dark:text-amber-400", badge: "bg-amber-500/15 text-amber-700 dark:text-amber-400", label: "Unknown", hint: "not scanned enough to tell" },
 } as const
 
 const SWATCH = { pass: "bg-emerald-500", conflict: "bg-red-500", unknown: "bg-amber-500" } as const
+const STATES = ["pass", "conflict", "unknown"] as const
+const title = (k: string, v: Check) => v.title ?? NAMES[k] ?? k
 
 const SOURCE_URLS: Record<string, string> = {
   "Base electrical and spacing requirements": "https://help.basepowercompany.com/en/articles/10280705",
@@ -68,7 +69,7 @@ function ChecksList({ checks }: { checks: Record<string, Check> }) {
         <details key={k} className="group/check px-3 py-2">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-sm [&::-webkit-details-marker]:hidden">
             <span className={cn("size-1.5 shrink-0 rounded-full", SWATCH[v.status])} />
-            <span className="min-w-0 flex-1 truncate font-medium">{v.title ?? NAMES[k] ?? k}</span>
+            <span className="min-w-0 flex-1 truncate font-medium">{title(k, v)}</span>
             <StatusBadge check={v} />
             <ChevronDown className="text-muted-foreground size-3.5 shrink-0 transition-transform group-open/check:rotate-180" />
           </summary>
@@ -91,15 +92,61 @@ function CheckSection({ title, checks, children, open = false }: { title: string
       <summary className="flex cursor-pointer list-none items-center gap-2 py-1 text-sm font-semibold [&::-webkit-details-marker]:hidden">
         <span className="flex-1">{title}</span>
         {counts && <span className="text-muted-foreground flex gap-2 text-[11px] font-normal">
-          {!!counts.pass && <span>{counts.pass} passed</span>}
-          {!!counts.conflict && <span className={TONE.conflict.text}>{counts.conflict} blocked</span>}
-          {!!counts.unknown && <span className={TONE.unknown.text}>{counts.unknown} open</span>}
+          {STATES.filter((s) => counts[s]).map((s) => <span key={s} className={s === "pass" ? undefined : TONE[s].text}>{counts[s]} {TONE[s].label.toLowerCase()}</span>)}
         </span>}
         <ChevronDown className="text-muted-foreground size-4 transition-transform group-open/section:rotate-180" />
       </summary>
       <div className="pt-2">{children ?? (checks && <ChecksList checks={checks} />)}</div>
     </details>
   )
+}
+
+function Swatch({ className, color, text, round }: { className?: string; color?: string; text: string; round?: boolean }) {
+  return <span className="flex items-center gap-1.5"><span className={cn("size-2.5 shrink-0", round ? "rounded-full" : "rounded-sm", className)} style={color ? { background: color } : undefined} />{text}</span>
+}
+
+// Only what this scan actually draws, grouped: placement markers, the marks, then ARKit colors in labels mode.
+function SceneLegend({ analysis, colorMode, showGrid, showFloor }: { analysis: Analysis; colorMode: ColorMode; showGrid: boolean; showFloor: boolean }) {
+  const marks = analysis.marks ?? {}
+  const has = (...keys: string[]) => keys.some((k) => marks[k] && typeof marks[k] !== "string")
+  const floor = showGrid && showFloor ? analysis.floor ?? [] : []
+  const group = "flex flex-wrap items-center gap-x-3 gap-y-1"
+  return (
+    <div className="bg-background/85 text-muted-foreground absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] space-y-1.5 rounded-lg border px-3 py-2 text-[11px] shadow-sm backdrop-blur">
+      {showGrid && analysis.grid && <div className={group}>
+        <span className="text-foreground font-medium">Battery centers</span>
+        {STATES.map((s) => <Swatch key={s} className={SWATCH[s]} text={TONE[s].label} />)}
+        {floor.some((f) => f.kind === "far") && <Swatch className="bg-slate-400/60" text="No battery" />}
+        {floor.some((f) => f.kind === "lowwall") && <Swatch className="bg-amber-300/70" text="Wall not confirmed" />}
+      </div>}
+      {(has("meter_wall", "meter_ground", "panel_wall", "panel_ground", "gas_meter") || analysis.transferBox) && <div className={group}>
+        {has("meter_wall", "meter_ground") && <Swatch round className="bg-purple-500" text={analysis.reach && analysis.rules ? `Meter · ${analysis.rules.max_meter_distance_ft} ft ring` : "Meter"} />}
+        {analysis.transferBox && <Swatch className="border border-purple-500" text="Transfer switch" />}
+        {has("panel_wall", "panel_ground") && <Swatch round className="bg-teal-500" text="Panel" />}
+        {has("gas_meter") && <Swatch round className="bg-pink-500" text="Gas meter" />}
+      </div>}
+      {colorMode === "labels" && <div className={group}>
+        <span className="text-foreground font-medium">ARKit</span>
+        {([[1, "Wall"], [2, "Floor"], [6, "Window"], [7, "Door"], [4, "Table"], [5, "Seat"], [0, "Other"]] as const).map(([i, t]) => (
+          <Swatch key={t} color={`rgb(${LABEL_RGB[i].join(",")})`} text={t} />
+        ))}
+      </div>}
+      <div className="border-t pt-1.5">
+        <span className="md:hidden">Tap a marker · drag the battery</span>
+        <span className="hidden md:inline">Drag to orbit · scroll to zoom · hover or click a marker · drag the battery</span>
+      </div>
+    </div>
+  )
+}
+
+// Keep the hover card inside the canvas: open it toward whichever side has room.
+function tooltipPosition(x: number, y: number, host: HTMLElement | null): React.CSSProperties {
+  const w = host?.clientWidth ?? 600, h = host?.clientHeight ?? 400
+  return {
+    ...(x > w / 2 ? { right: Math.max(w - x + 14, 8) } : { left: x + 14 }),
+    ...(y > h / 2 ? { bottom: Math.max(h - y + 14, 8) } : { top: y + 14 }),
+    maxWidth: Math.min(288, w - 16),
+  }
 }
 
 interface Loaded { ply?: string; plyName?: string; survey?: unknown; surveyName?: string; rules?: Partial<Rules>; rulesName?: string; packetName?: string }
@@ -137,26 +184,39 @@ export default function App() {
     if (!q.get("ply")) return
     ;(async () => {
       const next: Loaded = {}
-      for (const k of ["ply", "survey", "rules"] as const) {
-        const url = q.get(k)
-        if (!url) continue
-        const text = await (await fetch(url)).text()
-        const name = url.split("/").pop()
-        if (k === "ply") Object.assign(next, { ply: text, plyName: name })
-        else if (k === "survey") Object.assign(next, { survey: JSON.parse(text), surveyName: name })
-        else Object.assign(next, { rules: JSON.parse(text), rulesName: name })
+      try {
+        for (const k of ["ply", "survey", "rules"] as const) {
+          const url = q.get(k)
+          if (!url) continue
+          const name = url.split("/").pop()
+          const res = await fetch(url)
+          // Dev servers answer a missing file with index.html and 200, so an HTML reply is a miss too.
+          if (!res.ok || res.headers.get("content-type")?.includes("text/html")) throw new Error(`Could not load ${name}.`)
+          const text = await res.text()
+          if (k === "ply") { Object.assign(next, { ply: text, plyName: name }); continue }
+          let json: unknown
+          try { json = JSON.parse(text) } catch { throw new Error(`${name} is not valid JSON.`) }
+          if (k === "survey") Object.assign(next, { survey: json, surveyName: name })
+          else Object.assign(next, { rules: json, rulesName: name })
+        }
+        setLoaded(next)
+      } catch (error) {
+        setStatus((error as Error).message)
       }
-      setLoaded(next)
     })()
   }, [])
 
   const readFiles = useCallback(async (files: File[]) => {
     const next: Loaded = { ...loaded }
     try {
-      for (const f of files) {
+      const zipsFirst = [...files].sort((a, b) => Number(!a.name.toLowerCase().endsWith(".zip")) - Number(!b.name.toLowerCase().endsWith(".zip")))
+      for (const f of zipsFirst) {
         const lower = f.name.toLowerCase()
         if (lower.endsWith(".zip")) {
           const packet = await readSurveyPacket(f)
+          // A new packet replaces the old scan and survey; a packet without survey.json must not inherit one.
+          delete next.survey
+          delete next.surveyName
           Object.assign(next, packet, { packetName: f.name })
           continue
         }
@@ -214,7 +274,11 @@ export default function App() {
 
   const choose = (spot: Spot, label: string) => { sceneRef.current?.showSpot(spot); setSelected({ spot, label }) }
   const onDrop = (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); readFiles([...e.dataTransfer.files]) }
-  const dropProps = { onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOver(true) }, onDragLeave: () => setDragOver(false), onDrop }
+  const dropProps = {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOver(true) },
+    onDragLeave: (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false) },
+    onDrop,
+  }
 
   const verdict = analysis ? VERDICTS[analysis.verdict] : null
   const VerdictIcon = verdict ? { pass: CircleCheck, conflict: CircleX, unknown: CircleHelp }[verdict.tone] : CircleAlert
@@ -225,9 +289,8 @@ export default function App() {
   const envelopeTotal = envelopeCounts ? envelopeCounts.pass + envelopeCounts.conflict + envelopeCounts.unknown : 0
 
   return (
-    <div className="flex h-dvh flex-col-reverse bg-background text-foreground md:flex-row">
-      <aside className="h-[55%] shrink-0 border-t md:h-full md:w-[360px] md:border-t-0 md:border-r">
-        <ScrollArea className="h-full">
+    <div className="flex h-dvh flex-col-reverse bg-background text-foreground md:flex-row" {...dropProps}>
+      <aside className="h-[55%] shrink-0 overflow-y-auto overscroll-contain border-t md:h-full md:w-[360px] md:border-t-0 md:border-r">
           <div className="flex flex-col gap-3 p-4">
             <div>
               <h1 className="font-heading text-lg font-semibold tracking-tight">Site Scan Viewer</h1>
@@ -237,7 +300,6 @@ export default function App() {
             <button
               type="button"
               onClick={() => picker.current?.click()}
-              {...dropProps}
               className={cn("flex items-center justify-center gap-2 rounded-lg border border-dashed text-sm transition-colors hover:bg-muted/50",
                 analysis ? "px-3 py-2" : "flex-col px-4 py-5 text-center",
                 dragOver && "border-primary bg-muted/50")}
@@ -259,11 +321,12 @@ export default function App() {
                       <p className="text-muted-foreground mt-0.5 text-xs">{analysis.reason ?? verdict.text}</p>
                     </div>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-2 text-[11px]">
-                    {analysis.region && <span className="text-muted-foreground">{analysis.region} rules</span>}
-                    {analysis.counts && (["pass", "conflict", "unknown"] as const).map((s) => (
-                      <span key={s} className="flex items-center gap-1"><span className={cn("size-1.5 rounded-full", SWATCH[s])} />{analysis.counts![s]}</span>
+                  <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t pt-2 text-[11px]">
+                    {analysis.counts && <span>Battery centers:</span>}
+                    {analysis.counts && STATES.map((s) => (
+                      <span key={s} className="flex items-center gap-1"><span className={cn("size-1.5 rounded-full", SWATCH[s])} />{analysis.counts![s]} {TONE[s].label.toLowerCase()}</span>
                     ))}
+                    {analysis.region && <span className="basis-full">{analysis.region} rules</span>}
                   </div>
                 </section>
 
@@ -274,14 +337,14 @@ export default function App() {
                         <h2 className="text-sm font-semibold">Selected spot</h2>
                         {selected && selected.spot.status !== "offwall"
                           ? <p className={cn("mt-0.5 text-xs", TONE[selected.spot.status].text)}>
-                              {{ pass: "Scan-eligible", conflict: "Blocked", unknown: "Needs more scan" }[selected.spot.status]} · {selected.label}
+                              {TONE[selected.spot.status].label} · {selected.label}
                             </p>
                           : <p className="text-muted-foreground mt-0.5 text-xs">{selected ? selected.spot.reason : "Select a marker on the scan"}</p>}
                       </div>
                       {envelopeCounts && <div className="shrink-0 text-right text-xs">
                         {envelopeCounts.pass === envelopeTotal
-                          ? <span className={TONE.pass.text}>All {envelopeTotal} cells clear</span>
-                          : <><span className={TONE.conflict.text}>{envelopeCounts.conflict} blocked</span><br /><span className={TONE.unknown.text}>{envelopeCounts.unknown} unscanned</span></>}
+                          ? <span className={TONE.pass.text}>All {envelopeTotal} squares pass</span>
+                          : <><span className={TONE.conflict.text}>{envelopeCounts.conflict} blocked</span><br /><span className={TONE.unknown.text}>{envelopeCounts.unknown} unknown</span></>}
                       </div>}
                     </div>
                     <div className="flex gap-2">
@@ -320,20 +383,6 @@ export default function App() {
                   </div>
                 </CheckSection>
 
-                <CheckSection title="Legend">
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
-                    <div className="col-span-2 mb-1">Markers are possible battery centers. A selected spot passes only when its full envelope is green.</div>
-                    {[
-                      [SWATCH.pass, "Clear"], [SWATCH.conflict, "Blocked"],
-                      [SWATCH.unknown, "Unscanned"], ["bg-slate-400/60", "No valid center"],
-                      ["bg-amber-300/70", "Wall not confirmed"], ["bg-purple-500", "Meter / reach"],
-                      ["bg-teal-500", "Panel"], ["bg-pink-500", "Gas meter"],
-                    ].map(([c, t]) => <div key={t} className="flex items-center gap-2"><span className={cn("size-2.5 shrink-0 rounded-sm", c)} />{t}</div>)}
-                    {colorMode === "labels" && ([[1, "Wall"], [2, "Floor"], [6, "Window"], [7, "Door"], [4, "Table"], [5, "Seat"], [0, "Other"]] as const).map(([i, t]) => (
-                      <div key={t} className="flex items-center gap-2"><span className="size-2.5 shrink-0 rounded-sm" style={{ background: `rgb(${LABEL_RGB[i].join(",")})` }} />{t}</div>
-                    ))}
-                  </div>
-                </CheckSection>
               </>
             )}
 
@@ -341,15 +390,14 @@ export default function App() {
               Preliminary only. Green is scan-supported, not installation approval.
             </p>
           </div>
-        </ScrollArea>
       </aside>
 
-      <main className="relative min-h-0 flex-1 bg-muted/40" {...dropProps}>
+      <main className={cn("relative min-h-0 flex-1 overflow-hidden bg-muted/40", dragOver && "ring-primary ring-2 ring-inset")}>
         <div ref={host} className="absolute inset-0" />
         {status && <div className="text-muted-foreground pointer-events-none absolute inset-0 grid place-items-center p-6 text-center">{status}</div>}
         {hover && (
           <div className="bg-popover text-popover-foreground pointer-events-none absolute z-10 max-w-72 rounded-lg border px-3 py-2 text-xs shadow-md"
-            style={{ left: Math.min(hover.x + 14, (host.current?.clientWidth ?? 600) - 300), top: hover.y + 14 }}>
+            style={tooltipPosition(hover.x, hover.y, host.current)}>
             {hover.cell.status === "offwall" ? (
               <>
                 <div className={cn("mb-1 font-medium", hover.cell.kind === "lowwall" ? TONE.unknown.text : "text-muted-foreground")}>
@@ -359,20 +407,16 @@ export default function App() {
               </>
             ) : (
               <>
-                <div className={cn("mb-1 font-medium", TONE[hover.cell.status].text)}>{{ pass: "Fits", conflict: "Blocked", unknown: "Not scanned enough" }[hover.cell.status]}</div>
+                <div className={cn("mb-1 font-medium", TONE[hover.cell.status].text)}>{TONE[hover.cell.status].label}: {TONE[hover.cell.status].hint}</div>
                 {Object.entries(hover.cell.spot.checks).filter(([, v]) => v.status !== "pass").map(([k, v]) => (
-                  <div key={k}><span className={TONE[v.status].text}>{NAMES[k] ?? k}:</span> <span className="text-muted-foreground">{v.detail}</span></div>
+                  <div key={k}><span className={TONE[v.status].text}>{title(k, v)}:</span> <span className="text-muted-foreground">{v.detail}</span></div>
                 ))}
-                {hover.cell.status === "pass" && <div className="text-muted-foreground">Every measured check passes. Click to inspect.</div>}
+                <div className="text-muted-foreground mt-1">Click to inspect.</div>
               </>
             )}
           </div>
         )}
-        {analysis?.grid && (
-          <Badge variant="outline" className="bg-background/80 text-muted-foreground absolute bottom-3 left-3 hidden backdrop-blur md:inline-flex">
-            Drag to orbit · scroll to zoom · hover a cell · drag the battery to move it
-          </Badge>
-        )}
+        {analysis && !status && <SceneLegend analysis={analysis} colorMode={colorMode} showGrid={showGrid} showFloor={showFloor} />}
       </main>
     </div>
   )

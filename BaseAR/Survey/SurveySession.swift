@@ -315,7 +315,6 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var meterHeightFeet: Double?
     var frontWorkspaceWidthInches: Double?
     var frontWorkspaceDepthInches: Double?
-    var meterAndPanelSameWall: Bool?
     var batteryPosition: PlacementAnchor?
     var meterPosition: PlacementAnchor?
     var panelPosition: PlacementAnchor?
@@ -329,7 +328,8 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
     /// Explicit answer after positioning the 30 × 36 in overlay. Nil stays unknown.
     var frontWorkingSpaceIsClear: Bool?
-    /// Explicit homeowner observation; no geometry-only inference is accepted.
+    /// True when the meter and panel wall taps sit on the same wall (either side counts).
+    /// Populated by `CorePlacementMeasurer.meterAndPanelSameWall` from the two wall locks.
     var meterAndPanelShareWall: Bool?
     var workingSpacePosition: PlacementAnchor?
     var workingSpaceYawRadians: Float?

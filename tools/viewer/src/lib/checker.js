@@ -284,19 +284,25 @@ function pickRegion(survey, override) {
 
 function electrical(survey, rules) {
   const e = (survey && survey.electrical) || {};
-  const amps = e.mainBreakerAmperage, solar = e.hasSolar, count = e.plannedBatteryCount;
+  const amps = e.mainBreakerAmperage, bus = e.panelBusRatingAmps, solar = e.hasSolar, count = e.plannedBatteryCount;
   const out = {};
   const [lo, hi] = rules.main_breaker_amps;
+  // A scan's read of the breaker is a suggestion until the user confirms it, the same as the app's rule.
   out.main_breaker = amps == null
     ? { status: "unknown", kind: "input", detail: "Breaker amperage not in survey.json" }
-    : { status: amps >= lo && amps <= hi ? "pass" : "conflict", kind: "input", detail: `${amps} A measured against ${lo}–${hi} A` };
+    : e.mainBreakerAmperageSource === "ocr"
+    ? { status: "unknown", kind: "input", detail: `${amps} A read by scan, not confirmed by the user` }
+    : { status: amps >= lo && amps <= hi ? "pass" : "conflict", kind: "input", detail: `${amps} A stated, against ${lo}–${hi} A` };
+  // Decided only from the panel bus rating read off the label. Never inferred from the main breaker.
   const need = rules.panel_amps_for_solar_or_two_batteries;
+  const needs = solar === true || (count || 0) >= 2;
+  const neither = solar === false && count != null && count < 2;
   let st, detail;
-  if (amps == null) { st = "unknown"; detail = "Breaker amperage not in survey.json"; }
-  else if (amps >= need) { st = "pass"; detail = `${amps} A covers solar and two batteries`; }
-  else if (solar === true || (count || 0) >= 2) { st = "conflict"; detail = `${solar ? "Solar" : "Two batteries"} needs ${need} A`; }
-  else if (solar === false && count != null && count < 2) { st = "pass"; detail = "No solar, one battery"; }
-  else { st = "unknown"; detail = "Solar or battery count not answered"; }
+  if (neither) { st = "pass"; detail = "No solar, one battery"; }
+  else if (!needs) { st = "unknown"; detail = "Solar or battery count not answered"; }
+  else if (bus == null) { st = "unknown"; detail = "Panel bus rating not in survey.json"; }
+  else if (bus >= need) { st = "pass"; detail = `${bus} A panel bus rating stated, covers ${solar ? "solar" : "two batteries"}`; }
+  else { st = "conflict"; detail = `${solar ? "Solar" : "Two batteries"} needs a ${need} A panel; ${bus} A stated`; }
   out.solar_or_two_batteries = { status: st, kind: "input", detail };
   return withMeta(out);
 }

@@ -10,9 +10,12 @@ final class SurveyStore {
     var meterImage: UIImage?
     /// The one zipped survey folder handed to the share sheet.
     private(set) var exportURLs: [URL] = []
-    /// Local survey.json from the last export, for the review preview.
+    /// Local survey.json from the last export.
     private(set) var surveyJSONURL: URL?
     private(set) var lastExportError: String?
+    /// True while an export is writing. Share waits for it.
+    private(set) var isExporting = false
+    private var exportTask: Task<Void, Never>?
     /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
     private(set) var meterNumberNote: String?
     private(set) var isReadingMeterNumber = false
@@ -130,12 +133,12 @@ final class SurveyStore {
     }
 
     func setEmail(_ value: String) {
-        session.email = value
+        session.email = value.trimmingCharacters(in: .whitespacesAndNewlines)
         refreshAssessment()
     }
 
     func setPhone(_ value: String) {
-        session.phone = value
+        session.phone = value.trimmingCharacters(in: .whitespacesAndNewlines)
         refreshAssessment()
     }
 
@@ -146,7 +149,7 @@ final class SurveyStore {
 
     func setMeterNumber(_ value: String, source: MeterNumberSource = .manual, note: String? = nil) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        session.electrical.meterNumber = value
+        session.electrical.meterNumber = trimmed.isEmpty ? nil : trimmed
         session.electrical.meterNumberSource = trimmed.isEmpty ? nil : source
         meterNumberNote = note
         meterNumberFromScanCrop = false
@@ -154,13 +157,16 @@ final class SurveyStore {
     }
 
     /// `source` is `.manual` for anything the user typed or tapped. Only the scan's own read passes `.ocr`.
+    /// Values outside the residential range (60–400 A) are dropped — a negative or four-digit read is either OCR noise
+    /// or a typo, and shipping either downstream would break the Austin 150–200 A rule.
     func setMainBreakerAmperage(_ value: Int?, source: MeterNumberSource = .manual, note: String? = nil) {
+        let bounded = value.flatMap { (60...400).contains($0) ? $0 : nil }
         // Which OCR rule read it stays only while the value is still that read (confirming it keeps the value).
-        if value == nil || (source != .ocr && value != session.electrical.mainBreakerAmperage) {
+        if bounded == nil || (source != .ocr && bounded != session.electrical.mainBreakerAmperage) {
             session.electrical.mainBreakerAmperageBasis = nil
         }
-        session.electrical.mainBreakerAmperage = value
-        session.electrical.mainBreakerAmperageSource = value == nil ? nil : source
+        session.electrical.mainBreakerAmperage = bounded
+        session.electrical.mainBreakerAmperageSource = bounded == nil ? nil : source
         mainBreakerNote = note
         mainBreakerFromScan = false
         refreshAssessment()
@@ -205,8 +211,10 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// The UI only offers 1 or 2 (see `BatteryCountChoice`). Anything outside 1...2 is dropped so the `solar-or-two-batteries`
+    /// rule never sees a zero or a stray large value.
     func setPlannedBatteryCount(_ value: Int?) {
-        session.electrical.plannedBatteryCount = value
+        session.electrical.plannedBatteryCount = value.flatMap { (1...2).contains($0) ? $0 : nil }
         refreshAssessment()
     }
 
@@ -394,18 +402,13 @@ final class SurveyStore {
 
     /// Saves the scan without sharing it: at the Live Survey's finish and when it is left. Writes survey.json, the
     /// capture manifest (so an unfinished run keeps `frames.json`), and scene.ply through the same guard as Share.
-    /// Uses Nikita's point-cloud functions unchanged (`pointCloudPLYData`, `hasExportableMesh`, `finalize`).
+    /// Queued behind any export in flight and written off the main actor, like Share; nothing is zipped.
+    /// Uses Nikita's point-cloud functions unchanged (`pointCloudParts`, `hasExportableMesh`, `finalize`).
     func checkpointScan() {
-        refreshAssessment()
-        do {
-            session.placement.pointCloudFilename = try writePointCloud()
-            let capture = try placementController?.keyframes.finalize()
-            session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
-            session.placement.capturedFrameCount = capture == nil ? nil : placementController?.keyframes.count
-            surveyJSONURL = try exporter.write(session, to: directory)
-            lastExportError = nil
-        } catch {
-            lastExportError = error.localizedDescription
+        let previous = exportTask
+        exportTask = Task { @MainActor in
+            await previous?.value
+            await runCheckpoint()
         }
     }
 
@@ -449,22 +452,33 @@ final class SurveyStore {
     }
 
     /// Writes the survey files, then shares them as one zipped folder so AirDrop sends a single item.
-    func exportForSharing() {
+    /// The mesh, keyframes, and zip are written off the main actor; exports run one at a time, in call order.
+    func exportForSharing() async {
+        let previous = exportTask
+        let task = Task { @MainActor in
+            await previous?.value
+            await runExport()
+        }
+        exportTask = task
+        await task.value
+    }
+
+    private func runExport() async {
         refreshAssessment()
+        isExporting = true
+        defer { isExporting = false }
+        // No mesh parts means "keep the saved scene.ply" (see `keepsSavedScene`).
+        let parts = keepsSavedScene() ? nil : placementController?.pointCloudParts()
+        let keyframes = placementController?.keyframes
+        let snapshot = session
+        let directory = directory
+        let exporter = exporter
         do {
-            session.placement.pointCloudFilename = try writePointCloud()
-            let capture = try placementController?.keyframes.finalize()
-            session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
-            session.placement.capturedFrameCount = capture == nil ? nil : placementController?.keyframes.count
-            surveyJSONURL = try exporter.write(session, to: directory)
-            exportURLs = [try packageSurvey(including: [
-                "survey.json",
-                session.placement.pointCloudFilename,
-                session.electrical.meterPhotoFilename,
-                session.electrical.panelPhotoFilename,
-                session.electrical.gasMeterPhotoFilename,
-                capture == nil ? nil : "capture"
-            ].compactMap { $0 })]
+            let result = try await Task.detached(priority: .userInitiated) {
+                try Self.writeExport(session: snapshot, mesh: parts, keyframes: keyframes, directory: directory, exporter: exporter)
+            }.value
+            applyWritten(result.session, surveyJSON: result.surveyJSON)
+            exportURLs = [result.archive]
             lastExportError = nil
         } catch {
             exportURLs = []
@@ -472,8 +486,78 @@ final class SurveyStore {
         }
     }
 
+    /// `checkpointScan`'s write: the same files as Share, without the zip, and the share list is left alone.
+    private func runCheckpoint() async {
+        refreshAssessment()
+        let parts = keepsSavedScene() ? nil : placementController?.pointCloudParts()
+        let keyframes = placementController?.keyframes
+        let snapshot = session
+        let directory = directory
+        let exporter = exporter
+        do {
+            let result = try await Task.detached(priority: .userInitiated) {
+                try Self.writeSurveyFiles(session: snapshot, mesh: parts, keyframes: keyframes, directory: directory, exporter: exporter)
+            }.value
+            applyWritten(result.session, surveyJSON: result.surveyJSON)
+            lastExportError = nil
+        } catch {
+            lastExportError = error.localizedDescription
+        }
+    }
+
+    /// Only the export's own fields: anything the user changed meanwhile stays, and the next export writes it.
+    private func applyWritten(_ written: SurveySession, surveyJSON: URL) {
+        session.placement.pointCloudFilename = written.placement.pointCloudFilename
+        session.placement.captureManifestPath = written.placement.captureManifestPath
+        session.placement.capturedFrameCount = written.placement.capturedFrameCount
+        surveyJSONURL = surveyJSON
+    }
+
+    private struct ExportResult: Sendable {
+        var session: SurveySession
+        var surveyJSON: URL
+        var archive: URL
+    }
+
+    private nonisolated static func writeExport(
+        session: SurveySession,
+        mesh: (chunks: [MeshPointCloudChunk], comments: [String])?,
+        keyframes: KeyframeRecorder?,
+        directory: URL,
+        exporter: any SurveyExporting
+    ) throws -> ExportResult {
+        let written = try writeSurveyFiles(session: session, mesh: mesh, keyframes: keyframes, directory: directory, exporter: exporter)
+        let session = written.session
+        let archive = try packageSurvey(from: directory, including: [
+            "survey.json",
+            session.placement.pointCloudFilename,
+            session.electrical.meterPhotoFilename,
+            session.electrical.panelPhotoFilename,
+            session.electrical.gasMeterPhotoFilename,
+            session.placement.captureManifestPath == nil ? nil : "capture"
+        ].compactMap { $0 })
+        return ExportResult(session: session, surveyJSON: written.surveyJSON, archive: archive)
+    }
+
+    /// scene.ply, the capture manifest, and survey.json.
+    private nonisolated static func writeSurveyFiles(
+        session: SurveySession,
+        mesh: (chunks: [MeshPointCloudChunk], comments: [String])?,
+        keyframes: KeyframeRecorder?,
+        directory: URL,
+        exporter: any SurveyExporting
+    ) throws -> (session: SurveySession, surveyJSON: URL) {
+        var session = session
+        session.placement.pointCloudFilename = try writePointCloud(mesh, in: directory)
+        let capture = try keyframes?.finalize()
+        session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
+        session.placement.capturedFrameCount = capture == nil ? nil : keyframes?.count
+        let surveyJSON = try exporter.write(session, to: directory)
+        return (session, surveyJSON)
+    }
+
     /// Copies the named survey files into a dated folder and zips it. Unzipping gives that one folder.
-    private func packageSurvey(including names: [String]) throws -> URL {
+    private nonisolated static func packageSurvey(from directory: URL, including names: [String]) throws -> URL {
         let files = FileManager.default
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -525,19 +609,28 @@ final class SurveyStore {
         session.gridContext = decision.capturedGridContext
     }
 
-    /// Latest LiDAR mesh as `scene.ply`. Removes a stale file when the scan has no mesh at all. An existing scene.ply
-    /// is kept, not overwritten, when the live session has no mesh right now (a session that was restarted, or
-    /// relaunched) or its battery is more than 5 cm from the one survey.json records: the 22:31 run's Share wrote an
-    /// overlay-only scene.ply whose battery was 5 m from survey.json's. Nikita's `pointCloudPLYData` is unchanged.
-    private func writePointCloud() throws -> String? {
+    /// True when an existing scene.ply must be kept, not overwritten: the live session has no mesh right now (a
+    /// session that was restarted, or relaunched) or its battery is more than 5 cm from the one survey.json records.
+    /// The 22:31 run's Share wrote an overlay-only scene.ply whose battery was 5 m from survey.json's.
+    private func keepsSavedScene() -> Bool {
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("scene.ply").path),
+              let controller = placementController else { return false }
+        return !controller.hasExportableMesh
+            || !Self.sameBattery(controller.scene.batteryPosition, session.placement.batteryPosition)
+    }
+
+    /// Latest LiDAR mesh as `scene.ply`. With no mesh parts (no live scan this launch, or `keepsSavedScene`) the
+    /// saved file is kept as it is; parts that make no PLY (no vertices at all) remove a stale file.
+    /// Nikita's point-cloud format is unchanged (`PointCloudPLY.data`).
+    private nonisolated static func writePointCloud(
+        _ mesh: (chunks: [MeshPointCloudChunk], comments: [String])?,
+        in directory: URL
+    ) throws -> String? {
         let name = "scene.ply"
         let url = directory.appendingPathComponent(name)
         let exists = FileManager.default.fileExists(atPath: url.path)
-        if exists, let controller = placementController,
-           !controller.hasExportableMesh || !Self.sameBattery(controller.scene.batteryPosition, session.placement.batteryPosition) {
-            return name
-        }
-        guard let data = placementController?.pointCloudPLYData() else {
+        guard let mesh else { return exists ? name : nil }
+        guard let data = PointCloudPLY.data(from: mesh.chunks, comments: mesh.comments) else {
             if exists {
                 try FileManager.default.removeItem(at: url)
             }

@@ -1,0 +1,20 @@
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_15966b77bb9086 2824-2846
+  s_535a502178fe4f::t_22d68018e7028a 2782-2787,2789-2791
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eede155334fb8fd0083159de7953bda34d300769",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

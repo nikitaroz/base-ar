@@ -493,7 +493,7 @@ private struct SurveyHubView: View {
                     animatedTile(index: 2) {
                         hubTile(
                             title: "Site measurements",
-                            subtitle: "Find the meter and panel, step back, then place the battery.",
+                            subtitle: "Find the meter and panel, show the gas meter, then step back.",
                             symbol: "arkit",
                             progress: placementProgress,
                             route: .placement
@@ -670,8 +670,9 @@ extension SurveyStore {
         ])
     }
 
-    /// The Live Survey: it finds the meter and panel, reads the meter number and breaker, finds the gas meter
-    /// (unless Home Info says there is none), and places the battery.
+    /// The Live Survey: it finds the meter and panel, reads the meter number and breaker, is shown the gas meter
+    /// (unless Home Info says there is none), and suggests the battery spot at the finish. A finish that found no
+    /// spot still answers that item: Review says why, and an engineer chooses one.
     var scanProgress: StepProgress {
         let placement = session.placement
         let liveScene = placementController?.scene
@@ -679,7 +680,7 @@ extension SurveyStore {
             placement.meterMarked || liveMeterMarked,
             placement.panelMarked || livePanelMarked,
             gasMeterResolved,
-            placement.batteryPlaced || liveScene?.batteryPosition != nil
+            placement.batteryPlaced || liveScene?.batteryPosition != nil || placement.batterySpot != nil
         ])
     }
 
@@ -941,7 +942,7 @@ private struct HomeInformationView: View {
 
             Section("Gas") {
                 RadioChoice(title: "Gas meter outside", selection: gasMeterBinding) { $0.title }
-                Text("The battery must sit at least 3 ft from a gas meter. If you have one, the Live Survey asks you to find it.")
+                Text("The battery must sit at least 3 ft from a gas meter. If you have one, the Live Survey asks you to point the camera at it.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

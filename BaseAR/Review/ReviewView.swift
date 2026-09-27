@@ -20,6 +20,9 @@ struct ReviewView: View {
                 readinessCard
                 whatsMissingCard
                 details
+                if !store.photoKitShots.isEmpty {
+                    photoKitCard
+                }
                 TypeSafeJevAdvisoryView(session: store.session)
                 shareSection
                 #if DEBUG
@@ -65,7 +68,7 @@ struct ReviewView: View {
             await exportIfChanged()
         }
         .sheet(isPresented: $showShare) {
-            ActivityShareSheet(urls: store.exportURLs)
+            ActivityShareSheet(urls: store.exportURLs) { store.markFinished() }
         }
     }
 
@@ -413,13 +416,17 @@ struct ReviewView: View {
             if gasShownNotRecognized {
                 gasShownCheck
             }
-            LabeledContent("Spot to meter", value: feet(store.session.placement.distanceToMeterFeet))
-            LabeledContent("Spot to wall", value: feet(store.session.placement.distanceToWallFeet))
-            LabeledContent("Spot to gas meter", value: feet(store.session.placement.distanceToGasMeterFeet))
+            if !siteCheckAnswered {
+                LabeledContent("Spot to meter", value: feet(store.session.placement.distanceToMeterFeet))
+                LabeledContent("Spot to wall", value: feet(store.session.placement.distanceToWallFeet))
+                LabeledContent("Spot to gas meter", value: feet(store.session.placement.distanceToGasMeterFeet))
+            }
             LabeledContent("Meter height", value: feet(store.session.placement.meterHeightFeet))
-            LabeledContent("3 × 3 ft spot clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
-            LabeledContent("Spot not in front of a window", value: observation(store.session.placement.clearOfWindows))
-            LabeledContent("Spot clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
+            if !siteCheckAnswered {
+                LabeledContent("3 × 3 ft spot clear", value: attestationText(measured: store.session.placement.footprintIsClear, attested: store.session.placement.footprintClearAttested))
+                LabeledContent("Spot not in front of a window", value: observation(store.session.placement.clearOfWindows))
+                LabeledContent("Spot clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
+            }
             LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
             LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
             LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelShareWall))
@@ -485,10 +492,71 @@ struct ReviewView: View {
 
     private var siteCheck: SiteCheck { SiteCheck.of(store.session) }
 
+    /// Base's nine photos, in Base's order, tagged from the saved photos and scan frames. State is in words and
+    /// shape, never color alone.
+    private var photoKitCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Base photo set")
+                .font(.headline)
+            ForEach(store.photoKitShots) { shot in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: photoKitSymbol(shot.status))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(shot.number). \(shot.title)")
+                            .font(.footnote)
+                        if !shot.note.isEmpty {
+                            Text(shot.note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Text(photoKitStatus(shot.status))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func photoKitSymbol(_ status: PhotoKitShotStatus) -> String {
+        switch status {
+        case .covered: "checkmark.circle"
+        case .partial: "circle.lefthalf.filled"
+        case .missing: "circle"
+        case .notTagged: "minus.circle"
+        }
+    }
+
+    private func photoKitStatus(_ status: PhotoKitShotStatus) -> String {
+        switch status {
+        case .covered: "Taken"
+        case .partial: "Check it"
+        case .missing: "Missing"
+        case .notTagged: "Not tagged"
+        }
+    }
+
+    /// The Live Survey's site check (not an older placed battery) answered the spot.
+    private var siteCheckAnswered: Bool {
+        store.session.placement.batterySpot?.source == BatterySpotPlanner.source
+    }
+
     /// Found on measured ground reads green; found on an answer reads teal; a blocked site is red; not yet known is amber.
     private func siteCheckTone(_ check: SiteCheck) -> PlacementTone {
         switch check {
-        case .found(let measured): measured ? .clear : .attested
+        case .found(let measured):
+            // A spot was found but the gas meter is still open: the site-spot rule is unknown, so amber, not teal.
+            store.session.ruleResults.first { $0.id == BaseRuleSet.siteSpotRuleID }?.status == .unknown
+                ? .incomplete : (measured ? .clear : .attested)
         case .noClearSpot: .conflict
         case .notRun, .noMeter, .notEnoughScanned: .incomplete
         }
@@ -526,6 +594,7 @@ struct ReviewView: View {
 
     /// The checks that judge the pad itself, in the order an installer reads them.
     private static let padRuleIDs = [
+        BaseRuleSet.siteSpotRuleID,
         "planning-footprint",
         "wall-distance",
         "not-in-front-of-window",
@@ -1008,9 +1077,17 @@ private extension String {
 
 private struct ActivityShareSheet: UIViewControllerRepresentable {
     var urls: [URL]
+    /// Runs on the main actor when the share activity completed (not when it was cancelled).
+    var onCompleted: @MainActor () -> Void = {}
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        let onCompleted = onCompleted
+        controller.completionWithItemsHandler = { _, completed, _, _ in
+            guard completed else { return }
+            Task { @MainActor in onCompleted() }
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

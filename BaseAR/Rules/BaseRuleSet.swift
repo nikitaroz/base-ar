@@ -90,7 +90,7 @@ enum BaseRuleSet {
 
     private static let siteSpot = EligibilityRule(
         id: siteSpotRuleID,
-        title: "Space for a battery beside the meter",
+        title: "Clear spot beside the meter",
         requirement: "A clear \(Int(footprintSideFeet)) ft × \(Int(footprintSideFeet)) ft ground spot within \(Int(maxWallDistanceFeet)) ft of the meter wall, within \(Int(maxMeterDistanceFeet)) ft of the meter, at least \(Int(minGasMeterDistanceFeet)) ft from a gas meter, not in front of a window, and out of the meter's and panel's working space.",
         isRequired: true,
         evaluate: { session in

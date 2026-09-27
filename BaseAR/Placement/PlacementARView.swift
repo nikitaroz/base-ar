@@ -845,6 +845,17 @@ struct PlacementARView: View {
         .onChange(of: lookAround.done) { _, done in
             if done { flashTip = .scanned }
         }
+        .onChange(of: lookAround) { _, next in
+            // Base's photo kit prefers the frames on screen when each part of the look-around filled in. A timeout
+            // says nothing about a shot, so it adds no moment; the kit then tags from camera poses alone.
+            guard !next.timedOut else { return }
+            store.notePhotoKitLookAround(
+                movedFarther: next.movedFarther,
+                lookedLeft: next.leftWallCovered,
+                lookedRight: next.rightWallCovered,
+                frame: store.placementController?.arView.session.currentFrame
+            )
+        }
         .onChange(of: recordedMeterNumber) { old, new in
             // A number the scan read. It stays a suggestion until the user confirms it in Review.
             if isVisible, let new, new != old {

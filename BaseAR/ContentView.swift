@@ -406,7 +406,8 @@ private struct WelcomeView: View {
                     .offset(y: contentAppeared ? 0 : 12)
                     Spacer(minLength: 48)
                     Button(action: onContinue) {
-                        Text("Start survey")
+                        // After a relaunch the first survey picks up the newest unfinished one (SurveyLibrary).
+                        Text(SurveyLibrary.hasPendingResume ? "Continue survey" : "Start survey")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -669,7 +670,7 @@ extension SurveyStore {
         let placement = session.placement
         let liveScene = placementController?.scene
         return StepProgress([
-            placement.batteryPlaced || liveScene?.batteryPosition != nil,
+            placement.batteryPlaced || placement.batterySpot != nil || liveScene?.batterySpot != nil,
             placement.meterMarked || liveMeterMarked,
             gasMeterResolved
         ])
@@ -685,7 +686,7 @@ extension SurveyStore {
             placement.meterMarked || liveMeterMarked,
             placement.panelMarked || livePanelMarked,
             gasMeterResolved,
-            placement.batteryPlaced || liveScene?.batteryPosition != nil || placement.batterySpot != nil
+            placement.batteryPlaced || placement.batterySpot != nil || liveScene?.batterySpot != nil
         ])
     }
 

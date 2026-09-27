@@ -122,6 +122,11 @@ enum MissingInformation {
             add(.scan, "More of the ground beside the meter scanned, for the site check")
         case .noClearSpot:
             break
+        case .found where session.placement.batterySpot?.source == BatterySpotPlanner.source:
+            // The site check measured every spacing rule on the spot itself; only the gas answer can be open.
+            if !session.placement.gasMeterMarked && !session.placement.gasMeterNotPresent {
+                add(.scan, "Gas meter shown on the scan, for the 3 ft check")
+            }
         case .found:
             if !session.placement.meterMarked {
                 add(.scan, "Electric meter marked on the scan, for the 20 ft check")
@@ -138,6 +143,9 @@ enum MissingInformation {
             if session.placement.keepsEquipmentAccess == nil {
                 add(.scan, "Whether the spot blocks the meter or panel working space")
             }
+        }
+        if !session.placement.panelMarked || session.electrical.panelPhotoFilename == nil {
+            add(.scan, "Breaker panel found on the scan, with a clear photo of the whole panel")
         }
         if session.placement.meterHeightFeet == nil {
             add(.scan, "Confirmed meter height")
@@ -174,6 +182,11 @@ enum SiteCheck: Equatable, Sendable {
         let placement = session.placement
         if let spot = placement.batterySpot {
             switch spot.status {
+            case .placed where spot.source == BatterySpotPlanner.source:
+                // The site check passes a spot only when every check on it was measured clear. The gas part is
+                // measured only when the scan recognized the gas meter; a spot the user showed, or "No", is an answer.
+                let gasMeasured = placement.gasMeterPosition != nil && placement.gasMeterMarkSource == .recognized
+                return .found(measured: gasMeasured)
             case .placed:
                 break
             case .noMeter:

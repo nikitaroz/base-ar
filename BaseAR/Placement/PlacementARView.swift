@@ -95,6 +95,14 @@ private enum CoachTip: String {
     case breakerSaved = "Main breaker saved"
     case gasMarked = "Gas meter marked"
     case scanned = "Scanned"
+    // Automatic capture: the scan photographs the label and reads it by itself. Appended by the capture gate.
+    case closerToLabel = "Get closer to the label"
+    case tooDark = "Too dark — add light"
+    case tooBright = "Too bright — shade the label"
+    case faceLabel = "Turn so the label faces you"
+    case readingBreaker = "Reading the main breaker…"
+    case openPanelDoor = "Open the panel door, not the cover"
+    case holdOnGas = "Hold the ring on the gas meter"
 
     var symbol: String {
         switch self {
@@ -116,6 +124,13 @@ private enum CoachTip: String {
         case .moreDetail: "sparkle.magnifyingglass"
         case .paused: "pause.circle.fill"
         case .foundMeter, .foundPanel, .gotNumber, .breakerSaved, .gasMarked, .scanned: "checkmark.seal.fill"
+        case .closerToLabel: "plus.magnifyingglass"
+        case .tooDark: "flashlight.on.fill"
+        case .tooBright: "sun.max.fill"
+        case .faceLabel: "rotate.3d"
+        case .readingBreaker: "text.viewfinder"
+        case .openPanelDoor: "door.left.hand.open"
+        case .holdOnGas: "smallcircle.filled.circle"
         }
     }
 
@@ -1209,6 +1224,15 @@ private struct EquipmentLock {
     }
 }
 
+/// A box the capture gate is judging this frame: a detector box, or the text-first box of a label it read.
+private struct CaptureCandidate {
+    /// Vision-normalized, origin lower left of the upright image.
+    var box: CGRect
+    var quality: CaptureReading?
+    var textFirst: Bool
+    var source: String
+}
+
 /// Battery center slides on a line parallel to the meter wall.
 private struct BatterySlide {
     var origin: SIMD3<Float>
@@ -1416,6 +1440,22 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private var onScanFeedback: ((ScanFeedback) -> Void)?
         private var lastScanFeedback: ScanFeedback?
         private var onMeterCrop: ((UIImage) -> Void)?
+        /// The capture gate's photo and label value for a meter or panel it locked. The store sets this when it
+        /// creates the controller, so no screen has to pass it through.
+        var onScanCapture: ((ScanCapture) -> Void)?
+        /// A lock the capture gate made was cleared ("Not the …", Redo, Start over): its photo and read go too.
+        var onScanCaptureCleared: ((EquipmentKind) -> Void)?
+        private let textReader = ScanTextReader()
+        private var capture = ScanCaptureState()
+        private var shownCaptureHint: CoachTip?
+        private var proposedCaptureHint: CoachTip?
+        private var proposedCaptureHintCount = 0
+        private var gasHoldAnchor: SIMD3<Float>?
+        private var gasHoldSince: CFTimeInterval?
+        /// When the gas step's ring appeared, so a hold only counts once the user has had a moment to aim.
+        private var gasAimSince: CFTimeInterval?
+        private var gasHint: CoachTip?
+        private static let captureLog = Logger(subsystem: "BaseAR", category: "ScanCapture")
         /// Renders the fallback meter photo off the main thread. Core Image contexts are thread-safe.
         private nonisolated static let cropContext = CIContext()
         private var batterySlide: BatterySlide?
@@ -2133,6 +2173,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 return
             }
             holdReticle.isHidden = true
+            if mode != .gasMeter || !aimEnabled || coachingActive, gasAimSince != nil || gasHint != nil {
+                gasAimSince = nil
+                gasHint = nil
+                resetGasHold()
+            }
             let showDot = aimEnabled && !coachingActive && arView.bounds.width > 1
             guard showDot else {
                 aimDot.isHidden = true
@@ -2148,6 +2193,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 reticle?.isEnabled = false
                 hideLiveLine()
                 publishLiveFeet(nil)
+                updateGasHold(at: point)
                 return
             }
             if measurementMode, measurementKind == .batteryToWall {
@@ -2454,6 +2500,11 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         func clearEquipmentLock(_ kind: PlacementTarget) {
+            let clearedScanCapture: EquipmentKind? = switch kind {
+            case .meter where meterLockSource == .scanCapture: .electricMeter
+            case .panel where panelLockSource == .scanCapture: .breakerPanel
+            default: nil
+            }
             switch kind {
             case .meter:
                 meterLock = EquipmentLock()
@@ -2481,6 +2532,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.panelWallNormal = nil
             case .battery, .gasMeter:
                 return
+            }
+            resetCapture()
+            if let clearedScanCapture {
+                onScanCaptureCleared?(clearedScanCapture)
             }
             emit()
         }
@@ -2513,6 +2568,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             detectorStatus = packet.status
             guard scanningEquipment, !coachingActive, trackingBlockedMessage == nil else {
                 clearPendingScan()
+                capture.breakStreak()
                 return
             }
             var best: [EquipmentKind: EquipmentDetection] = [:]
@@ -2539,6 +2595,10 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             // Only the object this step is asking for can lock. Both kinds still draw.
             let target = holdLockKind()
+            if Self.scanCaptureEnabled {
+                scanHint = settledCaptureHint(evaluateCapture(packet))
+                return
+            }
             scanHint = hint(for: target, best: best)
             guard let target else { return }
             // A lock needs an unbroken run: a frame without a usable box for the target starts the count over.
@@ -2668,7 +2728,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             let live = target != nil && !coachingActive && trackingBlockedMessage == nil && freshScan != nil
             let feedback = ScanFeedback(
-                hint: live && status == .ok ? scanHint : nil,
+                hint: live && status == .ok ? scanHint : (target == nil && mode == .gasMeter ? gasHint : nil),
                 manualTarget: manualMarkOffered ? target : nil,
                 detector: status
             )
@@ -2842,6 +2902,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// the real one. The detector's own box for a detector lock; for a hold or "Mark it myself", only a meter box
         /// under the dot. No box, no crop.
         private func sendMeterCrop(source: EquipmentLockSource) {
+            // A scan capture hands over its own photo, the sharp crop it read.
+            guard source != .scanCapture else { return }
             guard onMeterCrop != nil, let packet = freshScan, let pixels = packet.pixels else { return }
             let meterBoxes = pendingDetections.filter { $0.kind == .electricMeter }
             let detection: EquipmentDetection?
@@ -3005,6 +3067,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             aimDot.isHidden = false
             reticle?.isEnabled = false
             hideLiveLine()
+            // The capture gate locks the meter and panel. The dot stays as an aiming aid; the hold lock is off.
+            if Self.scanCaptureEnabled {
+                holdReticle.isHidden = true
+                resetHold()
+                return
+            }
             // The dot only confirms a detector box under it. Checked first, so no box means no depth copy this tick.
             // Without a working detector the hold never locks; "Mark it myself" is the path then.
             guard trackingBlockedMessage == nil, centerAgreesWithDetection(kind),
@@ -3082,6 +3150,450 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             holdAnchor = nil
             holdSince = nil
             holdStreak = EquipmentLock()
+        }
+
+        // MARK: - Automatic capture
+
+        /// The meter and the panel lock only through this gate: a steady, sharp, well-lit view of it on a wall, and
+        /// the same label value read twice. The detector-streak and center-dot hold locks stay in the code, off:
+        /// on their own they locked AC condensers as meters and any wall as the panel.
+        private static let scanCaptureEnabled = true
+        /// Consecutive detector evaluations (about 4 a second) that must pass every image check. Tune on device.
+        private static let captureStreakRequired = 3
+        /// Lowest true detector score that can be a capture candidate: the model's own NMS floor. Real meters close up
+        /// score 0.25–0.38, and the label read decides. Tune on device.
+        private static let captureMinConfidence: Float = 0.25
+        /// "Same place" from one evaluation to the next. Tune on device.
+        private static let captureMinIoU: CGFloat = 0.5
+        /// Smallest box, as a share of the screen, whose print can be read. Tune on device.
+        private static let captureMinArea: CGFloat = 0.06
+        /// Under this share of the screen, a meter whose number will not read needs the phone closer. Tune on device.
+        private static let captureCloseArea: CGFloat = 0.15
+        /// A box this big is cut off by the frame. Tune on device.
+        private static let captureMaxArea: CGFloat = 0.8
+        /// The label seen more obliquely than this reads badly. Tune on device.
+        private static let captureMaxObliqueDegrees: Float = 60
+        /// OCR at most twice a second while a candidate passes, and once a second while searching by text alone.
+        private static let captureReadInterval: CFTimeInterval = 0.5
+        private static let textSearchReadInterval: CFTimeInterval = 1
+        /// Two agreeing reads must fall inside this window. Tune on device.
+        private static let captureReadWindow: CFTimeInterval = 4
+        /// A text-first candidate stands this long after the read that found it.
+        private static let textCandidateSeconds: CFTimeInterval = 1.2
+        /// The candidate's wall spot moved this far between evaluations: the streak starts over. Tune on device.
+        private static let captureMaxDriftMeters: Float = 0.15
+        /// Reads taken this far from the current candidate were of something else and are dropped.
+        private static let captureReadRadiusMeters: Float = 0.3
+        /// Good frames with no value read before the hint says what to change.
+        private static let captureEmptyReadsForHint = 2
+        /// Evaluations a new hint must hold before it replaces the one on screen, so the line does not flicker.
+        private static let hintSettleEvaluations = 2
+        /// Text-first search for the meter too, when the detector gives no box. A meter word must be on the label.
+        private static let textFirstMeterEnabled = true
+
+        /// One detector packet through the gate. Returns the bottom-line cue for the current target.
+        private func evaluateCapture(_ packet: EquipmentScanFrame) -> CoachTip? {
+            guard let target = holdLockKind() else {
+                if capture.target != nil { resetCapture() }
+                return nil
+            }
+            if capture.target != target {
+                resetCapture()
+                capture.target = target
+            }
+            let now = CACurrentMediaTime()
+            // (1) Tracking. The bridge only runs on normal tracking; a packet can still land after tracking dropped.
+            guard packet.status == .ok, trackingBlockedMessage == nil else {
+                capture.breakStreak()
+                logCapture(target, "blocked", "status=\(packet.status)")
+                return nil
+            }
+            guard let candidate = captureCandidate(for: target, in: packet, now: now) else {
+                capture.breakStreak()
+                // Text first: with no box, read the middle of the screen for the label itself.
+                if allowsTextFirst(target), let region = packet.centerRegion, let quality = packet.centerQuality,
+                   CaptureQuality.problem(quality) == nil {
+                    requestRead(target, packet: packet, region: region, textFirst: true, landing: nil, now: now)
+                }
+                logCapture(target, "no-candidate", Self.describe(packet.centerQuality))
+                return nil
+            }
+            // (2) Same place as the last evaluation.
+            var iou: CGFloat = 1
+            if let last = capture.lastBox {
+                iou = CaptureQuality.iou(last, candidate.box)
+                if !candidate.textFirst, iou < Self.captureMinIoU { capture.breakStreak() }
+            }
+            let probe = EquipmentDetection(kind: target, confidence: 1, boundingBox: candidate.box)
+            guard let landing = project(probe, in: packet) else {
+                capture.breakStreak()
+                logCapture(target, "not-on-wall", candidate.source)
+                return .aimAtWall
+            }
+            if let lastLanding = capture.lastLanding, simd_distance(lastLanding, landing.position) > Self.captureMaxDriftMeters {
+                capture.breakStreak()
+            }
+            capture.records.removeAll { record in
+                record.landing.map { simd_distance($0, landing.position) > Self.captureReadRadiusMeters } ?? false
+            }
+            // Height above ground (0.3–2.5 m), separation from the other lock, and the "Not the …" ban.
+            guard relockAllowed(target, point: landing.position) else {
+                capture.breakStreak()
+                logCapture(target, "banned", candidate.source)
+                return nil
+            }
+            if let reason = lockRejection(target, at: landing.position, normal: landing.normal, checkHeight: true) {
+                capture.breakStreak()
+                logCapture(target, "rejected", "\(candidate.source) \(reason)")
+                return nil
+            }
+            // (3) Big enough to read, and in the middle of the screen.
+            let rect = Self.viewRect(for: candidate.box, in: packet)
+            let viewWidth = max(packet.viewSize.width, 1)
+            let viewHeight = max(packet.viewSize.height, 1)
+            let area = rect.width * rect.height / (viewWidth * viewHeight)
+            let centerX = rect.midX / viewWidth
+            let centerY = rect.midY / viewHeight
+            let inset = (1 - EquipmentScanBridge.centerFraction) / 2
+            let camera = SIMD3<Float>(packet.cameraTransform.columns.3.x, packet.cameraTransform.columns.3.y, packet.cameraTransform.columns.3.z)
+            let oblique = Self.obliqueDegrees(normal: landing.normal, from: landing.position, to: camera)
+            var problem: CoachTip?
+            if !candidate.textFirst, area < Self.captureMinArea {
+                problem = .closerToLabel
+            } else if area > Self.captureMaxArea {
+                problem = .stepBack
+            } else if centerX < inset || centerX > 1 - inset || centerY < inset || centerY > 1 - inset {
+                let dx = centerX - 0.5
+                let dy = centerY - 0.5
+                problem = abs(dy) > abs(dx) ? (dy < 0 ? .lookUp : .pointDown) : (dx < 0 ? .scootLeft : .scootRight)
+            } else if oblique > Self.captureMaxObliqueDegrees {
+                problem = .faceLabel
+            } else if let quality = candidate.quality {
+                // (4) Sharp and (5) exposed.
+                switch CaptureQuality.problem(quality) {
+                case .tooDark: problem = .tooDark
+                case .tooBright: problem = .tooBright
+                case .blurry: problem = .holdStill
+                case nil: break
+                }
+            } else {
+                problem = .holdStill
+            }
+            let measured = String(
+                format: "%@ area=%.3f c=(%.2f,%.2f) iou=%.2f oblique=%.0f %@",
+                candidate.source, Double(area), Double(centerX), Double(centerY), Double(iou), Double(oblique),
+                Self.describe(candidate.quality)
+            ) + debugHeight(landing.position, normal: landing.normal)
+            if let problem {
+                capture.breakStreak()
+                logCapture(target, "fail:\(problem)", measured)
+                return problem
+            }
+            capture.streak += 1
+            capture.lastBox = candidate.box
+            capture.lastLanding = landing.position
+            capture.landings.append((landing.position, landing.normal))
+            if capture.landings.count > Self.captureStreakRequired {
+                capture.landings.removeFirst(capture.landings.count - Self.captureStreakRequired)
+            }
+            // (6) Read the label on this good frame, at full resolution.
+            let region = candidate.textFirst
+                ? (packet.centerRegion ?? CaptureQuality.padded(candidate.box, by: 1))
+                : CaptureQuality.padded(candidate.box, by: 0.125)
+            requestRead(target, packet: packet, region: region, textFirst: candidate.textFirst, landing: landing.position, now: now)
+            logCapture(target, "pass streak=\(capture.streak) reads=\(capture.records.count)", measured)
+            if tryCapture() { return nil }
+            if capture.records.isEmpty, capture.emptyReads >= Self.captureEmptyReadsForHint {
+                switch target {
+                case .electricMeter: return area < Self.captureCloseArea ? .closerToLabel : .faceLabel
+                case .breakerPanel: return .openPanelDoor
+                }
+            }
+            return target == .electricMeter ? .readingNumber : .readingBreaker
+        }
+
+        /// The detector's box for the target, a meter-labeled box standing in for the panel, or a label read by text.
+        private func captureCandidate(for target: EquipmentKind, in packet: EquipmentScanFrame, now: CFTimeInterval) -> CaptureCandidate? {
+            let boxes = packet.detections.filter { $0.confidence >= Self.captureMinConfidence }
+            if let own = boxes.filter({ $0.kind == target }).max(by: { $0.confidence < $1.confidence }) {
+                return CaptureCandidate(box: own.boundingBox, quality: own.quality, textFirst: false, source: "\(target.rawValue)-box")
+            }
+            // Off the demo wall the panel class almost never fires; panels come back as weak meter boxes. With the
+            // meter already locked, a meter box somewhere else can be the panel. Only the main-breaker read decides.
+            if target == .breakerPanel, meterLock.locked, let meter = meterWallHit {
+                let stand = boxes
+                    .filter { $0.kind == .electricMeter }
+                    .sorted { $0.confidence > $1.confidence }
+                    .first { box in
+                        guard let landing = project(box, in: packet) else { return false }
+                        return simd_distance(landing.position, meter.position) >= Self.lockSeparationMeters
+                    }
+                if let stand {
+                    return CaptureCandidate(box: stand.boundingBox, quality: stand.quality, textFirst: false, source: "meter-box-as-panel")
+                }
+            }
+            if allowsTextFirst(target), let text = capture.textCandidate, now - text.at <= Self.textCandidateSeconds {
+                return CaptureCandidate(box: text.box, quality: packet.centerQuality, textFirst: true, source: "text")
+            }
+            return nil
+        }
+
+        private func allowsTextFirst(_ target: EquipmentKind) -> Bool {
+            target == .breakerPanel || Self.textFirstMeterEnabled
+        }
+
+        /// Starts one OCR pass on this packet's copied pixels, unless one is running or ran too recently.
+        private func requestRead(
+            _ target: EquipmentKind,
+            packet: EquipmentScanFrame,
+            region: CGRect,
+            textFirst: Bool,
+            landing: SIMD3<Float>?,
+            now: CFTimeInterval
+        ) {
+            let interval = textFirst && capture.textCandidate == nil ? Self.textSearchReadInterval : Self.captureReadInterval
+            guard !capture.ocrInFlight, now - capture.lastOCRAt >= interval, let pixels = packet.pixels,
+                  region.width > 0.01, region.height > 0.01 else { return }
+            capture.ocrInFlight = true
+            capture.lastOCRAt = now
+            capture.pendingLanding = landing
+            textReader.read(
+                pixels,
+                region: region,
+                orientation: packet.visionOrientation,
+                kind: target,
+                textFirst: textFirst,
+                generation: capture.generation
+            ) { [weak self] read in
+                Task { @MainActor in
+                    self?.absorbRead(read)
+                }
+            }
+        }
+
+        private func absorbRead(_ read: ScanTextRead) {
+            guard read.generation == capture.generation, read.kind == capture.target else { return }
+            capture.ocrInFlight = false
+            let now = CACurrentMediaTime()
+            var value = read.value
+            // Read by text alone, a long number is a meter number only on a label with a meter word.
+            if read.textFirst, read.kind == .electricMeter, read.meter?.hasMeterCue != true { value = nil }
+            #if DEBUG
+            let preview = read.lines.prefix(6).joined(separator: " | ")
+            Self.captureLog.debug("\(read.kind.rawValue, privacy: .public) read value=\(value ?? "-", privacy: .public) textFirst=\(read.textFirst) lines=\(read.lines.count) [\(preview, privacy: .public)]")
+            #endif
+            guard let value else {
+                if !read.textFirst || capture.textCandidate != nil { capture.emptyReads += 1 }
+                return
+            }
+            capture.emptyReads = 0
+            if read.textFirst, let box = read.textBox {
+                // Tiny label boxes jitter; compare them grown to twice their size.
+                if let previous = capture.textCandidate,
+                   CaptureQuality.iou(CaptureQuality.padded(previous.box, by: 0.5), CaptureQuality.padded(box, by: 0.5)) < Self.captureMinIoU {
+                    capture.records.removeAll()
+                    capture.breakStreak()
+                }
+                capture.textCandidate = (box, now)
+            }
+            capture.records.append(CaptureReadRecord(read: read, landing: capture.pendingLanding, at: now))
+            capture.records.removeAll { now - $0.at > Self.captureReadWindow }
+            if capture.records.count > 4 { capture.records.removeFirst(capture.records.count - 4) }
+            #if DEBUG
+            Self.captureLog.debug("\(read.kind.rawValue, privacy: .public) kept \(value, privacy: .public) records=\(self.capture.records.compactMap(\.read.value).joined(separator: ","), privacy: .public)")
+            #endif
+            _ = tryCapture()
+        }
+
+        /// Locks and hands over the photo once the image checks held for the whole streak and the last read agrees
+        /// with an earlier one. Same guards as every other lock path.
+        @discardableResult
+        private func tryCapture() -> Bool {
+            guard let target = capture.target, capture.streak >= Self.captureStreakRequired,
+                  let latest = capture.records.last, let value = latest.read.value, let image = latest.read.image,
+                  capture.records.dropLast().contains(where: { $0.read.value == value }),
+                  let lastLanding = capture.landings.last else { return false }
+            let count = Float(capture.landings.count)
+            let point = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.point } / count
+            let normalSum = capture.landings.reduce(SIMD3<Float>.zero) { $0 + $1.normal }
+            let normal = simd_length(normalSum) > 0.001 ? simd_normalize(normalSum) : lastLanding.normal
+            guard trackingBlockedMessage == nil, relockAllowed(target, point: point),
+                  lockRejection(target, at: point, normal: normal, checkHeight: true) == nil else { return false }
+            lockEquipment(target, at: EquipmentLock.Sample(point: point, normal: normal), source: .scanCapture)
+            let result = ScanCapture(
+                kind: target,
+                image: UIImage(cgImage: image),
+                meterNumber: target == .electricMeter ? latest.read.meter?.number : nil,
+                mainBreakerAmps: target == .breakerPanel ? latest.read.breaker?.amps : nil
+            )
+            logCapture(target, "CAPTURED", "value=\(value) reads=\(capture.records.count) image=\(image.width)x\(image.height)")
+            resetCapture()
+            onScanCapture?(result)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            emit()
+            return true
+        }
+
+        private func resetCapture() {
+            let generation = capture.generation + 1
+            capture = ScanCaptureState()
+            capture.generation = generation
+            shownCaptureHint = nil
+            proposedCaptureHint = nil
+            proposedCaptureHintCount = 0
+        }
+
+        /// A new cue shows at once over nothing; otherwise it must repeat before it replaces the one on screen.
+        private func settledCaptureHint(_ proposed: CoachTip?) -> CoachTip? {
+            if proposed == shownCaptureHint {
+                proposedCaptureHintCount = 0
+                return shownCaptureHint
+            }
+            if proposed == proposedCaptureHint {
+                proposedCaptureHintCount += 1
+            } else {
+                proposedCaptureHint = proposed
+                proposedCaptureHintCount = 1
+            }
+            if shownCaptureHint == nil || proposedCaptureHintCount >= Self.hintSettleEvaluations {
+                shownCaptureHint = proposed
+                proposedCaptureHintCount = 0
+            }
+            return shownCaptureHint
+        }
+
+        /// Degrees between the wall's normal and the line to the camera. Either face of the normal counts.
+        private static func obliqueDegrees(normal: SIMD3<Float>, from point: SIMD3<Float>, to camera: SIMD3<Float>) -> Float {
+            let toCamera = camera - point
+            let length = simd_length(toCamera) * simd_length(normal)
+            guard length > 1e-5 else { return 0 }
+            let cosine = min(1, abs(simd_dot(toCamera, normal)) / length)
+            return acos(cosine) * 180 / .pi
+        }
+
+        private static func describe(_ quality: CaptureReading?) -> String {
+            guard let quality else { return "quality=-" }
+            return String(
+                format: "sharp=%.0f luma=%.0f dark=%.2f clip=%.2f",
+                Double(quality.sharpness), Double(quality.meanLuma), Double(quality.darkFraction), Double(quality.clippedFraction)
+            )
+        }
+
+        /// Height above the ground under the spot, for tuning the 0.3–2.5 m gate. DEBUG only: it costs a raycast.
+        private func debugHeight(_ point: SIMD3<Float>, normal: SIMD3<Float>) -> String {
+            #if DEBUG
+            guard let ground = groundUnder(point, normal: normal) else { return " height=-" }
+            return String(format: " height=%.2f", Double(point.y - ground.y))
+            #else
+            return ""
+            #endif
+        }
+
+        private func logCapture(_ target: EquipmentKind, _ decision: String, _ detail: String) {
+            #if DEBUG
+            Self.captureLog.debug("\(target.rawValue, privacy: .public) \(decision, privacy: .public) \(detail, privacy: .public)")
+            #endif
+        }
+
+        // MARK: - Gas meter hold
+
+        /// Gas step: the ring held on the gas meter marks it, no tap. Tune every number on device.
+        private static let gasHoldEnabled = true
+        private static let gasHoldSeconds: CFTimeInterval = 1
+        /// On the ground itself, or with no ground estimate, the hold is longer, so a phone pointed at the feet
+        /// while walking does not mark the gas meter.
+        private static let gasGroundHoldSeconds: CFTimeInterval = 2
+        /// Below this height the spot counts as the ground itself.
+        private static let gasGroundBandMeters: Float = 0.08
+        /// Gas meters sit low on their riser.
+        private static let gasMaxHeightMeters: Float = 1.2
+        private static let gasMaxRangeMeters: Float = 4
+        /// A gas meter is its own object, not the electric meter or the panel.
+        private static let gasClearanceFromEquipmentMeters: Float = 0.6
+        /// Time into the gas step before a hold counts, so the ring does not mark whatever it rested on as the step began.
+        private static let gasAimSettleSeconds: CFTimeInterval = 1.5
+        private static let gasHoldDriftMeters: Float = 0.15
+        /// A spot on the ground counts only this close to a detected wall: gas meters stand against the house.
+        private static let gasGroundWallMeters: Float = 1
+
+        private func updateGasHold(at point: CGPoint) {
+            guard Self.gasHoldEnabled, gasPoint == nil else {
+                gasHint = nil
+                resetGasHold()
+                return
+            }
+            let now = CACurrentMediaTime()
+            if gasAimSince == nil { gasAimSince = now }
+            guard now - (gasAimSince ?? now) >= Self.gasAimSettleSeconds else { return }
+            guard trackingBlockedMessage == nil, let position = raycastPoint(at: point, alignment: .any)?.position.simd,
+                  simd_distance(arView.cameraTransform.translation, position) <= Self.gasMaxRangeMeters,
+                  ![meterWallHit?.position, panelWallHit?.position].contains(where: { other in
+                      other.map { simd_distance($0, position) < Self.gasClearanceFromEquipmentMeters } ?? false
+                  }) else {
+                gasHint = .holdOnGas
+                resetGasHold()
+                return
+            }
+            let height = gasGroundY(under: position).map { position.y - $0 }
+            if let height, height > Self.gasMaxHeightMeters {
+                gasHint = .holdOnGas
+                resetGasHold()
+                return
+            }
+            let onGround = height.map { $0 < Self.gasGroundBandMeters } ?? true
+            if onGround, !isNearWall(position, within: Self.gasGroundWallMeters) {
+                gasHint = .holdOnGas
+                resetGasHold()
+                return
+            }
+            let needed = onGround ? Self.gasGroundHoldSeconds : Self.gasHoldSeconds
+            holdReticle.center = point
+            holdReticle.isHidden = false
+            gasHint = .holdStill
+            guard let anchor = gasHoldAnchor, let since = gasHoldSince,
+                  simd_distance(anchor, position) <= Self.gasHoldDriftMeters else {
+                gasHoldAnchor = position
+                gasHoldSince = now
+                return
+            }
+            guard now - since >= needed else { return }
+            placeMarker(kind: .gasMeter, at: anchor)
+            #if DEBUG
+            Self.captureLog.debug("gas marked height=\(height ?? -1, format: .fixed(precision: 2)) held=\(now - since, format: .fixed(precision: 2))")
+            #endif
+            gasHint = nil
+            resetGasHold()
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            emit()
+        }
+
+        private func resetGasHold() {
+            gasHoldAnchor = nil
+            gasHoldSince = nil
+            holdReticle.isHidden = true
+        }
+
+        /// True when a detected vertical plane (a wall) stands within `meters` of the spot, measured across the floor.
+        private func isNearWall(_ point: SIMD3<Float>, within meters: Float) -> Bool {
+            planes.values.contains { plane in
+                guard let normal = horizontalUnit(plane.normal) else { return false }
+                let offset = SIMD3<Float>(point.x - plane.center.x, 0, point.z - plane.center.z)
+                let away = abs(simd_dot(offset, normal))
+                let along = simd_length(offset - simd_dot(offset, normal) * normal)
+                return away <= meters && along <= max(plane.width, plane.length) / 2 + 0.5
+            }
+        }
+
+        /// The ground straight under a spot, from a plane; else the ground found under the meter or panel.
+        private func gasGroundY(under point: SIMD3<Float>) -> Float? {
+            let origin = point + SIMD3<Float>(0, 0.05, 0)
+            for allowing: ARRaycastQuery.Target in [.existingPlaneGeometry, .estimatedPlane] {
+                let query = ARRaycastQuery(origin: origin, direction: SIMD3(0, -1, 0), allowing: allowing, alignment: .horizontal)
+                if let hit = arView.session.raycast(query).first {
+                    return hit.worldTransform.columns.3.y
+                }
+            }
+            return meterGroundPosition?.y ?? panelGroundPosition?.y
         }
 
         /// 3 ft transfer-switch reserve plus half the 3 ft pad.

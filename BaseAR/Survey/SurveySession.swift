@@ -123,6 +123,11 @@ struct ElectricalEvidence: Codable, Sendable, Equatable {
     var panelBusRatingAmps: Int?
     /// Home Info answer that decides whether the Live Survey looks for a gas meter. Nil means not answered.
     var gasMeterAnswer: GasMeterAnswer?
+    /// How `mainBreakerAmperage` was captured (v6, optional). `.ocr` is a scan's read of the main breaker that the
+    /// user has not confirmed, so the breaker rule stays unknown until they do. Nil with no value, and for older files.
+    var mainBreakerAmperageSource: MeterNumberSource?
+    /// The Live Survey's photo of the panel, taken when it read the main breaker (v6, optional). Nil until then.
+    var panelPhotoFilename: String?
 
     /// Solar or two batteries need a 200A panel, so only then does the bus rating matter.
     var needsPanelBusRating: Bool {
@@ -207,6 +212,9 @@ enum EquipmentLockSource: String, Codable, Sendable {
     case hold
     /// The user put the dot on it and tapped "Mark it myself". No detector agreement.
     case tap
+    /// The Live Survey captured it by itself: a steady, sharp, well-lit view of it on a wall, and the same label
+    /// value (the meter number, or the main-breaker rating beside "MAIN") read twice. The value is a suggestion.
+    case scanCapture = "scan-capture"
 }
 
 struct PlacementEvidence: Codable, Sendable, Equatable {

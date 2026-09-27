@@ -41,6 +41,10 @@ enum BaseRuleSet {
             guard let amps = session.electrical.mainBreakerAmperage else {
                 return .unknown("Main breaker amperage has not been confirmed.")
             }
+            // A scan's read of the handle is a suggestion until the user confirms it.
+            if session.electrical.mainBreakerAmperageSource == .ocr {
+                return .unknown("Read by scan as \(amps)A. Check it against the main breaker and confirm it.")
+            }
             if austinMainBreakerRange.contains(amps) {
                 return .pass("Confirmed main breaker is \(amps)A, inside 150–200A.")
             }

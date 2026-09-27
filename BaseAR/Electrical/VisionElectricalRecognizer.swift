@@ -41,12 +41,16 @@ struct VisionElectricalRecognizer: MeterNumberRecognizing {
 enum ElectricalLabelParser {
     private static let ratings: Set<Int> = [100, 125, 150, 175, 200, 225]
 
+    /// Meter numbers run 7–12 digits; the kWh register is 5–6. A shorter run counts only right beside a "METER" label.
+    static let meterDigitRange = 7...12
+
     static func meterNumber(in lines: [String]) -> String? {
         if let labeled = labeledMeterNumber(in: lines) {
             return labeled
         }
         return lines
-            .compactMap { longestDigitRun(in: $0, minCount: 5, maxCount: 12) }
+            .filter { !$0.lowercased().contains("kwh") }
+            .compactMap { longestDigitRun(in: $0, minCount: meterDigitRange.lowerBound, maxCount: meterDigitRange.upperBound) }
             .max(by: { $0.count < $1.count })
     }
 
@@ -55,11 +59,13 @@ enum ElectricalLabelParser {
         if let labeled = labeledMeterNumber(in: transcripts) {
             return labeled
         }
-        let singles = transcripts.compactMap { longestDigitRun(in: $0, minCount: 5, maxCount: 12) }
+        let singles = transcripts.compactMap {
+            longestDigitRun(in: $0, minCount: meterDigitRange.lowerBound, maxCount: meterDigitRange.upperBound)
+        }
         let pieces = transcripts.compactMap { digitsOnlyFragment($0) }.filter { $0.count < 5 }
         if pieces.count >= 2 {
             let joined = pieces.joined()
-            if (5...12).contains(joined.count) {
+            if meterDigitRange.contains(joined.count) {
                 return joined
             }
         }
@@ -78,11 +84,12 @@ enum ElectricalLabelParser {
     private static func labeledMeterNumber(in lines: [String]) -> String? {
         for (index, line) in lines.enumerated() {
             guard isMeterLabel(line) else { continue }
-            if let run = longestDigitRun(in: line, minCount: 5, maxCount: 12) {
+            if let run = longestDigitRun(in: line, minCount: 5, maxCount: meterDigitRange.upperBound) {
                 return run
             }
             let next = index + 1
-            if next < lines.count, let run = longestDigitRun(in: lines[next], minCount: 5, maxCount: 12) {
+            if next < lines.count, !lines[next].lowercased().contains("kwh"),
+               let run = longestDigitRun(in: lines[next], minCount: 5, maxCount: meterDigitRange.upperBound) {
                 return run
             }
         }
@@ -137,8 +144,10 @@ enum ElectricalLabelParser {
         return best
     }
 
+    /// Hyphens join a printed number ("12-345-678"). A space does not: "2812689 1858" on a barcode line is two
+    /// numbers, and joining them gave an 11-digit meter number that is not on the meter.
     private static func isSeparator(_ character: Character) -> Bool {
-        character == " " || character == "-" || character == "–" || character == "—"
+        character == "-" || character == "–" || character == "—"
     }
 
     private struct AmperageMatch {

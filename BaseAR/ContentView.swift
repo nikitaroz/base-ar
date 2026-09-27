@@ -4,9 +4,11 @@ private enum RootPhase {
     case splash
     case welcome
     case onboarding
-    case hub
+    case survey
 }
 
+/// Where Review's rows and edit buttons send the user. The shell switches steps for `.home`, `.placement`, and
+/// `.review`; only `.electrical` is pushed.
 enum HubRoute: Hashable {
     case home
     case electrical
@@ -14,12 +16,46 @@ enum HubRoute: Hashable {
     case review
 }
 
+/// The survey's three steps, in order. The step indicator opens any of them at any time.
+enum SurveyStep: Int, CaseIterable, Identifiable {
+    case home
+    case scan
+    case review
+
+    var id: Int { rawValue }
+
+    /// The step indicator's short label.
+    var title: String {
+        switch self {
+        case .home: "Home"
+        case .scan: "Scan"
+        case .review: "Review"
+        }
+    }
+
+    /// The step's full name, for VoiceOver and copy.
+    var longTitle: String {
+        switch self {
+        case .home: "Home Info"
+        case .scan: "Live Survey"
+        case .review: "Review and export"
+        }
+    }
+}
+
+/// Screens pushed on top of a step. The steps themselves are switched, not pushed.
+private enum SurveyPush: Hashable {
+    case electrical
+}
+
 struct ContentView: View {
     @State private var phase: RootPhase = .splash
     @State private var store: SurveyStore?
+    @State private var step: SurveyStep = .home
     @State private var path = NavigationPath()
     @State private var startError: String?
     @Namespace private var brandNamespace
+    /// Set when the wizard finishes or is skipped. Start over clears it, so each new survey begins with the wizard.
     @AppStorage("hasSeenHomeInfoOnboarding") private var hasSeenOnboarding = false
 
     var body: some View {
@@ -38,9 +74,9 @@ struct ContentView: View {
                     }
                     .transition(.opacity)
                 }
-            case .hub:
+            case .survey:
                 if let store {
-                    hubStack(store: store)
+                    surveyShell(store: store)
                         .transition(.opacity)
                 }
             }
@@ -60,32 +96,87 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func hubStack(store: SurveyStore) -> some View {
+    // MARK: Survey shell
+
+    /// Home Info → Live Survey → Review and export. The Live Survey is only the camera and its two lines, so the
+    /// step indicator and the navigation bar are hidden there.
+    private func surveyShell(store: SurveyStore) -> some View {
         NavigationStack(path: $path) {
-            SurveyHubView(store: store) { route in
-                path.append(route)
-            }
-            .navigationDestination(for: HubRoute.self) { route in
-                switch route {
-                case .home:
-                    HomeInformationView(store: store)
-                case .electrical:
-                    ElectricalCaptureView(store: store)
-                case .placement:
-                    PlacementARView(
-                        store: store,
-                        onContinue: { path.append(HubRoute.review) },
-                        onReturnToSurvey: { path = NavigationPath() }
-                    )
-                case .review:
-                    ReviewView(
-                        store: store,
-                        onEdit: { editFromReview($0) },
-                        onStartOver: { resetToWelcome() }
-                    )
+            stepScreen(store: store)
+                .animation(.easeInOut(duration: 0.25), value: step)
+                .navigationDestination(for: SurveyPush.self) { push in
+                    switch push {
+                    case .electrical:
+                        ElectricalCaptureView(store: store)
+                    }
                 }
+        }
+    }
+
+    @ViewBuilder
+    private func stepScreen(store: SurveyStore) -> some View {
+        switch step {
+        case .home:
+            HomeInformationView(store: store)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    stepIndicator(store: store)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    PinnedStepButton(title: "Next: Live Survey", systemImage: "camera.viewfinder") {
+                        go(to: .scan)
+                    }
+                }
+                .transition(.opacity)
+        case .scan:
+            PlacementARView(
+                store: store,
+                onContinue: { go(to: .review) },
+                onReturnToSurvey: { leaveLiveSurvey() }
+            )
+            .toolbar(.hidden, for: .navigationBar)
+            .transition(.opacity)
+        case .review:
+            ReviewView(
+                store: store,
+                onEdit: { open($0) },
+                onStartOver: { resetToWelcome() }
+            )
+            .safeAreaInset(edge: .top, spacing: 0) {
+                stepIndicator(store: store)
             }
+            .transition(.opacity)
+        }
+    }
+
+    private func stepIndicator(store: SurveyStore) -> some View {
+        StepIndicator(current: step, isComplete: { store.isComplete($0) }) { target in
+            go(to: target)
+        }
+    }
+
+    /// Switches to a step and drops anything pushed on top of the current one.
+    private func go(to target: SurveyStep) {
+        path = NavigationPath()
+        guard target != step else { return }
+        step = target
+    }
+
+    /// Leaving the Live Survey returns to Home Info. The Live Survey's exit gesture calls this.
+    private func leaveLiveSurvey() {
+        go(to: .home)
+    }
+
+    /// Review's rows: Home Info and the Live Survey are steps; Electrical is pushed over Review.
+    private func open(_ route: HubRoute) {
+        switch route {
+        case .home:
+            go(to: .home)
+        case .placement:
+            go(to: .scan)
+        case .review:
+            go(to: .review)
+        case .electrical:
+            path.append(SurveyPush.electrical)
         }
     }
 
@@ -93,8 +184,9 @@ struct ContentView: View {
         do {
             store = try SurveyStore(propertyIdentifier: "")
             path = NavigationPath()
+            step = .home
             withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                phase = hasSeenOnboarding ? .hub : .onboarding
+                phase = hasSeenOnboarding ? .survey : .onboarding
             }
         } catch {
             startError = error.localizedDescription
@@ -104,19 +196,19 @@ struct ContentView: View {
     private func finishOnboarding() {
         hasSeenOnboarding = true
         path = NavigationPath()
+        step = .home
         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-            phase = .hub
+            phase = .survey
         }
     }
 
-    private func editFromReview(_ route: HubRoute) {
-        path.append(route)
-    }
-
+    /// Start over: the survey is deleted, and the next one begins with the wizard again.
     private func resetToWelcome() {
         path = NavigationPath()
         store?.discardSavedSurvey()
         store = nil
+        step = .home
+        hasSeenOnboarding = false
         withAnimation(.easeInOut(duration: 0.35)) {
             phase = .welcome
         }
@@ -127,6 +219,92 @@ struct ContentView: View {
             get: { startError != nil },
             set: { if !$0 { startError = nil } }
         )
+    }
+}
+
+// MARK: - Step indicator
+
+/// Home · Scan · Review. Each segment opens its step, in any order. A checkmark means every item that step asks
+/// for is answered. It never says a check passed: Review's tone does that.
+struct StepIndicator: View {
+    var current: SurveyStep
+    var isComplete: (SurveyStep) -> Bool
+    var onSelect: (SurveyStep) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(SurveyStep.allCases) { step in
+                segment(step)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+    }
+
+    private func segment(_ step: SurveyStep) -> some View {
+        let selected = step == current
+        let done = isComplete(step)
+        return Button {
+            onSelect(step)
+        } label: {
+            VStack(spacing: 6) {
+                Capsule()
+                    .fill(barColor(selected: selected, done: done))
+                    .frame(height: 4)
+                HStack(spacing: 5) {
+                    Image(systemName: done ? "checkmark.circle.fill" : "\(step.rawValue + 1).circle")
+                        .foregroundStyle(done || selected ? Color.accentColor : Color.secondary)
+                    Text(step.title)
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                }
+                .font(.subheadline.weight(selected ? .semibold : .regular))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableCardStyle())
+        .animation(.easeOut(duration: 0.25), value: done)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step.rawValue + 1) of \(SurveyStep.allCases.count), \(step.longTitle)")
+        .accessibilityValue(done ? "Complete" : "Not complete")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private func barColor(selected: Bool, done: Bool) -> Color {
+        if selected { return .accentColor }
+        return done ? Color.accentColor.opacity(0.4) : Color(.tertiarySystemFill)
+    }
+}
+
+/// The one primary action pinned under a step, above the home indicator.
+private struct PinnedStepButton: View {
+    var title: String
+    var systemImage: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 }
 
@@ -182,11 +360,31 @@ private struct WelcomeView: View {
                             .font(.largeTitle.bold())
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Add your home details, photograph the meter, enter the breaker size, and preview where a Base Core could sit outside.")
+                        Text("Three steps to see where a Base battery could sit outside your home.")
                             .font(.body)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
+                        VStack(alignment: .leading, spacing: 14) {
+                            WelcomeStepRow(
+                                number: 1,
+                                title: "Home Info",
+                                detail: "A few questions about you and your home."
+                            )
+                            WelcomeStepRow(
+                                number: 2,
+                                title: "Live Survey",
+                                detail: "Walk outside with the camera. It looks for the electric meter and panel and tells you what to do next."
+                            )
+                            WelcomeStepRow(
+                                number: 3,
+                                title: "Review and export",
+                                detail: "Check what was captured, fix anything missing, and share it."
+                            )
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                         Text(SurveySession.prototypeDisclaimer)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -217,7 +415,35 @@ private struct WelcomeView: View {
     }
 }
 
-// MARK: - Hub
+private struct WelcomeStepRow: View {
+    var number: Int
+    var title: String
+    var detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "\(number).circle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Step \(number), \(title). \(detail)")
+    }
+}
+
+// MARK: - Hub (retired)
+
+// The three-step shell replaced this hub: nothing shows it now. Kept for reference, and it reads the same
+// progress helpers as the step indicator.
 
 private struct SurveyHubView: View {
     var store: SurveyStore
@@ -234,7 +460,7 @@ private struct SurveyHubView: View {
                         .font(.headline)
                     ProgressView(value: Double(completedSectionCount), total: 3)
                         .animation(.easeOut(duration: 0.4), value: completedSectionCount)
-                    Text("Complete these in any order. Your answers save as you go.")
+                    Text("Complete these in any order.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -300,47 +526,11 @@ private struct SurveyHubView: View {
             .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(0.08 * Double(index)), value: tilesAppeared)
     }
 
-    private var homeProgress: StepProgress {
-        let session = store.session
-        let electrical = session.electrical
-        // The location fix arrives on its own, so it does not count as the user finishing this step.
-        return progress(for: [
-            filled(session.contactName),
-            filled(session.email),
-            filled(session.phone),
-            filled(session.propertyIdentifier),
-            session.homeownership != nil,
-            electrical.hasSolar != nil,
-            electrical.hasPortableGenerator != nil,
-            electrical.hasStandbyGenerator != nil,
-            electrical.hasExistingWholeHomeBattery != nil,
-            electrical.plannedBatteryCount != nil
-        ])
-    }
+    private var homeProgress: StepProgress { store.homeProgress }
 
-    private var electricalProgress: StepProgress {
-        let electrical = store.session.electrical
-        var answers = [
-            electrical.meterPhotoFilename != nil,
-            filled(electrical.meterNumber ?? ""),
-            electrical.mainBreakerAmperage != nil
-        ]
-        // Only solar or two batteries need the panel's bus rating.
-        if electrical.needsPanelBusRating {
-            answers.append(electrical.panelBusRatingAmps != nil)
-        }
-        return progress(for: answers)
-    }
+    private var electricalProgress: StepProgress { store.electricalProgress }
 
-    private var placementProgress: StepProgress {
-        let placement = store.session.placement
-        let liveScene = store.placementController?.scene
-        return progress(for: [
-            placement.batteryPlaced || liveScene?.batteryPosition != nil,
-            placement.meterMarked || liveScene?.meterPosition != nil,
-            placement.gasMeterMarked || liveScene?.gasMeterPosition != nil || store.gasMeterNotVisible
-        ])
-    }
+    private var placementProgress: StepProgress { store.placementProgress }
 
     private var sectionProgress: [StepProgress] {
         [homeProgress, electricalProgress, placementProgress]
@@ -351,14 +541,6 @@ private struct SurveyHubView: View {
     }
 
     private var allSectionsComplete: Bool { completedSectionCount == sectionProgress.count }
-
-    private func filled(_ value: String) -> Bool {
-        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func progress(for answers: [Bool]) -> StepProgress {
-        StepProgress(answered: answers.filter { $0 }.count, total: answers.count)
-    }
 
     private func hubTile(
         title: String,
@@ -410,7 +592,7 @@ private struct SurveyHubView: View {
     }
 }
 
-// MARK: - Home and personal info
+// MARK: - Progress
 
 /// Cards that need obvious press feedback since .plain otherwise strips all affordance.
 struct PressableCardStyle: ButtonStyle {
@@ -422,9 +604,19 @@ struct PressableCardStyle: ButtonStyle {
     }
 }
 
-private struct StepProgress: Equatable {
+/// How many of a section's items are answered. Completion only: it never says whether a check passes.
+struct StepProgress: Equatable {
     var answered: Int
     var total: Int
+
+    init(answered: Int, total: Int) {
+        self.answered = answered
+        self.total = total
+    }
+
+    init(_ answers: [Bool]) {
+        self.init(answered: answers.filter { $0 }.count, total: answers.count)
+    }
 
     var isComplete: Bool { total > 0 && answered == total }
 
@@ -434,6 +626,106 @@ private struct StepProgress: Equatable {
         return "\(answered) of \(total) answered"
     }
 }
+
+/// Progress for the step indicator (and the retired hub). The live scene counts too, so a mark made on the scan
+/// shows before the scan is saved.
+extension SurveyStore {
+    /// Home Info. The location fix arrives on its own, so it does not count as the user finishing this step.
+    var homeProgress: StepProgress {
+        let electrical = session.electrical
+        return StepProgress([
+            Self.filled(session.contactName),
+            Self.filled(session.email),
+            Self.filled(session.phone),
+            Self.filled(session.propertyIdentifier),
+            session.homeownership != nil,
+            electrical.hasSolar != nil,
+            electrical.hasPortableGenerator != nil,
+            electrical.hasStandbyGenerator != nil,
+            electrical.hasExistingWholeHomeBattery != nil,
+            electrical.plannedBatteryCount != nil,
+            session.gasMeterQuestionAnswered
+        ])
+    }
+
+    /// The meter photo and number, the main breaker, and the panel's bus rating when solar or two batteries need it.
+    var electricalProgress: StepProgress {
+        StepProgress(electricalAnswers)
+    }
+
+    /// The hub's site-measurements tile: battery, electric meter, and gas meter (or the answer that there is none).
+    var placementProgress: StepProgress {
+        let placement = session.placement
+        let liveScene = placementController?.scene
+        return StepProgress([
+            placement.batteryPlaced || liveScene?.batteryPosition != nil,
+            placement.meterMarked || liveMeterMarked,
+            gasMeterResolved
+        ])
+    }
+
+    /// The Live Survey: it finds the meter and panel, reads the meter number and breaker, finds the gas meter
+    /// (unless Home Info says there is none), and places the battery.
+    var scanProgress: StepProgress {
+        let placement = session.placement
+        let liveScene = placementController?.scene
+        return StepProgress(electricalAnswers + [
+            placement.meterMarked || liveMeterMarked,
+            placement.panelMarked || livePanelMarked,
+            gasMeterResolved,
+            placement.batteryPlaced || liveScene?.batteryPosition != nil
+        ])
+    }
+
+    /// Nothing is missing and every required check passed, measured or attested: Review says "Ready to share".
+    var isReadyToShare: Bool {
+        session.missingInformation.isEmpty && (session.placementTone == .clear || session.placementTone == .attested)
+    }
+
+    func isComplete(_ step: SurveyStep) -> Bool {
+        switch step {
+        case .home: homeProgress.isComplete
+        case .scan: scanProgress.isComplete
+        case .review: isReadyToShare
+        }
+    }
+
+    /// The scan holds a meter lock, saved or not.
+    var liveMeterMarked: Bool {
+        guard let scene = placementController?.scene else { return false }
+        return scene.meterPosition != nil || scene.meterWallPosition != nil
+    }
+
+    /// The scan holds a panel lock, saved or not.
+    var livePanelMarked: Bool {
+        guard let scene = placementController?.scene else { return false }
+        return scene.panelPosition != nil || scene.panelWallPosition != nil
+    }
+
+    private var gasMeterResolved: Bool {
+        session.placement.gasMeterMarked || placementController?.scene.gasMeterPosition != nil || gasMeterNotVisible
+    }
+
+    private var electricalAnswers: [Bool] {
+        let electrical = session.electrical
+        var answers = [
+            electrical.meterPhotoFilename != nil,
+            Self.filled(electrical.meterNumber ?? ""),
+            electrical.mainBreakerAmperage != nil
+        ]
+        // Only solar or two batteries need the panel's bus rating.
+        if electrical.needsPanelBusRating {
+            answers.append(electrical.panelBusRatingAmps != nil)
+        }
+        return answers
+    }
+
+    private static func filled(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+// MARK: - Home and personal info
 
 private enum AnswerChoice: String, CaseIterable, Identifiable {
     case no
@@ -460,6 +752,18 @@ private enum AnswerChoice: String, CaseIterable, Identifiable {
         case false: self = .no
         case true: self = .yes
         case nil: return nil
+        }
+    }
+}
+
+extension GasMeterAnswer: Identifiable {
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .yes: "Yes"
+        case .no: "No"
+        case .notSure: "Not sure"
         }
     }
 }
@@ -623,6 +927,13 @@ private struct HomeInformationView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Gas") {
+                RadioChoice(title: "Gas meter outside", selection: gasMeterBinding) { $0.title }
+                Text("The battery must sit at least 3 ft from a gas meter. If you have one, the Live Survey asks you to find it.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Location") {
                 if let fix = store.session.propertyLocation {
                     PropertyLocationMap(fix: fix)
@@ -713,6 +1024,14 @@ private struct HomeInformationView: View {
         Binding(
             get: { OwnershipChoice(value: store.session.homeownership) },
             set: { store.setHomeownership($0?.value) }
+        )
+    }
+
+    /// "No" is the homeowner's statement: the store records it as attested and the Live Survey skips the gas step.
+    private var gasMeterBinding: Binding<GasMeterAnswer?> {
+        Binding(
+            get: { store.session.electrical.gasMeterAnswer },
+            set: { store.setGasMeterAnswer($0) }
         )
     }
 

@@ -1,3 +1,5 @@
 // Copy this file to Local.xcconfig and enter your Apple signing details.
 DEVELOPMENT_TEAM = YOUR_TEAM_ID
 PRODUCT_BUNDLE_IDENTIFIER = com.yourname.BaseAR
+// Optional: TypeSafe Jev advisory key. Leave it out to hide the Review advisory card.
+// TYPESAFE_API_KEY = your_key_here

@@ -15,6 +15,10 @@ build/
 *.dSYM.zip
 xcuserdata/
 Config/Local.xcconfig
+.secrets
+.secrets/
+.env
+.env.*
 
 # Swift Package Manager
 .build/

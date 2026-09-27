@@ -20,6 +20,7 @@ struct ReviewView: View {
                 readinessCard
                 whatsMissingCard
                 details
+                TypeSafeJevAdvisoryView(session: store.session)
                 jsonPreviewSection
                 shareSection
             }

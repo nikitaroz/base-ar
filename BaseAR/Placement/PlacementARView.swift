@@ -127,6 +127,7 @@ struct PlacementARView: View {
     @State private var scanFeedback = ScanFeedback()
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
+    @State private var capturedFrames = 0
 
     init(store: SurveyStore, onContinue: @escaping () -> Void) {
         self.store = store
@@ -288,6 +289,23 @@ struct PlacementARView: View {
                         onLookAround: { lookAround = $0 },
                         onScanFeedback: { scanFeedback = $0 }
                     )
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if capturedFrames > 0 && !coachingIsActive {
+                    Label("\(capturedFrames)", systemImage: "camera.fill")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(12)
+                        .accessibilityLabel("\(capturedFrames) scan photos captured")
+                }
+            }
+            .task {
+                while !Task.isCancelled {
+                    capturedFrames = store.placementController?.keyframes.count ?? 0
+                    try? await Task.sleep(for: .seconds(0.5))
                 }
             }
             if !coachingIsActive {
@@ -820,6 +838,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         nonisolated let equipmentBridge = EquipmentScanBridge()
         /// Camera colors for `scene.ply`, remembered per mesh anchor so a nudge of the anchor does not miss.
         nonisolated let meshColors = MeshColorCache()
+        /// Posed photos and depth from new viewpoints during the scan, zipped next to `scene.ply`.
+        nonisolated let keyframes = KeyframeRecorder()
         private let boxOverlay = EquipmentBoxOverlay(frame: .zero)
         private var meterGroundPosition: SIMD3<Float>?
         private var panelGroundPosition: SIMD3<Float>?
@@ -976,6 +996,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             let startedScanning = scanning && !scanningEquipment
             scanningEquipment = scanning
             equipmentBridge.setEnabled(scanning && !coachingActive)
+            updateKeyframeGate()
             if !scanning {
                 clearPendingScan()
                 refreshEquipmentBoxes()
@@ -1060,6 +1081,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 self.aimDot.isHidden = true
                 self.holdReticle.isHidden = true
                 self.equipmentBridge.setEnabled(false)
+                self.updateKeyframeGate()
                 self.onCoachingActiveChange?(true)
             }
         }
@@ -1068,6 +1090,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             Task { @MainActor in
                 self.coachingActive = false
                 self.equipmentBridge.setEnabled(self.scanningEquipment)
+                self.updateKeyframeGate()
                 self.onCoachingActiveChange?(false)
             }
         }
@@ -1231,6 +1254,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
             equipmentBridge.consider(frame)
+            keyframes.consider(frame)
             let message = Self.trackingMessage(for: frame.camera.trackingState)
             let changed = trackingNotice.withLock { current -> Bool in
                 guard current != message else { return false }
@@ -1404,6 +1428,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 panelMarker?.removeFromParent()
                 panelMarker = nil
                 panelGroundPosition = position
+                updateKeyframeGate()
             case .gasMeter:
                 gasMarker?.removeFromParent()
                 gasMarker = nil
@@ -1420,14 +1445,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 meterWallMarker = nil
                 meterWallHit = hit
                 meterLock.locked = true
+                keyframes.captureNext()
             case .panel:
                 panelWallMarker?.removeFromParent()
                 panelWallMarker = nil
                 panelWallHit = hit
                 panelLock.locked = true
+                keyframes.captureNext()
             default:
                 return
             }
+            updateKeyframeGate()
+        }
+
+        /// Scan photos start at the panel lock. Frames from the search before it are mostly ground and sky,
+        /// and would spend the frame budget before the look-around.
+        private func updateKeyframeGate() {
+            let panelLocked = panelWallHit != nil || panelGroundPosition != nil
+            keyframes.setEnabled(scanningEquipment && !coachingActive && panelLocked)
         }
 
         private var worldBoxesHidden = false
@@ -1906,6 +1941,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 scene.panelPosition = nil
                 scene.panelWallPosition = nil
                 scene.panelWallNormal = nil
+                updateKeyframeGate()
             case .battery, .gasMeter:
                 return
             }

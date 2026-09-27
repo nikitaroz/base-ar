@@ -248,6 +248,9 @@ struct PlacementEvidence: Codable, Sendable, Equatable {
     var workingSpaceYawRadians: Float?
     /// LiDAR mesh written next to survey.json. Nil when the phone had no reconstructed mesh.
     var pointCloudFilename: String?
+    /// Manifest of the posed scan photos and LiDAR depth, relative to survey.json. Nil when nothing was captured.
+    var captureManifestPath: String?
+    var capturedFrameCount: Int?
 
     init() {}
 }

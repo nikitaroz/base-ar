@@ -61,6 +61,7 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 - `BaseAR/Rules` — `EligibilityRule`, `BaseRuleSet`, pass / conflict / unknown
 - `BaseAR/Review` — review screen and JSON export
 - `BaseAR/Location` — one-shot property location
+- `tools/viewer` — Site Scan Viewer: a browser tool that maps where a battery can go from an exported `scene.ply`. See [its README](tools/viewer/README.md).
 
 `SurveyStore` is the composition root. The three workstreams meet at `MeterNumberRecognizing`, `PlacementMeasuring`, and `SurveyEvaluating`.
 
@@ -75,6 +76,8 @@ If `xcodebuild` reports it's using Command Line Tools instead of Xcode, either p
 - Battery-to-meter, wall, and gas distances, plus the 3 ft pad, working space, and transfer-switch box, still exist in the measurer. This scan does not place those boxes, so those checks stay unmeasured.
 - Review is reachable from the hub (and after placement). It leads with grouped next actions, then provides collapsible property, electrical, placement, and rule details with edit links.
 - A local `survey.json` is saved next to the photos and can be shared from the review screen. When the phone reconstructed a LiDAR mesh, that share also includes `scene.ply` (meters, AR world, camera colors, plus the battery, footprint, equipment marks, and distance bars colored pass/conflict/unknown; the distances are listed in the header comments). Open it in MeshLab, CloudCompare, or Blender.
+- Once the breaker panel locks, the scan keeps posed photos from new viewpoints (one anchor photo at each panel and meter lock, then a new frame after about 0.4 m of movement or a 20° turn, and only while the phone is steady). A small camera chip counts them. Each photo is saved upright as the phone was held; the pixels are rotated (no EXIF tag), and its depth, intrinsics, and pose are rotated to match. At most 120 frames.
+- Share sends one zip, `BaseSiteSurvey-<date>.zip`, that unzips to a single folder: `survey.json`, `meter.jpg`, `placement.jpg`, `scene.ply`, and `capture/` (`frames/NNNNNN.jpg`, raw Float32 LiDAR depth `.depth.bin`, UInt8 confidence `.conf.bin`, and `frames.json` with each camera-to-world pose and intrinsics in the same AR world as `scene.ply`).
 - The battery preview is green only when every required check passed on measured evidence. Unknown stays amber. A measured conflict turns it red.
 
 Siting numbers follow Base’s published guidance: Austin main breakers 150–200A, 200A when the home has solar or two batteries, a 3 ft × 3 ft footprint, within 20 ft of the meter, within 1 ft of the wall, at least 3 ft from a gas meter, and space for a transfer switch beside the meter.

@@ -8,7 +8,10 @@ final class SurveyStore {
     private(set) var session: SurveySession
     var meterImage: UIImage?
     var placementImage: UIImage?
+    /// The one zipped survey folder handed to the share sheet.
     private(set) var exportURLs: [URL] = []
+    /// Local survey.json from the last export, for the review preview.
+    private(set) var surveyJSONURL: URL?
     private(set) var lastExportError: String?
     /// Shown under the meter field after a scan or a failed read. Cleared when the user edits the number.
     private(set) var meterNumberNote: String?
@@ -80,6 +83,7 @@ final class SurveyStore {
         if let placementController { return placementController }
         let created = PlacementSceneController()
         created.setActiveModel(BatteryCatalog.baseCore)
+        created.keyframes.setDirectory(directory.appendingPathComponent("capture", isDirectory: true))
         placementController = created
         return created
     }
@@ -236,31 +240,60 @@ final class SurveyStore {
         refreshAssessment()
     }
 
+    /// Writes the survey files, then shares them as one zipped folder so AirDrop sends a single item.
     func exportForSharing() {
         refreshAssessment()
         do {
             session.placement.pointCloudFilename = try writePointCloud()
-            let jsonURL = try exporter.write(session, to: directory)
-            var urls = [jsonURL]
-            if let name = session.placement.pointCloudFilename {
-                urls.append(directory.appendingPathComponent(name))
-            }
-            for name in [
+            let capture = try placementController?.keyframes.finalize()
+            session.placement.captureManifestPath = capture == nil ? nil : "capture/frames.json"
+            session.placement.capturedFrameCount = capture == nil ? nil : placementController?.keyframes.count
+            surveyJSONURL = try exporter.write(session, to: directory)
+            exportURLs = [try packageSurvey(including: [
+                "survey.json",
+                session.placement.pointCloudFilename,
                 session.electrical.meterPhotoFilename,
-                session.placement.screenshotFilename
-            ] {
-                guard let name else { continue }
-                let url = directory.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: url.path) {
-                    urls.append(url)
-                }
-            }
-            exportURLs = urls
+                session.placement.screenshotFilename,
+                capture == nil ? nil : "capture"
+            ].compactMap { $0 })]
             lastExportError = nil
         } catch {
             exportURLs = []
             lastExportError = error.localizedDescription
         }
+    }
+
+    /// Copies the named survey files into a dated folder and zips it. Unzipping gives that one folder.
+    private func packageSurvey(including names: [String]) throws -> URL {
+        let files = FileManager.default
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        let name = "BaseSiteSurvey-\(formatter.string(from: Date()))"
+        let staging = files.temporaryDirectory.appendingPathComponent("SurveyExport", isDirectory: true)
+        try? files.removeItem(at: staging)
+        let folder = staging.appendingPathComponent(name, isDirectory: true)
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        for item in names {
+            let source = directory.appendingPathComponent(item)
+            guard files.fileExists(atPath: source.path) else { continue }
+            // APFS clones the copy, so large capture folders cost almost nothing here.
+            try files.copyItem(at: source, to: folder.appendingPathComponent(item))
+        }
+
+        let archive = staging.appendingPathComponent("\(name).zip")
+        var coordinationError: NSError?
+        var copyError: Error?
+        NSFileCoordinator().coordinate(readingItemAt: folder, options: .forUploading, error: &coordinationError) { zipURL in
+            do {
+                try files.copyItem(at: zipURL, to: archive)
+            } catch {
+                copyError = error
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        if let copyError { throw copyError }
+        return archive
     }
 
     private func refreshAssessment() {

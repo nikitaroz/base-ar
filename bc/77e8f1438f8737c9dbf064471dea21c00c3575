@@ -1,0 +1,27 @@
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_048ed3ea86b2e0 848-858
+BaseAR/Review/ReviewView.swift
+  s_535a502178fe4f::t_91286cc5652ec1 23-25,71,419-423,425-429,495-552,556-559,597,1080-1081,1084-1090
+BaseAR/Rules/BaseRuleSet.swift
+  s_535a502178fe4f::t_e7ff3aeb5fa7e3 93
+BaseAR/Rules/SurveyEvaluating.swift
+  s_535a502178fe4f::t_dfbe4ddb3b9bbe 125-129,147-149,185-189
+BaseAR/ContentView.swift
+  s_535a502178fe4f::t_7e7cf5d4b5dbc5 409-410,673,689
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bc77e8f1438f8737c9dbf064471dea21c00c3575",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

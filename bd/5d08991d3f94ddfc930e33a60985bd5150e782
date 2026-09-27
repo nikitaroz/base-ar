@@ -1,0 +1,33 @@
+BaseAR/Placement/CaptureQuality.swift
+  s_535a502178fe4f::t_ea84e1ed47339d 1-386,398-544
+  s_535a502178fe4f::t_3ebdf11d1ab410 387-397
+  s_535a502178fe4f::t_42d84e803f6bbb 545-553
+BaseAR/Rules/BaseRuleSet.swift
+  s_535a502178fe4f::t_dcf3a13b50f731 44-47
+BaseAR.xcodeproj/project.pbxproj
+  s_535a502178fe4f::t_432e11b8f13ca8 37,84,195,357
+BaseAR/Placement/EquipmentDetecting.swift
+  s_535a502178fe4f::t_0eec49104f0dbb 33-35,223-224,226-229,239-242,316-324,326,328-334
+BaseAR/Placement/PlacementARView.swift
+  s_535a502178fe4f::t_400bb023adf141 98-105,127-133,1227-1235,1443-1458,2176-2180,2196,2503-2507,2536-2539,2571,2598-2601,2731,2905-2906,3070-3075,3155-3588
+BaseAR/Survey/SurveySession.swift
+  s_535a502178fe4f::t_d277c0036047c7 126-130,215-217
+BaseAR/Survey/SurveyStore.swift
+  s_535a502178fe4f::t_67a41b5d5ecc24 21-26,94-96,142-143,145-147,252-328,392
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "bd5d08991d3f94ddfc930e33a60985bd5150e782",
+  "prompts": {},
+  "sessions": {
+    "s_535a502178fe4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9f23ba8e-c888-4bd6-afbe-e6b0676dd8d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Logan May (Work) <loganwork@Logans-MacBook-Pro.local>"
+    }
+  }
+}

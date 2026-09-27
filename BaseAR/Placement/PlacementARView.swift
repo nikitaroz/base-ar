@@ -86,7 +86,7 @@ private enum LiveStep: Equatable {
         case .findMeter: "Find the electric meter"
         case .readMeter: "Keep the meter in view"
         case .findPanel: "Find the breaker panel"
-        case .readBreaker: "Keep the panel in view"
+        case .readBreaker: "Open the panel door to show the breakers"
         case .gas: "Show the gas meter"
         case .lookAround: "Look around the meter"
         case .finish: "Scan done"
@@ -870,6 +870,7 @@ struct PlacementARView: View {
             if isVisible, new != nil, new != old, store.session.electrical.mainBreakerAmperageSource == .ocr {
                 flashTip = .gotBreaker
             }
+            if new != nil, step == .readBreaker { pass(.readBreaker) }
         }
         .onDisappear {
             isVisible = false
@@ -1272,7 +1273,7 @@ struct PlacementARView: View {
             return Feedback(.holdStill)
         case .readBreaker:
             // The lock came from a close or label-only read: the scan wants one wider photo of the panel.
-            return Feedback(scanFeedback.widePanelPhotoPending ? .stepBackWholePanel : .holdStill)
+            return Feedback(scanFeedback.widePanelPhotoPending ? .stepBackWholePanel : .openPanelDoor)
         case .gas:
             // No spot yet after a while: "Yes" says where gas meters sit; otherwise the step says it moves on.
             guard gasNudgeDue else { return Feedback(.pointAtIt) }
@@ -1585,7 +1586,9 @@ struct PlacementARView: View {
         switch kind {
         // A meter photo without its number does not finish the meter step (owner rule, 27 Sep).
         case .electricMeter: if recordedMeterNumber != nil { pass(.readMeter) }
-        case .breakerPanel: pass(.readBreaker)
+        // The panel photo alone no longer finishes the step (owner, 27 Sep): it waits for the MAIN amps read
+        // (see onChange of mainBreakerAmperage) or the patient captureGrace clock.
+        case .breakerPanel: if store.session.electrical.mainBreakerAmperage != nil { pass(.readBreaker) }
         }
     }
 

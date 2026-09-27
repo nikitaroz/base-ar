@@ -23,6 +23,9 @@ struct ReviewView: View {
                 TypeSafeJevAdvisoryView(session: store.session)
                 jsonPreviewSection
                 shareSection
+                #if DEBUG
+                TestToolsCard()
+                #endif
             }
             .padding()
         }
@@ -351,6 +354,25 @@ struct ReviewView: View {
                 evidenceImage(store.panelImage, label: "Breaker panel (photo from the Live Survey)")
             }
             LabeledContent("Main breaker", value: breakerText)
+            if store.session.electrical.mainBreakerAmperage == nil,
+               store.panelImage != nil || store.session.electrical.panelPhotoFilename != nil {
+                // The panel was captured but no number beside MAIN was read (a stab or bus rating never counts).
+                Button {
+                    onEdit(.electrical)
+                } label: {
+                    Label {
+                        Text("The scan saw the panel but no main-breaker number. Type it from the big breaker at the top.")
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                    } icon: {
+                        Image(systemName: "keyboard")
+                            .foregroundStyle(ToneStyle.color(.incomplete))
+                    }
+                    .font(.footnote)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens Electrical to type the main breaker size.")
+            }
             if store.session.electrical.mainBreakerAmperageSource == .ocr {
                 // Never the panel bus rating: only the number beside "MAIN" is read, and the user confirms it.
                 scanReadCheck("main breaker") { store.confirmScannedMainBreaker() }
@@ -375,11 +397,20 @@ struct ReviewView: View {
 
     private var placementDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            evidenceImage(store.placementImage, label: "Placement screenshot")
+            batterySpotCard
+            if let image = store.placementImage {
+                evidenceImage(image, label: "Photo at the end of the scan. The colored box is the suggested spot, if it was in view.")
+            } else {
+                Label("Photo at the end of the scan not saved", systemImage: "photo.badge.exclamationmark")
+                    .foregroundStyle(.secondary)
+            }
             LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
             LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
             LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
             LabeledContent("Gas meter", value: gasMeterText)
+            if gasShownNotRecognized {
+                gasShownCheck
+            }
             LabeledContent("Meter distance", value: feet(store.session.placement.distanceToMeterFeet))
             LabeledContent("Wall clearance", value: feet(store.session.placement.distanceToWallFeet))
             LabeledContent("Gas meter distance", value: feet(store.session.placement.distanceToGasMeterFeet))
@@ -404,6 +435,152 @@ struct ReviewView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// The spot the Live Survey suggested by itself at the finish, or why it could not, with the pad's own checks.
+    private var batterySpotCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Suggested battery spot", systemImage: "battery.100percent.bolt")
+                .font(.subheadline.weight(.semibold))
+            Text(batterySpotText)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if store.session.placement.batteryPlaced {
+                ForEach(padRules) { rule in
+                    padRuleRow(rule)
+                }
+            }
+            #if DEBUG
+            if let rejections = store.session.placement.batterySpot?.rejections, !rejections.isEmpty {
+                DisclosureGroup("Spots the scan ruled out (debug)") {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(rejections.enumerated()), id: \.offset) { _, reason in
+                            Text(reason)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.caption)
+            }
+            #endif
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// "About X ft along the wall from the meter, on the panel side. Y in from the wall.", or why there is no spot.
+    private var batterySpotText: String {
+        let placement = store.session.placement
+        let wall = placement.distanceToWallFeet.map { " \(max(0, Int(($0 * 12).rounded()))) in from the wall." }
+            ?? " The distance to the wall was not measured."
+        guard let spot = placement.batterySpot else {
+            // Older surveys placed the battery by hand; a scan that has not finished has no suggestion yet.
+            return placement.batteryPlaced
+                ? "Placed on the scan." + wall
+                : "No spot suggested yet. The Live Survey suggests one when the scan finishes."
+        }
+        switch spot.status {
+        case .placed:
+            let along = placement.distanceToMeterFeet ?? spot.alongWallFeet.map(abs)
+            var text = along.map { String(format: "About %.1f ft along the wall from the meter", $0) }
+                ?? "Beside the meter"
+            if let towardPanel = spot.towardPanel {
+                text += towardPanel ? ", on the panel side" : ", on the other side"
+            }
+            return text + "." + wall
+        case .noMeter:
+            return "No spot suggested: no meter found. An engineer will choose one."
+        case .noWall:
+            return "No spot suggested: the scan found no wall beside the meter. An engineer will choose one."
+        case .allRejected:
+            let count = spot.candidatesTried
+            return "No spot suggested: checked \(count) spot\(count == 1 ? "" : "s"), none cleared. An engineer will choose one."
+        }
+    }
+
+    /// The checks that judge the pad itself, in the order an installer reads them.
+    private static let padRuleIDs = [
+        "planning-footprint",
+        "wall-distance",
+        "not-in-front-of-window",
+        "meter-panel-access",
+        "gas-meter-clearance",
+        "meter-distance"
+    ]
+
+    private var padRules: [RuleResult] {
+        Self.padRuleIDs.compactMap { id in store.session.ruleResults.first { $0.id == id } }
+    }
+
+    /// One pad check: symbol, title, and status in words, so the result never rests on color alone. A pass that
+    /// rests on an answer or a spot the user showed reads as attested (teal), not measured.
+    private func padRuleRow(_ rule: RuleResult) -> some View {
+        let tone = padRuleTone(rule)
+        return HStack(spacing: 8) {
+            Image(systemName: ToneStyle.symbol(tone))
+                .foregroundStyle(ToneStyle.color(tone))
+                .frame(width: 20)
+                .accessibilityHidden(true)
+            Text(rule.title)
+                .font(.footnote)
+            Spacer(minLength: 8)
+            Text(padRuleStatus(tone))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ToneStyle.color(tone))
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func padRuleTone(_ rule: RuleResult) -> PlacementTone {
+        switch rule.status {
+        case .pass: rule.usedMeasuredEvidence ? .clear : .attested
+        case .conflict: .conflict
+        case .unknown: .incomplete
+        }
+    }
+
+    private func padRuleStatus(_ tone: PlacementTone) -> String {
+        switch tone {
+        case .clear: "Pass"
+        case .attested: "Pass, attested"
+        case .incomplete: "Unknown"
+        case .conflict: "Conflict"
+        }
+    }
+
+    /// A spot the user showed as the gas meter. The scan did not recognize it, so its clearance is attested.
+    private var gasShownNotRecognized: Bool {
+        let placement = store.session.placement
+        return placement.gasMeterMarked && placement.gasMeterMarkSource != .recognized
+    }
+
+    /// The photo of the spot shown as the gas meter, and a way to say it was not one.
+    private var gasShownCheck: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let image = store.gasImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxHeight: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("Spot shown as the gas meter (photo from the Live Survey)")
+            } else {
+                Label("Gas meter photo not saved", systemImage: "photo.badge.exclamationmark")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Not the gas meter", systemImage: "xmark.circle") {
+                store.rejectGasMark()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .accessibilityHint("Drops this spot. The gas check stays unknown until the Live Survey is shown a gas meter.")
         }
     }
 
@@ -584,8 +761,15 @@ struct ReviewView: View {
     }
 
     private var breakerText: String {
-        guard let amps = store.session.electrical.mainBreakerAmperage else { return "Not confirmed" }
-        return store.session.electrical.mainBreakerAmperageSource == .ocr ? "\(amps) A (read by scan)" : "\(amps) A"
+        let electrical = store.session.electrical
+        guard let amps = electrical.mainBreakerAmperage else { return "Not confirmed" }
+        guard electrical.mainBreakerAmperageSource == .ocr else { return "\(amps) A" }
+        switch electrical.mainBreakerAmperageBasis {
+        case .mainRow?: return "\(amps) A (read from the MAIN label)"
+        case .mainNeighbor?: return "\(amps) A (read beside MAIN)"
+        case .largestHandle?: return "\(amps) A (read from the largest breaker)"
+        case nil: return "\(amps) A (read by scan)"
+        }
     }
 
     private var ownershipText: String {
@@ -600,13 +784,21 @@ struct ReviewView: View {
         store.session.electrical.plannedBatteryCount.map(String.init) ?? "Not captured"
     }
 
-    /// A marked gas meter is measured; "none" is the homeowner's answer and says so.
+    /// A spot shown on the scan is not a recognized gas meter, so it says to check the photo; "none" is the
+    /// homeowner's answer and says so.
     private var gasMeterText: String {
-        if store.session.placement.gasMeterMarked { return "Marked on the scan" }
+        let placement = store.session.placement
+        if placement.gasMeterMarked {
+            return placement.gasMeterMarkSource == .recognized ? "Recognized on the scan" : "Shown on the scan: check the photo"
+        }
         if store.gasMeterNotVisible || store.session.electrical.gasMeterAnswer == .no {
             return "None (your answer, not measured)"
         }
-        return store.session.electrical.gasMeterAnswer == nil ? "Not answered" : "Not found on the scan yet"
+        switch placement.gasStepOutcome {
+        case .rejectedInReview?: return "Not shown (you said the spot was not a gas meter)"
+        case .timedOut?: return "Not shown on the scan"
+        default: return store.session.electrical.gasMeterAnswer == nil ? "Not answered" : "Not shown on the scan yet"
+        }
     }
 
     private var gasAnswerText: String {
@@ -700,6 +892,27 @@ struct ReviewView: View {
         }
     }
 }
+
+#if DEBUG
+/// Test builds only: the frame recorder saves camera frames and gate readings for tuning. Off by default.
+private struct TestToolsCard: View {
+    @AppStorage(FrameRecorder.enabledDefaultsKey) private var on = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Test tools", systemImage: "hammer.fill")
+                .font(.headline)
+            Toggle("Save test frames on this phone", isOn: $on)
+            Text("Starts the next time the Live Survey opens. Files app › On My iPhone › Base Site Survey › FrameLog.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+}
+#endif
 
 private struct ReviewAction: Identifiable {
     var route: HubRoute

@@ -4,8 +4,8 @@ import UIKit
 /// Shared survey contract for electrical capture, AR placement, and rules/review.
 /// Keep new evidence as optional fields so a check can stay unknown until a teammate fills it.
 struct SurveySession: Codable, Sendable, Equatable, Identifiable {
-    /// 6: adds `electrical.panelBusRatingAmps` and `placement.meterLockSource` / `placement.panelLockSource`.
-    var schemaVersion: Int = 6
+    /// 7: adds optional `gridContext` — ERCOT load zone + sample prices captured at survey time.
+    var schemaVersion: Int = 7
     var id: UUID
     var createdAt: Date
     var propertyIdentifier: String
@@ -18,6 +18,8 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
     var prototypeDisclaimer: String
     /// Phone fix for the property. This is not the battery position.
     var propertyLocation: GeoFix?
+    /// ERCOT load-zone snapshot at survey time — populated when a Texas ZIP resolves. Context only; does not affect placement color.
+    var gridContext: GridContext?
     var electrical: ElectricalEvidence
     var placement: PlacementEvidence
     var ruleResults: [RuleResult]
@@ -46,6 +48,7 @@ struct SurveySession: Codable, Sendable, Equatable, Identifiable {
             propertyLocationDisclaimer: locationDisclaimer,
             prototypeDisclaimer: prototypeDisclaimer,
             propertyLocation: nil,
+            gridContext: nil,
             electrical: ElectricalEvidence(),
             placement: PlacementEvidence(),
             ruleResults: [],
@@ -98,6 +101,25 @@ struct GeoFix: Codable, Sendable, Equatable {
     var timestamp: Date
     /// Meters, as reported by Core Location. Not a survey-grade battery coordinate.
     var horizontalAccuracyMeters: Double
+}
+
+/// Snapshot of ERCOT load-zone + sample prices at survey time, plus the derived per-count math
+/// the customer was shown on the decision card. Lets an engineer reading `survey.json` reproduce
+/// the numbers with no ambiguity about which assumptions produced them.
+struct GridContext: Codable, Sendable, Equatable {
+    var loadZone: ERCOTLoadZone
+    var sampleDate: Date
+    var cheapHourPriceUSDPerMWh: Double
+    var expensiveHourPriceUSDPerMWh: Double
+    var cheapHourLabel: String
+    var expensiveHourLabel: String
+    var chosenCount: Int
+    var capacityKWh: Double
+    var dailyArbitrageUSD: Double
+    var annualizedArbitrageLowUSD: Double
+    var annualizedArbitrageHighUSD: Double
+    var assumedHouseholdLoadKW: Double
+    var hoursOfBackupAtAssumedLoad: Double
 }
 
 struct ElectricalEvidence: Codable, Sendable, Equatable {

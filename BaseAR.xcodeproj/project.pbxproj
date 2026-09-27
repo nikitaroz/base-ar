@@ -32,12 +32,19 @@
 		B10000000000000000000012 /* VisionMeterNumberRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */; };
 		B10000000000000000000014 /* LiveLabelScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000014 /* LiveLabelScanner.swift */; };
 		B10000000000000000000015 /* VisionElectricalRecognizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000015 /* VisionElectricalRecognizer.swift */; };
-		B1000000000000000000004F /* KeyframeRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000004F /* KeyframeRecorder.swift */; };
 		B10000000000000000000016 /* BatteryCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000016 /* BatteryCatalog.swift */; };
+		B1000000000000000000004F /* KeyframeRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000004F /* KeyframeRecorder.swift */; };
 		C10000000000000000000001 /* EquipmentDetecting.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* EquipmentDetecting.swift */; };
 		C10000000000000000000002 /* EquipmentScan.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* EquipmentScan.mlpackage */; };
 		E10000000000000000000001 /* OnboardingContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* OnboardingContainerView.swift */; };
 		E10000000000000000000002 /* OnboardingPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* OnboardingPages.swift */; };
+		F10000000000000000000001 /* ERCOTLoadZone.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* ERCOTLoadZone.swift */; };
+		F10000000000000000000002 /* LoadZoneLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000002 /* LoadZoneLookup.swift */; };
+		F10000000000000000000003 /* ERCOTPriceSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000003 /* ERCOTPriceSample.swift */; };
+		F10000000000000000000004 /* GridService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000004 /* GridService.swift */; };
+		F10000000000000000000005 /* BatteryCountDecision.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000005 /* BatteryCountDecision.swift */; };
+		F10000000000000000000006 /* BatteryCountDecisionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000006 /* BatteryCountDecisionCard.swift */; };
+		F10000000000000000000007 /* ERCOTPricesSample.json in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000007 /* ERCOTPricesSample.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -79,14 +86,21 @@
 		B20000000000000000000013 /* VisionMeterNumberRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionMeterNumberRecognizer.swift; sourceTree = "<group>"; };
 		B20000000000000000000014 /* LiveLabelScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLabelScanner.swift; sourceTree = "<group>"; };
 		B20000000000000000000015 /* VisionElectricalRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisionElectricalRecognizer.swift; sourceTree = "<group>"; };
-		B2000000000000000000004F /* KeyframeRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyframeRecorder.swift; sourceTree = "<group>"; };
 		B20000000000000000000016 /* BatteryCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCatalog.swift; sourceTree = "<group>"; };
+		B2000000000000000000004F /* KeyframeRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyframeRecorder.swift; sourceTree = "<group>"; };
 		C20000000000000000000001 /* EquipmentDetecting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquipmentDetecting.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* EquipmentScan.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = EquipmentScan.mlpackage; sourceTree = "<group>"; };
 		D20000000000000000000001 /* BaseAR.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = BaseAR.xcconfig; sourceTree = "<group>"; };
 		D20000000000000000000002 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig.example; sourceTree = "<group>"; };
 		E20000000000000000000001 /* OnboardingContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingContainerView.swift; sourceTree = "<group>"; };
 		E20000000000000000000002 /* OnboardingPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingPages.swift; sourceTree = "<group>"; };
+		F20000000000000000000001 /* ERCOTLoadZone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ERCOTLoadZone.swift; sourceTree = "<group>"; };
+		F20000000000000000000002 /* LoadZoneLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadZoneLookup.swift; sourceTree = "<group>"; };
+		F20000000000000000000003 /* ERCOTPriceSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ERCOTPriceSample.swift; sourceTree = "<group>"; };
+		F20000000000000000000004 /* GridService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridService.swift; sourceTree = "<group>"; };
+		F20000000000000000000005 /* BatteryCountDecision.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCountDecision.swift; sourceTree = "<group>"; };
+		F20000000000000000000006 /* BatteryCountDecisionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatteryCountDecisionCard.swift; sourceTree = "<group>"; };
+		F20000000000000000000007 /* ERCOTPricesSample.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ERCOTPricesSample.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +145,7 @@
 				B70000000000000000000013 /* Rules */,
 				B70000000000000000000014 /* Review */,
 				B70000000000000000000015 /* Location */,
+				F70000000000000000000001 /* Grid */,
 				A20000000000000000000003 /* Assets.xcassets */,
 				B20000000000000000000012 /* Info.plist */,
 			);
@@ -246,6 +261,20 @@
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
+		F70000000000000000000001 /* Grid */ = {
+			isa = PBXGroup;
+			children = (
+				F20000000000000000000001 /* ERCOTLoadZone.swift */,
+				F20000000000000000000002 /* LoadZoneLookup.swift */,
+				F20000000000000000000003 /* ERCOTPriceSample.swift */,
+				F20000000000000000000004 /* GridService.swift */,
+				F20000000000000000000005 /* BatteryCountDecision.swift */,
+				F20000000000000000000006 /* BatteryCountDecisionCard.swift */,
+				F20000000000000000000007 /* ERCOTPricesSample.json */,
+			);
+			path = Grid;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -328,6 +357,7 @@
 			files = (
 				A10000000000000000000003 /* Assets.xcassets in Resources */,
 				C10000000000000000000002 /* EquipmentScan.mlpackage in Resources */,
+				F10000000000000000000007 /* ERCOTPricesSample.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -365,6 +395,12 @@
 				B10000000000000000000011 /* PropertyLocationMap.swift in Sources */,
 				E10000000000000000000001 /* OnboardingContainerView.swift in Sources */,
 				E10000000000000000000002 /* OnboardingPages.swift in Sources */,
+				F10000000000000000000001 /* ERCOTLoadZone.swift in Sources */,
+				F10000000000000000000002 /* LoadZoneLookup.swift in Sources */,
+				F10000000000000000000003 /* ERCOTPriceSample.swift in Sources */,
+				F10000000000000000000004 /* GridService.swift in Sources */,
+				F10000000000000000000005 /* BatteryCountDecision.swift in Sources */,
+				F10000000000000000000006 /* BatteryCountDecisionCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -441,6 +477,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;
@@ -475,6 +512,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AGWR7PG3MN;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = BaseAR/Info.plist;

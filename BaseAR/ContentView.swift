@@ -616,6 +616,12 @@ private struct HomeInformationView: View {
                 RadioChoice(title: "Whole-home standby generator", selection: standbyGeneratorBinding) { $0.title }
                 RadioChoice(title: "Existing whole-home battery", selection: existingBatteryBinding) { $0.title }
                 RadioChoice(title: "Planned Base batteries", selection: batteryCountBinding) { $0.title }
+                BatteryCountDecisionCard(decision: BatteryCountDecision.make(
+                    plannedCount: store.session.electrical.plannedBatteryCount,
+                    hasSolar: store.session.electrical.hasSolar,
+                    panelBusRatingAmps: store.session.electrical.panelBusRatingAmps,
+                    propertyIdentifier: store.session.propertyIdentifier
+                ))
                 Text("An existing standby generator or another whole-home battery is a filter Base uses before installation. This survey records the answer.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

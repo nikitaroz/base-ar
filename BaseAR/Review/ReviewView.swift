@@ -210,6 +210,12 @@ struct ReviewView: View {
             LabeledContent("Standby generator", value: yesNo(store.session.electrical.hasStandbyGenerator))
             LabeledContent("Existing whole-home battery", value: yesNo(store.session.electrical.hasExistingWholeHomeBattery))
             LabeledContent("Planned batteries", value: batteryCountText)
+            BatteryCountDecisionSummary(decision: BatteryCountDecision.make(
+                plannedCount: store.session.electrical.plannedBatteryCount,
+                hasSolar: store.session.electrical.hasSolar,
+                panelBusRatingAmps: store.session.electrical.panelBusRatingAmps,
+                propertyIdentifier: store.session.propertyIdentifier
+            ))
         }
     }
 

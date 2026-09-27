@@ -297,10 +297,23 @@ final class SurveyStore {
     }
 
     private func refreshAssessment() {
+        updateGridContext()
         let assessment = evaluator.evaluate(session)
         session.ruleResults = assessment.results
         session.missingInformation = assessment.missingInformation
         session.placementTone = assessment.placementTone
+    }
+
+    /// Snapshot the ERCOT context that matches the current battery/panel/address answers.
+    /// Never writes ruleResults or placementTone — those stay owned by evaluator.evaluate().
+    private func updateGridContext() {
+        let decision = BatteryCountDecision.make(
+            plannedCount: session.electrical.plannedBatteryCount,
+            hasSolar: session.electrical.hasSolar,
+            panelBusRatingAmps: session.electrical.panelBusRatingAmps,
+            propertyIdentifier: session.propertyIdentifier
+        )
+        session.gridContext = decision.capturedGridContext
     }
 
     /// Latest LiDAR mesh as `scene.ply`. Removes a stale file when the scan has no mesh.

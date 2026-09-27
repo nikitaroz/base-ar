@@ -284,8 +284,16 @@ struct OnboardingBatteryCountPage: View {
             },
             onSkip: onSkip
         ) {
-            RadioChoice(title: "", selection: $selection) { $0.title }
-                .padding(.horizontal, 4)
+            VStack(alignment: .leading, spacing: 14) {
+                RadioChoice(title: "", selection: $selection) { $0.title }
+                    .padding(.horizontal, 4)
+                BatteryCountDecisionCard(decision: BatteryCountDecision.make(
+                    plannedCount: selection?.value ?? store.session.electrical.plannedBatteryCount,
+                    hasSolar: store.session.electrical.hasSolar,
+                    panelBusRatingAmps: store.session.electrical.panelBusRatingAmps,
+                    propertyIdentifier: store.session.propertyIdentifier
+                ))
+            }
         }
         .onAppear {
             if selection == nil { selection = BatteryCountChoice(count: store.session.electrical.plannedBatteryCount) }

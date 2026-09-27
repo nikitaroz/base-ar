@@ -82,5 +82,6 @@ Base’s product filters stay on the survey for a person to read. Renters are wa
 - `BaseAR/Rules` — `EligibilityRule`, `BaseRuleSet`
 - `BaseAR/Review` — review screen and JSON export
 - `BaseAR/Location` — one-shot property location
+- `BaseAR/Grid` — ERCOT load-zone context and the one-versus-two Core decision card. Does not affect placement color; `gridContext` may appear in `survey.json`.
 
 See `README.md` for device setup, what already runs, and what is still stubbed.

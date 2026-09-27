@@ -12,9 +12,9 @@ Not an electrical inspection, code review, or installation approval.
 
 ## Demo
 
-https://github.com/nikitaroz/base-ar/raw/main/docs/media/demo.mp4
+![Base Site Survey demo](docs/media/demo.gif)
 
-> If your Markdown viewer does not render the video inline, open [`docs/media/demo.mp4`](docs/media/demo.mp4) directly.
+> Prefer the higher-quality clip? Grab [`docs/media/demo.mp4`](docs/media/demo.mp4).
 
 ## Contents
 
@@ -55,7 +55,7 @@ Splash → Welcome → **Home Info** → **Live Survey** → **Review & Export**
    - the **top** line is the current job, and it changes as each job completes;
    - the **bottom** line is live feedback with a small animated graphic ("Point at the meter", "Get closer", "Hold still", "Found the meter", …).
 
-   There is nothing to tap and nothing to aim. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (skipped when Home Info said No), and a step back to look around. For the gas meter you just **show** it: walk to it, point the phone at it from within about 8 ft, and hold still; the app saves the spot and a photo, and Review asks you to check the photo. There is no battery step. The app measures meter height and the shared wall when the meter and panel lock, and scores candidate battery spots along the meter wall in the background while you look around. When the look-around is done it places the best spot, saves the scan photo, and opens Review with the suggested spot and its results. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, swipe right from the left edge; the scan so far is saved and you go back to the step you came from.
+   There is nothing to tap to capture and nothing to aim. The app captures by itself when it recognizes the target reliably and the image is good. The order is the meter and its number, the panel (and the main breaker size when its label reads; a read is a suggestion until you confirm it in Review), the gas meter (skipped when Home Info said No), and a step back to look around. For the gas meter you just **show** it: walk to it, point the phone at it from within about 8 ft, and hold still; the app saves the spot and a photo, and Review asks you to check the photo. There is no battery step. The app measures meter height and the shared wall when the meter and panel lock, and scores candidate battery spots along the meter wall in the background while you look around. When the look-around is done it places the best spot, saves the scan, and opens Review with the suggested spot and its results. A step that cannot finish moves on after a while and leaves that item for Review, so the scan never traps you. Distances never appear on the camera. To leave early, tap the back chevron in the top-left corner or swipe right from the left edge; the scan so far is saved and you go back to the step you came from.
 3. **Review & Export.** "What's missing" rows take you to the fix (Home Info, the Live Survey, or the Electrical screen to retake a photo or type a number). Numbers read by scan are marked "read by scan" until you confirm them here. Then property, electrical, site-measurement, and eligibility details, a `survey.json` preview, and Share (see [Export packet](#export-packet)). Start over deletes the survey.
 
 ## Feature tour
@@ -77,7 +77,7 @@ Splash → Welcome → **Home Info** → **Live Survey** → **Review & Export**
 - Outdoor `ARView` with horizontal and vertical plane detection, LiDAR mesh occlusion on supported devices, and plane-raycast placement on devices without LiDAR.
 - **One hands-free Live Survey** covers the meter, the breaker panel, the gas meter, and a look-around; the battery spot is chosen by itself. It has no buttons: the top line names the job, the bottom line coaches, and each step advances by itself or times out into Review's "What's missing".
 - **Strict label reading.** The main breaker is taken only from a MAIN row, the rating beside MAIN, or (on a real panel box with branch breakers in view) the largest handle. Stab, bus, maximum, and printed-label numbers are never the main breaker; a panel seen with no MAIN rating locks with no amps for you to type.
-- **On-device YOLO detector** (`EquipmentScan.mlpackage`, YOLO26n fine-tuned at 640 px) draws candidate meter / panel boxes on the camera (no text on them in release builds). A meter or panel locks through the **capture gate**: a steady, sharp, well-lit box on a wall at a plausible height whose label (the meter number, or the rating beside MAIN) reads the same twice. A meter whose label never reads twice (glare, a dirty cover, a barcode-only plate) can still lock after 20 s of searching as a plain detector lock: five agreeing wall hits at the lock score (0.45) on a sharp, exposed box, with no suggested number. The panel has no such fallback. The detector stops once both are locked. Every lock records its source (`scanCapture` / `detector`; `hold` and `tap` stay in the code, off).
+- **On-device YOLO detector** (`EquipmentScan.mlpackage`, YOLO26s fine-tuned at 640 px) draws candidate meter / panel boxes on the camera (no text on them in release builds). A meter or panel locks through the **capture gate**: a steady, sharp, well-lit box on a wall at a plausible height whose label (the meter number, or the rating beside MAIN) reads the same twice. A meter whose label never reads twice (glare, a dirty cover, a barcode-only plate) can still lock after 20 s of searching as a plain detector lock: five agreeing wall hits at the lock score (0.45) on a sharp, exposed box, with no suggested number. The panel has no such fallback. The detector stops once both are locked. Every lock records its source (`scanCapture` / `detector`; `hold` and `tap` stay in the code, off).
 - **Suggested battery spot**: ten spots along the meter wall (0.9–3.6 m either side of the meter) are checked in the background: the wall must continue there, nothing may stand between the spot and the meter, the pad stays over 3.25 ft from a gas meter, and no pad rule may fail. The best one is placed at the finish as a to-scale Base Core cabinet (30.68 in W × 35.9 in H × 22 in D) with its 3 ft × 3 ft planning footprint and the transfer-switch space beside the meter. Review says where it is, or why no spot was suggested.
 - Tint: the cabinet uses the same full assessment as Review: **green** only when every required rule passes on measured evidence, **teal** when every rule passes but some pass on the user's statement, **amber** if anything is unknown, **red** on an observed conflict. The two electrical rules always rest on the user's reading of a label, so a complete survey reads teal at best today.
 - **Keyframe recorder** captures posed camera photos + depth + intrinsics during the scan: an anchor frame at every meter / panel lock, then a new frame after ~0.4 m of movement or a ~20° turn, only while the phone is steady. Up to 120 frames per scan, all rotated upright to match how the phone was held.
@@ -100,7 +100,7 @@ BaseAR/
 ├─ Placement/     PlacementARView (Live Survey + scene controller) · CaptureQuality
 │                 PlacementMeasuring · KeyframeRecorder · FrameRecorder (Debug)
 │                 EquipmentDetecting (Core ML) · BatteryCatalog / Geometry
-│                 EquipmentScan.mlpackage (YOLO26n)
+│                 EquipmentScan.mlpackage (YOLO26s)
 ├─ Grid/          ERCOTLoadZone · LoadZoneLookup · ERCOTPriceSample
 │                 GridService · BatteryCountDecision + card
 ├─ Rules/         EligibilityRule · BaseRuleSet · SurveyEvaluating
@@ -121,13 +121,17 @@ Every capability is Apple-frameworks only: SwiftUI, ARKit, RealityKit, Vision / 
 
 Each teammate does this once per Mac. `git pull` never disturbs signing — those files are gitignored.
 
+> **Already set up before 27 September 2026?** Re-run `./scripts/bootstrap-signing.sh` once to turn on the git hooks (your `Local.xcconfig` is kept), and check that its `DEVELOPMENT_TEAM` matches your team in Xcode → Settings → Accounts. Older versions of the script could write the wrong ID.
+
 1. **Sign in to Xcode with your Apple ID.** Xcode → Settings → Accounts → **+** → Apple ID. Without this Xcode has no cert to sign with and every device build fails with *"No Account for Team … / No profiles for …"*.
 2. **Generate your local signing config.**
    ```sh
    ./scripts/bootstrap-signing.sh
    ```
-   Reads the Team ID off the certificate you just installed, derives a bundle ID like `com.<your-username>.BaseAR`, and writes it to `Config/Local.xcconfig` (gitignored). To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and fill in the two lines.
+   Reads the Team ID from your certificate's team field, derives a bundle ID like `com.<your-username>.BaseAR`, and writes both to `Config/Local.xcconfig` (gitignored). If your certificates belong to several teams, pass one: `./scripts/bootstrap-signing.sh TEAM_ID`. It also turns on the repo's git hooks. To do it by hand: copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`, fill in the two lines, and run `git config core.hooksPath .githooks`.
 3. **Open `BaseAR.xcodeproj`** and confirm *Automatically manage signing* is checked on the `BaseAR` target. The first build pulls down a provisioning profile.
+
+   **Don't pick a team in Signing & Capabilities.** Xcode writes that choice into `project.pbxproj`, where it overrides every teammate's `Local.xcconfig` and breaks their builds. The pre-commit hook blocks a committed `DEVELOPMENT_TEAM`.
 4. **On device, trust the developer profile** the first time: Settings → General → VPN & Device Management → tap your profile → **Trust**.
 
 ## Running the app
@@ -182,7 +186,6 @@ BaseSiteSurvey-2026-09-26-2041/
 │                       screen (upright JPEG)
 ├─ panel.jpg            The panel photo from the scan capture, when it locked one
 ├─ gas.jpg              The spot shown as the gas meter, when one was shown
-├─ placement.jpg        AR screenshot at the time of Save
 ├─ scene.ply            ASCII LiDAR mesh — per-vertex RGB from camera,
 │                       per-face ARKit label (wall / floor / window / door /
 │                       ceiling / …), and header `mark` lines for the meter,
@@ -241,17 +244,27 @@ The committed `Config/BaseAR.xcconfig` keeps it empty. You can also set `TYPESAF
 
 ## On-device equipment detector
 
-`BaseAR/Placement/EquipmentScan.mlpackage` is a YOLO26n model fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). It runs live on the AR camera stream while a meter or panel is still unlocked; boxes are drawn at ≥ 0.30 confidence. It only proposes: a lock also needs the capture gate above (wall or depth landing, a streak of good frames, the separation and height guards, and a label read twice; for the meter only, after 20 s, five agreeing hits at ≥ 0.45 without a read). AC units can score as meters.
+`BaseAR/Placement/EquipmentScan.mlpackage` is a YOLO26s model fine-tuned at 640 px to find the electric meter (class 0) and breaker panel (class 1). It runs live on the AR camera stream while a meter or panel is still unlocked, letterboxed (`scaleFit`); boxes are drawn at ≥ 0.40 confidence. It only proposes: a lock also needs the capture gate above (wall or depth landing, a streak of good frames, the separation and height guards, and a label read twice; for the meter only, after 20 s, five agreeing hits at ≥ 0.45 without a read). AC units can score as meters.
 
-### Equipment photo set
+### Training the shipped model
 
-Training data lives outside git. Web photos go in `~/base-ar-data/open-images/` (set `BASE_AR_DATA` to move it); hand-labeled site photos go in `training/` (gitignored). Only the attribution list `dataset/open-images-manifest.csv` is committed, never the images. The tooling also labels `gas_meter` (class 2), which the app ignores until `EquipmentDetecting.kind(at:)` maps it, so a 3-class model is a drop-in replacement.
+`training/` is gitignored, so each machine rebuilds it. The shipped model came from this path:
+
+1. `uv venv --python 3.12 training/.venv && uv pip install --python training/.venv/bin/python ultralytics coremltools "git+https://github.com/ultralytics/CLIP.git"`
+2. `scripts/fetch_commons.py` (Wikimedia Commons meters, credits in `training/raw/sources.csv`) and `scripts/fetch_openverse.py` (Openverse meters and panels, CC0 / CC BY / CC BY-SA / PD only, credits in `training/openverse/sources.csv`).
+3. Put hand-labeled site photos in `training/site/` and hand-labeled Openverse panels in `training/openverse_hand/`, each with a YOLO `.txt` label beside it.
+4. `training/.venv/bin/python scripts/autolabel.py`: YOLOE-26l and the last fine-tuned model (`training/best_v3.pt`, when present) draft meter boxes. Check `training/review/` and list bad images in `training/exclude.txt`.
+5. `training/.venv/bin/python scripts/train_equipment.py`: trains YOLO26s on the Apple GPU and writes the Core ML package into the app (`--no-export` only trains; `--data`, `--model` and `--epochs` override the defaults).
+
+### Equipment photo set (3 classes)
+
+A second, separate pipeline lives in `scripts/photoset/`. It is not what trained the shipped model. Web photos go in `~/base-ar-data/open-images/` (set `BASE_AR_DATA` to move it); hand-labeled site photos stay in `training/`. Only the attribution list `dataset/open-images-manifest.csv` is committed, never the images. It also labels `gas_meter` (class 2), which the app ignores until `EquipmentDetecting.kind(at:)` maps it, so a 3-class model is a drop-in replacement.
 
 1. `uv venv --python 3.12 ~/base-ar-data/.venv && uv pip install --python ~/base-ar-data/.venv/bin/python -r scripts/requirements-training.txt`
-2. `fetch_commons.py` and `fetch_openverse.py` (run both at once; each takes `--minutes`) download openly licensed photos only (CC0, PD, CC BY, CC BY-SA; no NC or ND) of meters, panels, gas meters, and seven negative kinds: AC condensers, junction boxes and disconnects, mailboxes, hose bibs, pool equipment, water meters, and telecom boxes. Each file's source, author, and license goes in `manifest-<source>.csv`. Photos are deduplicated by SHA-1 and perceptual hash.
-3. Put hand-labeled site photos in `training/site/`, each with a YOLO `.txt` label beside it. They are repeated three times in training, and the stems in `VAL_STEMS` are held out.
-4. `autolabel.py --out ~/base-ar-data/open-images/dataset`: OWLv2 (Apache-2.0) drafts boxes for each photo's known class (`--labeler yoloe` keeps the old YOLOE-26l path). Negatives get empty labels, and train/val is split by uploader. Check the sheets in `open-images/review/`, list bad stems in `open-images/exclude.txt`, and run it again (detections are cached, so it is instant). It also writes `dataset/open-images-manifest.csv`.
-5. `train_equipment.py --data ~/base-ar-data/open-images/dataset/data.yaml` trains YOLO26s on the Apple GPU and writes the Core ML package into the app (`--no-export` only trains).
+2. `scripts/photoset/fetch_commons.py` and `scripts/photoset/fetch_openverse.py` (run both at once; each takes `--minutes`) download openly licensed photos only (CC0, PD, CC BY, CC BY-SA; no NC or ND) of meters, panels, gas meters, and seven negative kinds: AC condensers, junction boxes and disconnects, mailboxes, hose bibs, pool equipment, water meters, and telecom boxes. Each file's source, author, and license goes in `manifest-<source>.csv`. Photos are deduplicated by SHA-1 and perceptual hash.
+3. Hand-labeled site photos in `training/site/` are repeated three times in training, and the stems in `VAL_STEMS` are held out.
+4. `scripts/photoset/autolabel.py --out ~/base-ar-data/open-images/dataset`: OWLv2 (Apache-2.0) drafts boxes for each photo's known class (`--labeler yoloe` keeps the YOLOE-26l path). Negatives get empty labels, and train/val is split by uploader. Check the sheets in `open-images/review/`, list bad stems in `open-images/exclude.txt`, and run it again (detections are cached, so it is instant). It also writes `dataset/open-images-manifest.csv`.
+5. `scripts/train_equipment.py --data ~/base-ar-data/open-images/dataset/data.yaml` trains on that set.
 
 Web photos skew European (DIN-rail boards, diaphragm gas meters). Phone frames from real houses still matter most; split them by house. Every panel example from a real site so far comes from one demo wall, so expect weaker panel detection at other houses until more site photos are added.
 
@@ -274,7 +287,7 @@ See [`tools/viewer/README.md`](tools/viewer/README.md) for details.
 
 Base's public request is two steps (researched 2026-09-26). [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a separate [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. Full comparison: [`reports/Base battery form vs app.md`](reports/Base%20battery%20form%20vs%20app.md).
 
-This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), an AR screenshot, and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
+This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
 
 ## What's stubbed
 

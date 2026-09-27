@@ -1,56 +1,70 @@
 #!/usr/bin/env bash
-# Creates Config/Local.xcconfig with the current user's Apple development Team ID
-# and a bundle identifier derived from their macOS username, so builds sign correctly
-# without hand-editing. Safe to re-run: bails out if Local.xcconfig already exists.
+# One-time signing setup per Mac.
+#
+# Writes Config/Local.xcconfig (gitignored) with this developer's Apple Team ID and a
+# personal bundle identifier, and turns on the repo's git hooks so a Team ID never gets
+# committed into BaseAR.xcodeproj. Safe to re-run: an existing Local.xcconfig is kept.
+#
+# Usage: ./scripts/bootstrap-signing.sh [TEAM_ID]
+#   Pass TEAM_ID when your certificates belong to more than one team.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-config_dir="$repo_root/Config"
-local_config="$config_dir/Local.xcconfig"
-example_config="$config_dir/Local.xcconfig.example"
+local_config="$repo_root/Config/Local.xcconfig"
+
+# Shared hooks live in .githooks; the pre-commit hook rejects a committed DEVELOPMENT_TEAM.
+git -C "$repo_root" config core.hooksPath .githooks
+echo "Git hooks enabled (.githooks)."
 
 if [ -f "$local_config" ]; then
-  echo "Config/Local.xcconfig already exists. Not overwriting."
+  echo "Config/Local.xcconfig already exists. Not overwriting:"
   cat "$local_config"
   exit 0
 fi
 
-if [ ! -f "$example_config" ]; then
-  echo "Config/Local.xcconfig.example is missing. Repo layout has changed." >&2
-  exit 1
-fi
+# The Team ID is the certificate's OU field. The ID in parentheses in the certificate
+# name is a personal identifier and often differs from the team, so it is not used.
+teams=$(
+  security find-certificate -a -c "Apple Development:" -p 2>/dev/null \
+    | awk '/BEGIN CERTIFICATE/{cert=""} {cert=cert $0 "\n"} /END CERTIFICATE/{printf "%s", cert | "openssl x509 -noout -subject"; close("openssl x509 -noout -subject")}' \
+    | sed -nE 's/.*OU ?= ?([A-Z0-9]{10}).*/\1/p' \
+    | sort -u
+)
 
-identity_line=$(security find-identity -v -p codesigning | grep -E '"Apple Development: ' | head -1 || true)
-if [ -z "$identity_line" ]; then
+if [ $# -ge 1 ]; then
+  team_id="$1"
+elif [ -z "$teams" ]; then
   cat >&2 <<'MSG'
-No Apple Development code-signing identity found in this Mac's keychain.
+No Apple Development certificate found in this Mac's keychain.
 
 Do this once, then re-run:
-  1. Open Xcode.
-  2. Xcode -> Settings -> Accounts.
-  3. Click + and sign in with your Apple ID.
-  4. Xcode will download an Apple Development certificate for you.
+  1. Open Xcode -> Settings -> Accounts.
+  2. Click + and sign in with your Apple ID.
+  3. Select the team and click "Manage Certificates..." -> + -> Apple Development.
 
-If you'd rather set this up manually, copy Config/Local.xcconfig.example
-to Config/Local.xcconfig and fill in DEVELOPMENT_TEAM + PRODUCT_BUNDLE_IDENTIFIER
-by hand.
+Or copy Config/Local.xcconfig.example to Config/Local.xcconfig and fill it in by hand.
 MSG
   exit 1
+elif [ "$(printf '%s\n' "$teams" | wc -l | tr -d ' ')" -gt 1 ]; then
+  echo "Certificates for more than one team were found:" >&2
+  printf '  %s\n' $teams >&2
+  echo "Re-run with the one to use: ./scripts/bootstrap-signing.sh TEAM_ID" >&2
+  exit 1
+else
+  team_id="$teams"
 fi
 
-team_id=$(printf '%s' "$identity_line" | sed -nE 's/.*\(([A-Z0-9]{10})\).*/\1/p')
-if [ -z "$team_id" ]; then
-  echo "Could not parse a 10-character Team ID from: $identity_line" >&2
+if ! printf '%s' "$team_id" | grep -qE '^[A-Z0-9]{10}$'; then
+  echo "\"$team_id\" is not a 10-character Team ID." >&2
   exit 1
 fi
 
+# Bundle IDs are global across Apple accounts, so each developer needs their own.
 username_slug=$(whoami | tr -cd '[:alnum:]' | tr '[:upper:]' '[:lower:]')
-if [ -z "$username_slug" ]; then
-  username_slug="developer"
-fi
-bundle_id="com.${username_slug}.BaseAR"
+bundle_id="com.${username_slug:-developer}.BaseAR"
 
 cat > "$local_config" <<EOF
+// Personal signing settings. Gitignored; never commit this file.
 DEVELOPMENT_TEAM = $team_id
 PRODUCT_BUNDLE_IDENTIFIER = $bundle_id
 EOF
@@ -58,5 +72,5 @@ EOF
 echo "Wrote $local_config:"
 cat "$local_config"
 echo
-echo "If Xcode still can't find a matching provisioning profile, sign in to Xcode -> Settings -> Accounts once, then build with:"
+echo "Build for a device with:"
 echo "  xcodebuild -project BaseAR.xcodeproj -scheme BaseAR -destination 'generic/platform=iOS' -allowProvisioningUpdates build"

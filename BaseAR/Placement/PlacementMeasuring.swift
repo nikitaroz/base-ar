@@ -1,4 +1,5 @@
 import Foundation
+import os
 import simd
 
 /// A vertical plane copied out of ARKit so measurement code does not keep AR objects.
@@ -58,6 +59,18 @@ enum TransferSwitchReservation {
     static let outFromWallMeters: Float = 30 * BatteryGeometry.inchesToMeters
 }
 
+private let meshKeyCounter = OSAllocatedUnfairLock(initialState: 0)
+
+extension PlacementSceneSnapshot {
+    /// A key no other `classifiedMesh` has used in this run of the app.
+    static func newMeshKey() -> Int {
+        meshKeyCounter.withLock { value in
+            value += 1
+            return value
+        }
+    }
+}
+
 struct PlacementSceneSnapshot: Sendable, Equatable {
     var batteryPosition: PlacementAnchor?
     var batteryYawRadians: Float = 0
@@ -80,6 +93,9 @@ struct PlacementSceneSnapshot: Sendable, Equatable {
     var lidarMeshAvailable: Bool = false
     /// Classified face samples near the battery, meter, or working space.
     var classifiedMesh: [ClassifiedMeshSample] = []
+    /// Names this exact `classifiedMesh`, so measuring reuses one scan index for it. 0 means unnamed: always rebuilt.
+    /// Set only beside `classifiedMesh`, from `newMeshKey()`.
+    var classifiedMeshKey = 0
     /// Rounded automatic wall clearance so the placement screen refreshes when the scan changes.
     var automaticWallClearanceFeet: Double?
     var confirmedMeasurements: [ConfirmedPlacementMeasurement] = []
@@ -118,7 +134,6 @@ struct PlacementMeasurements: Sendable, Equatable {
     var distanceToWallFeet: Double?
     var distanceToGasMeterFeet: Double?
     var meterHeightFeet: Double?
-    var meterAndPanelSameWall: Bool?
     var footprintIsClear: Bool?
     /// False when a classified window overlaps the cabinet on the host wall. Nil until that face has been scanned.
     var clearOfWindows: Bool?
@@ -155,7 +170,6 @@ extension PlacementMeasuring {
         updated.distanceToWallFeet = measured.distanceToWallFeet
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
-        updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
         // A missing mesh leaves the previous measured result in place, but only for the same spot.
         // With a mesh, nil means this spot is not measured, so an old answer must not carry over. Yes/No answers are not a measurement.
         let keepBatteryChecks = !measured.lidarMeshAvailable && measured.batteryPosition == placement.batteryPosition
@@ -211,7 +225,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         let wallFeet = wallDistanceFeet(snapshot)
         let heightFeet = meterHeightFeet(snapshot) ?? confirmed(.meterHeight, in: snapshot)?.distanceFeet
         let sameWall = meterAndPanelSameWall(snapshot)
-        let scan = ScanIndex(snapshot.classifiedMesh)
+        let scan = ScanIndex.of(snapshot)
         let footprint = footprintClearance(snapshot, scan: scan)
         let windows = clearOfWindows(snapshot)
         let access = keepsEquipmentAccess(snapshot)
@@ -227,7 +241,6 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             distanceToWallFeet: wallFeet,
             distanceToGasMeterFeet: gasFeet,
             meterHeightFeet: heightFeet,
-            meterAndPanelSameWall: sameWall,
             footprintIsClear: footprint,
             clearOfWindows: windows,
             keepsEquipmentAccess: access,
@@ -256,7 +269,7 @@ struct CorePlacementMeasurer: PlacementMeasuring {
 
     /// Drawn on the side the check used: the chosen side, or the other side when only that one is clear.
     func transferSwitchBox(in snapshot: PlacementSceneSnapshot) -> TransferSwitchBox? {
-        guard let frame = transferSwitch(snapshot, scan: ScanIndex(snapshot.classifiedMesh))?.frame else { return nil }
+        guard let frame = transferSwitch(snapshot, scan: ScanIndex.of(snapshot))?.frame else { return nil }
         return TransferSwitchBox(
             center: frame.center,
             wallPoint: frame.wallPoint,
@@ -504,13 +517,15 @@ struct CorePlacementMeasurer: PlacementMeasuring {
         return deltaMeters / 0.3048
     }
 
-    /// Both taps must face the same way and lie on nearly the same plane. Opposite walls fail. Yes/No is not a fallback.
+    /// Base allows the meter and panel on the same exterior wall or on opposite sides of it (a garage panel behind an
+    /// outdoor meter, [H705]). The two normals must be parallel — same direction or opposed — and the taps must sit
+    /// on nearly the same plane. Yes/No is not a fallback.
     private func meterAndPanelSameWall(_ snapshot: PlacementSceneSnapshot) -> Bool? {
         guard let meterNormal = unit(snapshot.meterWallNormal?.simd ?? .zero),
               let panelNormal = unit(snapshot.panelWallNormal?.simd ?? .zero),
               let meterPoint = snapshot.meterWallPosition?.simd,
               let panelPoint = snapshot.panelWallPosition?.simd else { return nil }
-        guard simd_dot(meterNormal, panelNormal) >= wallSameDirectionDotThreshold else { return false }
+        guard abs(simd_dot(meterNormal, panelNormal)) >= wallSameDirectionDotThreshold else { return false }
         let separation = abs(simd_dot(panelPoint - meterPoint, meterNormal))
         return separation <= sameWallPlaneToleranceMeters
     }
@@ -731,6 +746,18 @@ fileprivate struct ScanIndex {
         }
     }
 
+    private static let latest = OSAllocatedUnfairLock<(key: Int, index: ScanIndex)?>(initialState: nil)
+
+    /// The index for the snapshot's mesh, built once per `classifiedMeshKey`.
+    static func of(_ snapshot: PlacementSceneSnapshot) -> ScanIndex {
+        let key = snapshot.classifiedMeshKey
+        guard key != 0 else { return ScanIndex(snapshot.classifiedMesh) }
+        if let hit = latest.withLock({ $0?.key == key ? $0?.index : nil }) { return hit }
+        let index = ScanIndex(snapshot.classifiedMesh)
+        latest.withLock { $0 = (key, index) }
+        return index
+    }
+
     private static func key(_ point: SIMD3<Float>) -> SIMD3<Int32> {
         SIMD3(Int32((point.x / cell).rounded(.down)), Int32((point.y / cell).rounded(.down)), Int32((point.z / cell).rounded(.down)))
     }
@@ -940,7 +967,7 @@ enum MeasurementOverlay {
         flag("keeps_meter_and_panel_access", measured.keepsEquipmentAccess)
         flag("front_working_space", measured.frontWorkingSpaceIsClear)
         flag("transfer_switch_space", measured.transferSwitchClearanceObserved)
-        if let same = measured.meterAndPanelSameWall {
+        if let same = measured.meterAndPanelShareWall {
             comments.append("check meter_and_panel_same_wall \(same ? "yes" : "no")")
         }
 

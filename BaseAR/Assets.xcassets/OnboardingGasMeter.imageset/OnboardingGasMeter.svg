@@ -1,0 +1,9 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2048 2048" width="1024" height="1024">
+  <!-- Two green nipples on top of the meter -->
+  <rect fill="rgb(15,76,58)" x="640" y="416" width="160" height="128" rx="24"/>
+  <rect fill="rgb(15,76,58)" x="1088" y="416" width="160" height="128" rx="24"/>
+  <!-- Meter body with the circular dial cut out (evenodd) -->
+  <path fill="rgb(15,76,58)" fill-rule="evenodd" d="M 384 544 L 1504 544 C 1568 544 1616 592 1616 656 L 1616 1568 C 1616 1632 1568 1680 1504 1680 L 384 1680 C 320 1680 272 1632 272 1568 L 272 656 C 272 592 320 544 384 544 Z M 944 848 C 748 848 592 1004 592 1200 C 592 1396 748 1552 944 1552 C 1140 1552 1296 1396 1296 1200 C 1296 1004 1140 848 944 848 Z"/>
+  <!-- Teal L-shaped pipe elbow on the right side -->
+  <path fill="rgb(46,139,111)" d="M 1616 1024 L 1808 1024 C 1832 1024 1856 1048 1856 1072 L 1856 1424 C 1856 1448 1832 1472 1808 1472 L 1712 1472 L 1712 1152 L 1616 1152 Z"/>
+</svg>

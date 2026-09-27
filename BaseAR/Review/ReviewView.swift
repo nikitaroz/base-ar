@@ -21,7 +21,6 @@ struct ReviewView: View {
                 whatsMissingCard
                 details
                 TypeSafeJevAdvisoryView(session: store.session)
-                jsonPreviewSection
                 shareSection
             }
             .padding()
@@ -60,7 +59,7 @@ struct ReviewView: View {
             Text("This clears the meter and panel marks, the battery spot, the scan photos, and numbers only the scan read. Your Home Info and typed numbers stay.")
         }
         .task {
-            store.exportForSharing()
+            await store.exportForSharing()
         }
         .sheet(isPresented: $showShare) {
             ActivityShareSheet(urls: store.exportURLs)
@@ -375,7 +374,6 @@ struct ReviewView: View {
 
     private var placementDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            evidenceImage(store.placementImage, label: "Placement screenshot")
             LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
             LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
             LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")
@@ -389,7 +387,7 @@ struct ReviewView: View {
             LabeledContent("Clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
             LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
             LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
-            LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelSameWall))
+            LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelShareWall))
             LabeledContent("Measurement surfaces", value: measurementMethods)
             Text("GPS is the phone’s property fix, not the battery position. AR measurements are preliminary estimates.")
                 .font(.footnote)
@@ -443,32 +441,6 @@ struct ReviewView: View {
         .buttonStyle(.bordered)
     }
 
-    private var jsonPreviewSection: some View {
-        GroupBox("survey.json") {
-            if let preview = jsonPreview {
-                ScrollView {
-                    Text(preview)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(maxHeight: 240)
-            } else {
-                Text("Preview will appear here after the survey is saved.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private var jsonPreview: String? {
-        guard let url = store.surveyJSONURL,
-              let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-        return text
-    }
-
     private var shareSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let lastExportError = store.lastExportError {
@@ -477,13 +449,21 @@ struct ReviewView: View {
                     .foregroundStyle(.red)
             }
             Button {
-                store.exportForSharing()
-                showShare = store.lastExportError == nil && !store.exportURLs.isEmpty
+                Task {
+                    await store.exportForSharing()
+                    showShare = store.lastExportError == nil && !store.exportURLs.isEmpty
+                }
             } label: {
-                Label("Share survey", systemImage: "square.and.arrow.up")
-                    .frame(maxWidth: .infinity)
+                if store.isExporting {
+                    Label("Preparing survey…", systemImage: "hourglass")
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Label("Share survey", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(store.isExporting)
             .controlSize(.large)
             Text(store.placementController?.hasExportableMesh == true
                 ? "Shares one zipped folder with survey.json, the photos, scene.ply, and the scan capture. The survey is also saved locally."

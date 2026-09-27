@@ -1,0 +1,12 @@
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2048 2048" width="1024" height="1024">
+  <!-- Top cabinet tab -->
+  <rect fill="rgb(15,76,58)" x="912" y="360" width="224" height="64" rx="20"/>
+  <!-- Top cabinet body -->
+  <rect fill="rgb(15,76,58)" x="576" y="424" width="896" height="576" rx="72"/>
+  <!-- Bottom cabinet tab -->
+  <rect fill="rgb(15,76,58)" x="912" y="1024" width="224" height="64" rx="20"/>
+  <!-- Bottom cabinet body -->
+  <rect fill="rgb(15,76,58)" x="576" y="1088" width="896" height="576" rx="72"/>
+  <!-- Teal 4-point spark overlapping the upper-right corner of the top cabinet -->
+  <path fill="rgb(46,139,111)" d="M 1472 288 C 1472 368 1552 448 1632 448 C 1552 448 1472 528 1472 608 C 1472 528 1392 448 1312 448 C 1392 448 1472 368 1472 288 Z"/>
+</svg>

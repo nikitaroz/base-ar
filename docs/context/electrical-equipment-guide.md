@@ -28,7 +28,7 @@ Not on the power path, but limits the battery spot:
 | --- | --- | --- |
 | ① Meter | Close photo with a readable meter number; wide photos around it; no higher than 6 ft; 30 × 36 in clear space in front | Meter photo and number; meter height from the AR lock (3–6 ft rule) |
 | ② Main disconnect | Sharp photo with the amp number readable; main breaker 150–200 A in Austin | Typed amperage only. No photo |
-| ③ Breaker panel | Photo of the box and its surroundings; only one box; not in a closet; on the same wall as the meter; 30 × 36 in clear space | AR panel lock and same-wall check (wrongly fails opposite sides). No photo. One-box and closet rules are not captured |
+| ③ Breaker panel | Photo of the box and its surroundings; only one box; not in a closet; on the same wall as the meter; 30 × 36 in clear space | AR panel lock and same-wall check (accepts opposite sides of the same wall). No photo. One-box and closet rules are not captured |
 | ④ Transfer switch | About 13 in wide, 30 in total clearance, on the wall next to the meter; 3 ft of wall in Base's typical layout | AR wall-space check (needs LiDAR). Reserves 13 in along the wall |
 | ⑤ Gas meter | Battery at least 3 ft away. No photo slot | AR ground tap or a "No gas meter" button |
 | ⑥ Base Core | 30.68 × 35.9 × 22 in; 3 ft × 3 ft area; within 20 ft of the meter and 1 ft of the wall; not in front of the meter, panel, solar equipment, or a window | Model exists, but the battery cannot be placed on `main` (see ⑥) |
@@ -116,7 +116,7 @@ Not on the power path, but limits the battery spot:
 
 **What the app captures**
 - **AR panel lock:** the lock sets a wall point and normal, plus a ground point cast straight down (`BaseAR/Placement/PlacementARView.swift:1790-1798`). The tap handler has a meter/panel branch (`:817-825`), but it cannot be reached: the screen binds only `.gasMeter` or `.battery` mode (`:174`), and taps work only during the gas step (`:180`).
-- **Same-wall check:** `BaseAR/Placement/PlacementMeasuring.swift:492-501`, rule at `BaseAR/Rules/BaseRuleSet.swift:201-214`. It passes only when the two wall normals point the same way and the taps lie within 0.30 m of one plane (`PlacementMeasuring.swift:181-183`). The code comment says "Opposite walls fail". **Base explicitly allows opposite sides of the same wall**, for example a garage panel behind an outdoor meter. In that case the check returns a conflict. A required conflict turns the whole preview red (`BaseAR/Rules/EligibilityRule.swift:41-43`), even though Base allows the layout.
+- **Same-wall check:** `BaseAR/Placement/PlacementMeasuring.swift:515-524`, rule at `BaseAR/Rules/BaseRuleSet.swift:201-214`. It passes when the two wall normals are parallel — same direction or opposed, using `abs(simd_dot(...))` — and the taps lie within 0.30 m of one plane. This matches Base's guidance that the meter and panel may share the same exterior wall or sit on opposite sides of it (a garage panel behind an outdoor meter).
 - **Battery kept out of the meter's and panel's 30 × 36 zones:** `PlacementMeasuring.swift:306-336`. Unknown on `main` because no battery is placed.
 - **No panel photo and no area-around-panel photo.**
 - **Not captured:** the one-box rule, the closet rule, and the panel's own rating. The solar or two-battery check reads the typed main breaker amperage instead (`BaseAR/Rules/BaseRuleSet.swift:50-73`; see §4).

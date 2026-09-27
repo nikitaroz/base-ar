@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fine-tune a small YOLO detector on training/dataset and replace EquipmentScan.mlpackage.
 
-Run scripts/autolabel.py first and review its contact sheets before training.
+Run scripts/autolabel.py (training/review/) or scripts/photoset/autolabel.py (contact sheets)
+first and review its drafts before training.
 Run with the training venv. Pass --no-export to train without touching the app.
 
 Class 0 is electric_meter and class 1 is breaker_panel, which is what

@@ -2,7 +2,7 @@
 
 Images live outside the repo (default ~/base-ar-data/open-images, override with
 BASE_AR_DATA). Each fetcher writes its own manifest-<source>.csv there, one row
-per kept image, so two fetchers can run at once. scripts/autolabel.py merges them,
+per kept image, so two fetchers can run at once. scripts/photoset/autolabel.py merges them,
 drops cross-source near-duplicates, splits by uploader and writes the committed
 attribution list dataset/open-images-manifest.csv.
 

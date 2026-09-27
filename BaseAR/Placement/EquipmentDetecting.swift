@@ -21,9 +21,10 @@ enum EquipmentKind: String, Sendable {
 
 /// One box from the EquipmentScan detector. The rect is Vision-normalized, origin at the lower left of the upright image.
 struct EquipmentDetection: Sendable {
-    /// Provisional cutoffs on the true detector score. On 18 Commons photos real meters scored 0.25–0.95 and
-    /// AC condensers reached 0.93, so neither number separates them. Tune both from the DEBUG `EquipmentScan` log on a device.
-    static let drawConfidence: Float = 0.30
+    /// Provisional cutoffs on the true detector score. On held-out site photos the YOLO26s model scores real meters
+    /// and panels 0.77+, even shrunk to 20% size, while a laptop keyboard reads as a panel at about 0.35. Tune both
+    /// from the DEBUG `EquipmentScan` log on a device.
+    static let drawConfidence: Float = 0.40
     static let lockConfidence: Float = 0.45
 
     var kind: EquipmentKind
@@ -98,7 +99,11 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
         }
         var found = Self.recognizedObjects(in: request.results)
         if found.isEmpty {
-            found = Self.featureBoxes(in: request.results)
+            let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+            let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+            let sideways: Set<CGImagePropertyOrientation> = [.left, .right, .leftMirrored, .rightMirrored]
+            let uprightAspect = sideways.contains(orientation) ? height / width : width / height
+            found = Self.featureBoxes(in: request.results, uprightAspect: uprightAspect)
         }
         return EquipmentDetectionResult(detections: found, status: .ok, errorMessage: nil)
     }
@@ -113,7 +118,9 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
         let model = try MLModel(contentsOf: url, configuration: configuration)
         let vision = try VNCoreMLModel(for: model)
         let request = VNCoreMLRequest(model: vision)
-        request.imageCropAndScaleOption = .scaleFill
+        // Pad to square like Ultralytics training does, instead of squashing the 4:3 frame.
+        // Vision maps object boxes back to the full image; featureBoxes undoes the padding itself.
+        request.imageCropAndScaleOption = .scaleFit
         return request
     }
 
@@ -133,7 +140,8 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
     }
 
     /// Ultralytics NMS exports confidence and coordinates when Vision does not wrap them as objects.
-    private static func featureBoxes(in results: [VNObservation]?) -> [EquipmentDetection] {
+    /// Raw coordinates are in the padded square, so they are mapped back using the upright width / height.
+    private static func featureBoxes(in results: [VNObservation]?, uprightAspect: CGFloat) -> [EquipmentDetection] {
         var confidence: MLMultiArray?
         var coordinates: MLMultiArray?
         for result in results ?? [] {
@@ -161,10 +169,18 @@ final class YOLOEquipmentDetector: EquipmentDetecting, @unchecked Sendable {
                 }
             }
             guard bestScore > 0, let kind = kind(at: bestClass) ?? kind(for: "\(bestClass)") else { continue }
-            let centerX = CGFloat(coordinates[box * 4].floatValue)
-            let centerY = CGFloat(coordinates[box * 4 + 1].floatValue)
-            let width = CGFloat(coordinates[box * 4 + 2].floatValue)
-            let height = CGFloat(coordinates[box * 4 + 3].floatValue)
+            var centerX = CGFloat(coordinates[box * 4].floatValue)
+            var centerY = CGFloat(coordinates[box * 4 + 1].floatValue)
+            var width = CGFloat(coordinates[box * 4 + 2].floatValue)
+            var height = CGFloat(coordinates[box * 4 + 3].floatValue)
+            // scaleFit centers the image in the square: a wide image leaves bands above and below, a tall one at the sides.
+            if uprightAspect > 1 {
+                centerY = (centerY - 0.5) * uprightAspect + 0.5
+                height *= uprightAspect
+            } else if uprightAspect > 0 {
+                centerX = (centerX - 0.5) / uprightAspect + 0.5
+                width /= uprightAspect
+            }
             guard width > 0.01, height > 0.01 else { continue }
             // Ultralytics NMS boxes are center xywh with the origin at the top of the upright image.
             let originX = centerX - width / 2

@@ -5,5 +5,5 @@ ultralytics
 coremltools
 pillow
 imagehash
-transformers  # OWLv2 labeler for autolabel.py (Apache-2.0)
+transformers  # OWLv2 labeler for photoset/autolabel.py (Apache-2.0)
 clip @ git+https://github.com/ultralytics/CLIP.git  # only for --labeler yoloe

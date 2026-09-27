@@ -1,32 +1,15 @@
 import SwiftUI
 
-/// Live scan: AR find meter → panel → placement, with location and electrical status above it.
-/// TypeSafe Jev coaching stays behind the menu so the AR coach banner is the only tip on screen.
+/// Live scan: AR find meter → panel → placement. The AR view owns the only two lines of text on the camera.
+/// TypeSafe Jev coaching stays behind the menu so it never competes with them.
 struct RealtimeSurveyView: View {
     var store: SurveyStore
     @Environment(\.dismiss) private var dismiss
     @State private var showingJevCoaching = false
 
     var body: some View {
-        ZStack(alignment: .top) {
-            PlacementARView(store: store, coachTopInset: 48) {
-                dismiss()
-            }
-
-            HStack(spacing: 8) {
-                statusChip(
-                    icon: "location.circle.fill",
-                    text: locationStatus,
-                    color: store.session.propertyLocation != nil ? .green : .orange
-                )
-                statusChip(
-                    icon: "bolt.circle.fill",
-                    text: electricalStatus,
-                    color: electricalColor
-                )
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
+        PlacementARView(store: store) {
+            dismiss()
         }
         .navigationTitle("Live Scan")
         .navigationBarTitleDisplayMode(.inline)
@@ -56,39 +39,6 @@ struct RealtimeSurveyView: View {
         }
     }
 
-    private func statusChip(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption)
-            Text(text)
-                .font(.caption2)
-                .fontWeight(.medium)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(color.gradient, in: Capsule())
-    }
-
-    private var locationStatus: String {
-        store.session.propertyLocation != nil ? "Located" : "No location yet"
-    }
-
-    private var electricalStatus: String {
-        let hasMeter = store.session.electrical.meterNumber != nil
-        let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
-        if hasMeter && hasBreaker { return "Numbers entered" }
-        if hasMeter || hasBreaker { return "Numbers partly entered" }
-        return "No meter numbers yet"
-    }
-
-    private var electricalColor: Color {
-        let hasMeter = store.session.electrical.meterNumber != nil
-        let hasBreaker = store.session.electrical.mainBreakerAmperage != nil
-        if hasMeter && hasBreaker { return .green }
-        if hasMeter || hasBreaker { return .yellow }
-        return .orange
-    }
 }
 
 /// Minimal coaching detail view (replaces verbose advisory panel)

@@ -295,7 +295,7 @@ private struct OffScreenAnchorIndicator: View {
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: pointers.isEmpty)) { _ in
                 ZStack {
                     ForEach(pointers) { pointer in
                         indicator(for: pointer, in: geo.size)
@@ -2094,6 +2094,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var planes: [UUID: PlaneSample] = [:]
         /// Classified face samples, keyed by ARMeshAnchor identifier so removals stay cheap.
         var meshSamples: [UUID: [ClassifiedMeshSample]] = [:]
+        /// Bumped on every change to `meshSamples`, so the near-placement list is rebuilt only when it can differ.
+        private var meshVersion = 0
+        private var nearMesh: (version: Int, origins: [SIMD3<Float>], samples: [ClassifiedMeshSample], key: Int)?
         /// World-space mesh kept for `scene.ply`. Classification stays in the samples; it is not drawn on the camera.
         private var meshClouds: [UUID: MeshPointCloudChunk] = [:]
         var transferBox: ModelEntity?
@@ -2561,6 +2564,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 for id in ids {
                     self.planes.removeValue(forKey: id)
                     self.meshSamples.removeValue(forKey: id)
+                    self.meshVersion += 1
                     self.meshClouds.removeValue(forKey: id)
                 }
                 self.emitPlanesIfNeeded()
@@ -2600,6 +2604,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private func upsertMesh(_ updates: [ClassifiedMeshUpdate]) {
             for update in updates {
                 meshSamples[update.id] = update.samples
+                meshVersion += 1
                 meshClouds[update.id] = update.cloud
             }
             emitPlanesIfNeeded()
@@ -4679,7 +4684,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             } else {
                 snapshot.workingSpacePosition = nil
             }
-            snapshot.classifiedMesh = classifiedSamplesNearPlacement()
+            (snapshot.classifiedMesh, snapshot.classifiedMeshKey) = classifiedSamplesNearPlacement()
             if let feet = placementMeasurer.wallClearance(in: snapshot)?.distanceFeet {
                 snapshot.automaticWallClearanceFeet = (feet * 12).rounded() / 12
             } else {
@@ -4780,13 +4785,24 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         }
 
         /// Samples near the battery, meter, panel, or working space. The long tape stays a raycast.
-        private func classifiedSamplesNearPlacement() -> [ClassifiedMeshSample] {
+        /// The same list keeps the same key, so measuring reuses its scan index.
+        private func classifiedSamplesNearPlacement() -> ([ClassifiedMeshSample], Int) {
             var origins: [SIMD3<Float>] = []
             if let batteryRig { origins.append(batteryRig.position(relativeTo: nil)) }
             if let meterWallHit { origins.append(meterWallHit.position) }
             if let panelWallHit { origins.append(panelWallHit.position) }
             if let workingSpaceOverlay { origins.append(workingSpaceOverlay.position(relativeTo: nil)) }
-            guard !origins.isEmpty else { return [] }
+            guard !origins.isEmpty else { return ([], 0) }
+            if let nearMesh, nearMesh.version == meshVersion, nearMesh.origins == origins {
+                return (nearMesh.samples, nearMesh.key)
+            }
+            let samples = samplesNear(origins)
+            let key = nearMesh.flatMap { $0.samples == samples ? $0.key : nil } ?? PlacementSceneSnapshot.newMeshKey()
+            nearMesh = (meshVersion, origins, samples, key)
+            return (samples, key)
+        }
+
+        private func samplesNear(_ origins: [SIMD3<Float>]) -> [ClassifiedMeshSample] {
             let limit: Float = 8 * 8
             var result: [ClassifiedMeshSample] = []
             for samples in meshSamples.values {

@@ -87,9 +87,6 @@ enum MissingInformation {
         if !session.gasMeterQuestionAnswered {
             items.append("Whether there is a gas meter outside")
         }
-        if session.placement.screenshotFilename == nil {
-            items.append("AR placement screenshot")
-        }
         if !session.placement.batteryPlaced {
             items.append("AR placement of the battery")
         } else {

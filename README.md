@@ -179,7 +179,6 @@ BaseSiteSurvey-2026-09-26-2041/
 ├─ meter.jpg            The meter photo from the scan capture or the Electrical
 │                       screen (upright JPEG)
 ├─ panel.jpg            The panel photo from the scan capture, when it locked one
-├─ placement.jpg        AR screenshot at the time of Save
 ├─ scene.ply            ASCII LiDAR mesh — per-vertex RGB from camera,
 │                       per-face ARKit label (wall / floor / window / door /
 │                       ceiling / …), and header `mark` lines for the meter,
@@ -263,7 +262,7 @@ See [`tools/viewer/README.md`](tools/viewer/README.md) for details.
 
 Base's public request is two steps (researched 2026-09-26). [Get Started](https://www.basepowercompany.com/get-started) collects ownership, energy setup, address, and contact. Engineers later judge the site from a separate [photo kit](https://help.basepowercompany.com/en/articles/10280641): meter with a legible number, wide shots around the meter (surrounding, left, right, adjacent wall, behind the fence), breaker box, disconnect amperage, and breaker-area context. Full comparison: [`reports/Base battery form vs app.md`](reports/Base%20battery%20form%20vs%20app.md).
 
-This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), an AR screenshot, and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
+This app already asks Base's typed home-form questions and stores the meter and panel photos from the Live Survey, the meter number and main breaker (read by scan and confirmed, or typed), and a full LiDAR + keyframe capture. It does **not** yet capture Base's wide meter-yard compositions. Meter height, front working space, and shared-wall status are AR measurements, not home-form answers. Everything stays on the phone.
 
 ## What's stubbed
 

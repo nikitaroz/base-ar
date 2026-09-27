@@ -123,7 +123,7 @@ struct JevRequest: Encodable, Sendable {
                 "footprint": "3 ft x 3 ft pad clearance unmeasured or failing",
                 "transfer_switch": "transfer-switch space beside the meter unmeasured or failing",
                 "ocr": "meter number or main breaker size missing or unconfirmed",
-                "photos": "meter photo or scan screenshot missing",
+                "photos": "meter photo or scan missing",
                 "form": "home information incomplete",
                 "distances": "AR distances incomplete",
                 "none": "no blocking gap"
@@ -244,7 +244,6 @@ struct JevSurveyState: Encodable, Sendable {
 
         photos = JevPhotoFlags(
             meterPhoto: electrical.meterPhotoFilename != nil,
-            scanScreenshot: placement.screenshotFilename != nil,
             sceneMesh: placement.pointCloudFilename != nil
         )
 
@@ -300,7 +299,6 @@ struct JevSurveyState: Encodable, Sendable {
 
 struct JevPhotoFlags: Encodable, Sendable {
     let meterPhoto: Bool
-    let scanScreenshot: Bool
     let sceneMesh: Bool
 }
 

@@ -4,6 +4,8 @@ A browser tool for reviewing a Base Site Survey export. Drop in the shared `Base
 
 Nothing is uploaded; the files stay in the browser. Prototype only: not an electrical inspection, code review, or installation approval.
 
+If the packet has no usable property coordinates, the viewer still draws and evaluates the placement grid using the bundled Austin defaults. It labels that fallback as a manual-review item. Coordinates explicitly outside the supported Austin region still produce “Manual review required” instead of applying the wrong regional rules.
+
 Built with React, Vite, Tailwind, [shadcn/ui](https://ui.shadcn.com), and three.js.
 
 ## Run it

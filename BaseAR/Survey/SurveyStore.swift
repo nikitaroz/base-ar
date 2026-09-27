@@ -8,7 +8,6 @@ import UIKit
 final class SurveyStore {
     private(set) var session: SurveySession
     var meterImage: UIImage?
-    var placementImage: UIImage?
     /// The one zipped survey folder handed to the share sheet.
     private(set) var exportURLs: [URL] = []
     /// Local survey.json from the last export, for the review preview.
@@ -435,8 +434,8 @@ final class SurveyStore {
         refreshAssessment()
     }
 
-    /// "Start over" on the scan: the scan's evidence goes with it, so Review and the hub cannot show marks, a meter
-    /// height, or a photo the scene no longer has. The live scene is not committed until it has content again.
+    /// "Start over" on the scan: the scan's evidence goes with it, so Review and the hub cannot show marks or a meter
+    /// height the scene no longer has. The live scene is not committed until it has content again.
     /// Kept: the homeowner's no-gas answer (the scan screen decides that one) and whether the phone has LiDAR.
     func resetPlacementEvidence() {
         let gasMeterNotPresent = session.placement.gasMeterNotPresent
@@ -446,17 +445,6 @@ final class SurveyStore {
         session.placement.gasStepOutcome = session.electrical.gasMeterAnswer == .no && gasMeterNotPresent ? .answeredNo : nil
         session.placement.lidarMeshAvailable = lidarMeshAvailable
         removeGasPhoto()
-        placementImage = nil
-        let photo = directory.appendingPathComponent("placement.jpg")
-        if FileManager.default.fileExists(atPath: photo.path) {
-            try? FileManager.default.removeItem(at: photo)
-        }
-        refreshAssessment()
-    }
-
-    func attachPlacementScreenshot(_ image: UIImage) {
-        placementImage = image
-        session.placement.screenshotFilename = write(Self.uprightJPEG(image), filename: "placement.jpg")
         refreshAssessment()
     }
 
@@ -475,7 +463,6 @@ final class SurveyStore {
                 session.electrical.meterPhotoFilename,
                 session.electrical.panelPhotoFilename,
                 session.electrical.gasMeterPhotoFilename,
-                session.placement.screenshotFilename,
                 capture == nil ? nil : "capture"
             ].compactMap { $0 })]
             lastExportError = nil

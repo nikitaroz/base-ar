@@ -375,7 +375,6 @@ struct ReviewView: View {
 
     private var placementDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            evidenceImage(store.placementImage, label: "Placement screenshot")
             LabeledContent("Battery placed", value: store.session.placement.batteryPlaced ? "Yes" : "No")
             LabeledContent("Electric meter marked", value: store.session.placement.meterMarked ? "Yes" : "No")
             LabeledContent("Panel marked", value: store.session.placement.panelMarked ? "Yes" : "No")

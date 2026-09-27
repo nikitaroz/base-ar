@@ -298,6 +298,129 @@ private struct FeedbackPacer {
     }
 }
 
+/// A locked world-space anchor the user can lose sight of once they walk past it. The screen-edge indicator points
+/// back to it while it is off-screen.
+private struct AnchorPointer: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let worldPoint: SIMD3<Float>
+}
+
+/// A small chevron pinned to the nearest viewport edge for each locked anchor that is currently off-screen. It is a
+/// passive locator: no motion cue, no bottom-line copy, no taps. The two-line coach still owns the top and bottom
+/// bars; this overlay sits between them.
+private struct OffScreenAnchorIndicator: View {
+    var pointers: [AnchorPointer]
+    weak var arView: ARView?
+
+    /// Space kept between a chevron and the edge of the viewport. Vertical inset is larger so chevrons never crowd
+    /// the top task line or the bottom feedback bar.
+    private let horizontalInset: CGFloat = 44
+    private let verticalInset: CGFloat = 96
+
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
+                ZStack {
+                    ForEach(pointers) { pointer in
+                        indicator(for: pointer, in: geo.size)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func indicator(for pointer: AnchorPointer, in viewportSize: CGSize) -> some View {
+        if let placement = placement(for: pointer, in: viewportSize) {
+            chevron(placement: placement, label: pointer.label)
+        }
+    }
+
+    private func placement(for pointer: AnchorPointer, in viewportSize: CGSize) -> Placement? {
+        guard let arView, viewportSize.width > 2, viewportSize.height > 2 else { return nil }
+        let center = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
+        if let projected = arView.project(pointer.worldPoint) {
+            let inFrame = projected.x >= horizontalInset
+                && projected.x <= viewportSize.width - horizontalInset
+                && projected.y >= verticalInset
+                && projected.y <= viewportSize.height - verticalInset
+            if inFrame { return nil }
+            let dx = projected.x - center.x
+            let dy = projected.y - center.y
+            return clamped(dx: dx, dy: dy, viewportSize: viewportSize, center: center)
+        }
+        guard let cameraTransform = arView.session.currentFrame?.camera.transform else { return nil }
+        let cameraPos = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        let right = SIMD3<Float>(
+            cameraTransform.columns.0.x,
+            cameraTransform.columns.0.y,
+            cameraTransform.columns.0.z
+        )
+        let up = SIMD3<Float>(
+            cameraTransform.columns.1.x,
+            cameraTransform.columns.1.y,
+            cameraTransform.columns.1.z
+        )
+        let toAnchor = pointer.worldPoint - cameraPos
+        let rightAmount = simd_dot(toAnchor, right)
+        let upAmount = simd_dot(toAnchor, up)
+        let dx = CGFloat(rightAmount)
+        let dy = CGFloat(-upAmount)
+        return clamped(dx: dx, dy: dy, viewportSize: viewportSize, center: center)
+    }
+
+    private func clamped(dx: CGFloat, dy: CGFloat, viewportSize: CGSize, center: CGPoint) -> Placement? {
+        let halfW = viewportSize.width / 2 - horizontalInset
+        let halfH = viewportSize.height / 2 - verticalInset
+        guard halfW > 0, halfH > 0 else { return nil }
+        let absX = abs(dx)
+        let absY = abs(dy)
+        guard absX > 0.001 || absY > 0.001 else { return nil }
+        let sx = absX > 0.001 ? halfW / absX : .infinity
+        let sy = absY > 0.001 ? halfH / absY : .infinity
+        let scale = min(sx, sy)
+        let position = CGPoint(x: center.x + dx * scale, y: center.y + dy * scale)
+        let angle = atan2(dy, dx)
+        return Placement(position: position, angle: angle)
+    }
+
+    private func chevron(placement: Placement, label: String) -> some View {
+        let ux = cos(placement.angle)
+        let uy = sin(placement.angle)
+        let labelOffset: CGFloat = 30
+        let labelPosition = CGPoint(
+            x: placement.position.x - ux * labelOffset,
+            y: placement.position.y - uy * labelOffset
+        )
+        return ZStack {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.45), in: Capsule())
+                .position(labelPosition)
+            Image(systemName: "chevron.up.circle.fill")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                .rotationEffect(.radians(Double(placement.angle) + .pi / 2))
+                .position(placement.position)
+        }
+    }
+
+    private struct Placement {
+        var position: CGPoint
+        var angle: CGFloat
+    }
+}
+
 /// A value typed over the running scan.
 private enum ValueEntry: String, Identifiable {
     case meterNumber
@@ -380,8 +503,6 @@ struct PlacementARView: View {
     @State private var scene: PlacementSceneSnapshot
     @State private var lookAround = LookAround()
     @State private var yawRadians: Float
-    @State private var screenshotToken: UUID?
-    @State private var pendingSave: UUID?
     @State private var statusMessage: String?
     @State private var trackingMessage: String?
     @State private var isVisible = false
@@ -423,9 +544,6 @@ struct PlacementARView: View {
     @State private var autoFinishArmed = false
     /// The battery was slid on a finished scan opened again: that save waits for the slide to settle.
     @State private var finishWaitsForSlide = false
-    /// Screenshot tries for this save. After a couple of misses Review opens without the scan photo.
-    @State private var saveAttempts = 0
-    @State private var lastSaveWithoutBattery = false
     /// Camera access is off or the AR session failed. Holds the step clocks and keeps its message up.
     @State private var cameraProblem: CameraProblem?
 
@@ -442,7 +560,7 @@ struct PlacementARView: View {
     /// No ground beside the meter by then: the survey goes on without a battery, and its checks stay unknown.
     private static let batterySpotWait: Duration = .seconds(3)
     private static let batterySteady: Duration = .seconds(2)
-    /// The placed battery and its tone stay on screen this long before the scan photo is taken.
+    /// The placed battery and its tone stay on screen this long before the scan saves.
     private static let finishDwell: Duration = .seconds(1.5)
     private static let blindCameraDelay: Duration = .seconds(5)
     /// A meter or panel the scan cannot capture by then is left unmarked, so the scan still ends (amber) instead
@@ -453,7 +571,6 @@ struct PlacementARView: View {
     private static let findReadingGrace: Duration = .seconds(10)
     /// No meter means no battery spot beside it: the finish comes after this short pause.
     private static let noMeterDwell: Duration = .seconds(1.5)
-    private static let screenshotRetries = 2
 
     init(
         store: SurveyStore,
@@ -471,8 +588,6 @@ struct PlacementARView: View {
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
         _passed = State(initialValue: existing?.passedLiveSteps ?? [])
     }
-
-    private var isSaving: Bool { pendingSave != nil }
 
     /// Denied or restricted. Not yet asked is fine: ARKit asks when the session first runs.
     private static var cameraAccessOff: Bool {
@@ -562,6 +677,28 @@ struct PlacementARView: View {
         }
     }
 
+    /// Locked anchors that a screen-edge chevron should point back to whenever they leave the frame. Empty on the
+    /// find-meter step (nothing marked yet) and on confirm (the save screen has nothing to re-orient toward). The
+    /// chevron itself decides visibility per-frame; this list only says which anchors are eligible.
+    private var activeAnchorPointers: [AnchorPointer] {
+        switch step {
+        case .findMeter, .confirm, .finish:
+            return []
+        case .readMeter, .findPanel, .readBreaker, .gas, .lookAround, .placeBattery:
+            var pointers: [AnchorPointer] = []
+            if let meter = scene.meterWallPosition {
+                pointers.append(AnchorPointer(id: "meter", label: "Meter", worldPoint: meter.simd))
+            }
+            if step != .findPanel, step != .readMeter, let panel = scene.panelWallPosition {
+                pointers.append(AnchorPointer(id: "panel", label: "Panel", worldPoint: panel.simd))
+            }
+            if step == .placeBattery, let gas = scene.gasMeterPosition {
+                pointers.append(AnchorPointer(id: "gas", label: "Gas", worldPoint: gas.simd))
+            }
+            return pointers
+        }
+    }
+
     /// Controller step for the current one. The battery ghost only exists in `battery`; `finish` keeps the placed
     /// battery and its transfer-switch box. Any other step drops an unconfirmed ghost.
     private var guideStep: WalkStep {
@@ -608,7 +745,6 @@ struct PlacementARView: View {
             spot: scene.suggestedBatteryPosition,
             placed: scene.batteryPosition,
             armed: autoFinishArmed,
-            saving: isSaving,
             held: clockHeld
         )
     }
@@ -637,7 +773,6 @@ struct PlacementARView: View {
             dragOffset = 0
             autoFinishArmed = false
             finishWaitsForSlide = false
-            saveAttempts = 0
             let controller = store.requirePlacementController()
             // A camera that cannot run must say so and stop the clocks, not time every step out over a dead feed.
             cameraProblem = Self.cameraAccessOff ? .accessOff : nil
@@ -706,7 +841,6 @@ struct PlacementARView: View {
         }
         .onDisappear {
             isVisible = false
-            pendingSave = nil
             commitLiveScene()
             store.placementController?.pauseIfIdle()
         }
@@ -822,7 +956,7 @@ struct PlacementARView: View {
                     editingWorkingSpace: false,
                     // Battery: one finger slides it along the meter wall and two fingers turn it, before and after
                     // it settles. The gas step's hold needs input too.
-                    inputEnabled: step == .gas || step == .placeBattery || (step == .confirm && !isSaving),
+                    inputEnabled: step == .gas || step == .placeBattery || step == .confirm,
                     aimEnabled: step == .gas && scene.gasMeterPosition == nil,
                     // Nothing is marked by a tap: the scan locks, holds, and places by itself.
                     tapEnabled: false,
@@ -833,12 +967,10 @@ struct PlacementARView: View {
                     lockTarget: lockTarget,
                     yawRadians: yawRadians,
                     tone: assessment?.placementTone ?? .incomplete,
-                    screenshotToken: screenshotToken,
                     onSceneChange: acceptScene,
                     onYawChange: { yawRadians = $0 },
                     // The camera never shows a distance.
                     onLiveFeet: { _ in },
-                    onScreenshot: handleScreenshot,
                     onFailure: { statusMessage = $0 },
                     onTrackingStatus: { trackingMessage = $0 },
                     onCoachingActiveChange: { coachingIsActive = $0 },
@@ -850,6 +982,14 @@ struct PlacementARView: View {
                     }
                 )
                 .ignoresSafeArea()
+            }
+            // Chevrons at the screen edge for locked anchors that have drifted out of frame. Same coaching gate as
+            // the two lines: while ARKit's coaching overlay is up, the camera is its own; nothing else draws.
+            if !coachingIsActive {
+                OffScreenAnchorIndicator(
+                    pointers: activeAnchorPointers,
+                    arView: store.placementController?.arView
+                )
             }
             // The coaching overlay has the camera to itself. The two lines come back when it finishes. A lens that
             // sees nothing keeps the coaching up, so the blind-camera line shows over it: "move the phone" won't help.
@@ -888,12 +1028,12 @@ struct PlacementARView: View {
         }
     }
 
-    /// The top line: the one job now. A finished scan opened again says so instead of "Saving".
+    /// The top line: the one job now. A finished scan opened again says so.
     private var taskText: String {
         if let cameraProblem { return cameraProblem.task }
-        if step == .confirm, !autoFinishArmed, !isSaving { return "Scan done" }
+        if step == .confirm, !autoFinishArmed { return "Scan done" }
         // The battery spot is taken by itself in the background: the line says only that the scan is saving.
-        if isSaving || step == .placeBattery { return LiveStep.confirm.task }
+        if step == .placeBattery { return LiveStep.confirm.task }
         return step.task
     }
 
@@ -1030,9 +1170,9 @@ struct PlacementARView: View {
             return Feedback(.stepBack)
         case .placeBattery, .confirm:
             // A finished scan opened again ("Scan done") does not save by itself until the battery moves.
-            if step == .confirm, !autoFinishArmed, !isSaving { return Feedback(.swipeBack) }
+            if step == .confirm, !autoFinishArmed { return Feedback(.swipeBack) }
             // The save right after the look-around gives no battery instructions.
-            if step == .placeBattery || (autoFinishArmed || isSaving) && !finishWaitsForSlide { return Feedback(.scanned) }
+            if step == .placeBattery || autoFinishArmed && !finishWaitsForSlide { return Feedback(.scanned) }
             // No ghost yet means no ground beside the meter.
             guard let assessment else { return Feedback(.pointDown) }
             return toneFeedback(assessment)
@@ -1103,37 +1243,27 @@ struct PlacementARView: View {
                 primaryButton("Put it here") {
                     store.placementController?.confirmBatterySpot()
                 }
-                .disabled(isSaving)
                 secondaryButton("Other side") {
                     store.placementController?.flipBatterySide()
                 }
-                .disabled(isSaving)
             } else {
                 // No ground found beside the meter yet. Saving still works; the battery checks stay unknown (amber).
                 secondaryButton("Save without battery") {
                     submit(withoutBattery: true)
                 }
-                .disabled(isSaving)
             }
         case .confirm:
             Button {
                 submit()
             } label: {
-                if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Save and review")
-                        .frame(maxWidth: .infinity)
-                }
+                Text("Save and review")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isSaving)
             secondaryButton("Move it") {
                 store.placementController?.unconfirmBatterySpot()
             }
-            .disabled(isSaving)
         case .finish:
             EmptyView()
         }
@@ -1219,7 +1349,6 @@ struct PlacementARView: View {
         } label: {
             Label("More", systemImage: "ellipsis.circle")
         }
-        .disabled(isSaving)
     }
 
     private var unsupportedScreen: some View {
@@ -1435,7 +1564,7 @@ struct PlacementARView: View {
     /// no spot within `batterySpotWait` the survey goes on without a battery (amber). The finish takes the scan
     /// photo and opens Review at once. (`batterySteady` and `phoneHeldSteady` are no longer used.)
     private func runBatteryClock() async {
-        guard !clockHeld, !isSaving else { return }
+        guard !clockHeld else { return }
         switch step {
         case .placeBattery:
             if hasBatteryGhost {
@@ -1443,14 +1572,14 @@ struct PlacementARView: View {
             } else {
                 // The spot is suggested beside the meter, so with no meter there is none to wait for.
                 guard await waitFor(meterMarked ? Self.batterySpotWait : Self.noMeterDwell),
-                      step == .placeBattery, !hasBatteryGhost, !isSaving else { return }
+                      step == .placeBattery, !hasBatteryGhost else { return }
                 submit(withoutBattery: true)
             }
         case .confirm:
-            guard autoFinishArmed, step == .confirm, !isSaving else { return }
+            guard autoFinishArmed, step == .confirm else { return }
             // Reached right after the look-around, it saves at once; a slide on a reopened scan settles first.
             if finishWaitsForSlide {
-                guard await waitFor(Self.finishDwell), step == .confirm, !isSaving else { return }
+                guard await waitFor(Self.finishDwell), step == .confirm else { return }
             }
             submit()
         default:
@@ -1500,7 +1629,6 @@ struct PlacementARView: View {
     private func leave(slidingOut width: CGFloat? = nil) {
         guard !isLeaving else { return }
         isLeaving = true
-        pendingSave = nil
         commitLiveScene()
         store.placementController?.pauseIfIdle()
         guard let width else {
@@ -1669,7 +1797,7 @@ struct PlacementARView: View {
         // Home Info's "No" is the homeowner's answer, not part of the scan.
         store.setGasMeterNotVisible(gasAnswer == .no)
         store.placementController?.restartScan()
-        // The live scene is empty now, so it would never be committed over the old marks, height, and photo.
+        // The live scene is empty now, so it would never be committed over the old marks and height.
         store.resetPlacementEvidence()
         store.dropScanMeterPhoto()
         passed = store.placementController?.passedLiveSteps ?? []
@@ -1684,55 +1812,17 @@ struct PlacementARView: View {
         onContinue()
     }
 
-    /// Takes the scan photo and opens Review: from the finish, or from the battery step when no spot showed up.
+    /// Saves the scan and opens Review: from the finish, or from the battery step when no spot showed up.
     private func submit(withoutBattery: Bool = false) {
-        guard !isSaving, !isLeaving, step == .confirm || (withoutBattery && step == .placeBattery) else { return }
+        guard !isLeaving, step == .confirm || (withoutBattery && step == .placeBattery) else { return }
         commitLiveScene()
-        lastSaveWithoutBattery = withoutBattery
-        let token = UUID()
-        pendingSave = token
-        screenshotToken = token
         statusMessage = nil
-        Task {
-            try? await Task.sleep(for: .seconds(5))
-            failScreenshot(token)
-        }
+        onContinue()
     }
 
     private func commitLiveScene() {
         guard let live = store.placementController?.scene, live.hasPlacedContent else { return }
         store.commitPlacement(live)
-    }
-
-    private func handleScreenshot(_ image: UIImage?) {
-        if let image {
-            store.attachPlacementScreenshot(image)
-            advance(pendingSave)
-        } else {
-            failScreenshot(pendingSave)
-        }
-    }
-
-    private func advance(_ token: UUID?) {
-        guard let token, token == pendingSave else { return }
-        pendingSave = nil
-        saveAttempts = 0
-        onContinue()
-    }
-
-    /// Tries the photo again by itself, then opens Review without it; Review lists the missing scan photo.
-    private func failScreenshot(_ token: UUID?) {
-        guard let token, token == pendingSave else { return }
-        pendingSave = nil
-        screenshotToken = nil
-        saveAttempts += 1
-        if saveAttempts <= Self.screenshotRetries {
-            submit(withoutBattery: lastSaveWithoutBattery)
-        } else {
-            saveAttempts = 0
-            commitLiveScene()
-            onContinue()
-        }
     }
 }
 
@@ -1747,7 +1837,6 @@ private struct BatteryClock: Equatable {
     var spot: PlacementAnchor?
     var placed: PlacementAnchor?
     var armed: Bool
-    var saving: Bool
     var held: Bool
 }
 
@@ -1945,11 +2034,9 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var lockTarget: EquipmentKind?
     var yawRadians: Float
     var tone: PlacementTone
-    var screenshotToken: UUID?
     var onSceneChange: (PlacementSceneSnapshot) -> Void
     var onYawChange: (Float) -> Void
     var onLiveFeet: (Double?) -> Void
-    var onScreenshot: (UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
     var onCoachingActiveChange: (Bool) -> Void
@@ -1975,11 +2062,9 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             lockTarget: lockTarget,
             yawRadians: yawRadians,
             tone: tone,
-            screenshotToken: screenshotToken,
             onSceneChange: onSceneChange,
             onYawChange: onYawChange,
             onLiveFeet: onLiveFeet,
-            onScreenshot: onScreenshot,
             onFailure: onFailure,
             onTrackingStatus: onTrackingStatus,
             onCoachingActiveChange: onCoachingActiveChange,
@@ -2019,11 +2104,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private var coachingActive = false
     private var configuration: ARWorldTrackingConfiguration?
     private var isPrepared = false
-    private var screenshotInFlight = false
-    private var pauseRequested = false
     private var onSceneChange: ((PlacementSceneSnapshot) -> Void)?
     private var onYawChange: ((Float) -> Void)?
-    private var onScreenshot: ((UIImage?) -> Void)?
     private var onFailure: ((String) -> Void)?
     /// The AR session itself failed. True when camera access is off. Set by the Live Survey, which keeps a message up
     /// and stops its clocks; without it the failure goes to `onFailure`.
@@ -2076,6 +2158,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         /// Wall or depth landing for each box in `pendingDetections`, worked out once per packet. No key means not on a wall.
         private var pendingLandings: [EquipmentKind: (position: SIMD3<Float>, normal: SIMD3<Float>)] = [:]
         private var pendingScan: EquipmentScanFrame?
+        /// Best box per kind from the last three packets, newest last. Drawing waits for two of three to agree.
+        private var recentBoxes: [[EquipmentKind: CGRect]] = []
         private var holdAnchor: SIMD3<Float>?
         private var holdSince: CFTimeInterval?
         /// The center-dot hold counts its own samples. Sharing the detector's buffer let a box-center landing
@@ -2149,7 +2233,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         var appliedYaw: Float = 0
         var rotationStartYaw: Float = 0
         var appliedTone: PlacementTone?
-        var lastScreenshotToken: UUID?
         var lastPlaneEmit = Date.distantPast
         var aimLink: CADisplayLink?
         var reticle: ModelEntity?
@@ -2231,11 +2314,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             lockTarget: EquipmentKind?,
             yawRadians: Float,
             tone: PlacementTone,
-            screenshotToken: UUID?,
             onSceneChange: @escaping (PlacementSceneSnapshot) -> Void,
             onYawChange: @escaping (Float) -> Void,
             onLiveFeet: @escaping (Double?) -> Void,
-            onScreenshot: @escaping (UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
             onCoachingActiveChange: @escaping (Bool) -> Void,
@@ -2269,7 +2350,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             self.onSceneChange = onSceneChange
             self.onYawChange = onYawChange
             self.onLiveFeet = onLiveFeet
-            self.onScreenshot = onScreenshot
             self.onFailure = onFailure
             self.onTrackingStatus = onTrackingStatus
             self.onCoachingActiveChange = onCoachingActiveChange
@@ -2298,17 +2378,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 appliedTone = tone
                 applyTone()
             }
-            if let screenshotToken, screenshotToken != lastScreenshotToken {
-                lastScreenshotToken = screenshotToken
-                takeScreenshot()
-            }
         }
 
         func resume() {
             #if DEBUG
             if let surveyID { FrameRecorder.shared.begin(surveyID: surveyID) }
             #endif
-            pauseRequested = false
             // A view coming back starts from an empty ScanFeedback, so the next tick publishes again.
             lastScanFeedback = nil
             prepareIfNeeded()
@@ -2319,11 +2394,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
 
         func pauseIfIdle() {
             guard isPrepared else { return }
-            guard !screenshotInFlight else {
-                pauseRequested = true
-                return
-            }
-            pauseRequested = false
             // Any in-flight rotation gesture is invalidated by pausing the session.
             rotationStartYaw = appliedYaw
             stopAiming()
@@ -2345,15 +2415,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             stopAiming()
             onSceneChange = nil
             onYawChange = nil
-            onScreenshot = nil
             onFailure = nil
             onTrackingStatus = nil
             onLiveFeet = nil
             onCoachingActiveChange = nil
             onSessionFailure = nil
             onMeterCrop = nil
-            screenshotInFlight = false
-            pauseRequested = false
             if isPrepared {
                 arView.session.pause()
                 arView.session.delegate = nil
@@ -2507,23 +2574,6 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             } else {
                 batteryBody?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.45))]
                 footprintPad?.model?.materials = [UnlitMaterial(color: color.withAlphaComponent(0.22))]
-            }
-        }
-
-        func takeScreenshot() {
-            screenshotInFlight = true
-            arView.snapshot(saveToHDR: false) { [weak self] image in
-                Task { @MainActor in
-                    self?.finishScreenshot(image)
-                }
-            }
-        }
-
-        private func finishScreenshot(_ image: UIImage?) {
-            screenshotInFlight = false
-            onScreenshot?(image)
-            if pauseRequested {
-                pauseIfIdle()
             }
         }
 
@@ -3420,6 +3470,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
         private static let freshScanSeconds: CFTimeInterval = 1
 
         private func clearPendingScan() {
+            recentBoxes = []
             pendingDetections = []
             pendingLandings = [:]
             pendingScan = nil
@@ -3452,13 +3503,18 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 if let existing = best[detection.kind], existing.confidence >= detection.confidence { continue }
                 best[detection.kind] = detection
             }
-            // Far away, the meter and panel look alike. One box scored as both is one object; keep the stronger label.
+            // Far away, the meter and panel look alike. One box scored as both is one object. While a step is asking
+            // for one of them, keep that label: a meter often sits inside or beside the larger panel box, and dropping
+            // it whenever the panel scored higher left the meter unlockable. With no step asking, keep the stronger label.
             if let meter = best[.electricMeter], let panel = best[.breakerPanel],
                Self.overlap(meter.boundingBox, panel.boundingBox) > 0.3 {
-                best[meter.confidence >= panel.confidence ? .breakerPanel : .electricMeter] = nil
+                let keep = holdLockKind() ?? (meter.confidence >= panel.confidence ? .electricMeter : .breakerPanel)
+                best[keep == .electricMeter ? .breakerPanel : .electricMeter] = nil
             }
             pendingScan = packet
             pendingDetections = Array(best.values)
+            recentBoxes.append(best.mapValues(\.boundingBox))
+            if recentBoxes.count > 3 { recentBoxes.removeFirst(recentBoxes.count - 3) }
             pendingLandings = [:]
             for (kind, detection) in best {
                 if let landing = project(detection, in: packet) {
@@ -3889,6 +3945,17 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return UIImage(cgImage: image)
         }
 
+        /// A box draws once the same kind sat in about the same spot in two of the last three packets,
+        /// so one-frame blips never show. The current packet is already in `recentBoxes`.
+        private func isSteady(_ detection: EquipmentDetection) -> Bool {
+            let box = detection.boundingBox
+            let agreeing = recentBoxes.filter { packet in
+                guard let other = packet[detection.kind] else { return false }
+                return hypot(other.midX - box.midX, other.midY - box.midY) < 0.15
+            }
+            return agreeing.count >= 2
+        }
+
         /// Live boxes for both kinds, until that kind locks. A lock is a position, not a box left on the camera.
         private func refreshEquipmentBoxes() {
             guard arView.bounds.width > 1 else { return }
@@ -3896,7 +3963,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             if scanningEquipment, !coachingActive, trackingBlockedMessage == nil, let packet = freshScan {
                 for detection in pendingDetections {
                     let locked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
-                    if locked { continue }
+                    if locked || !isSteady(detection) { continue }
                     let rect = Self.viewRect(for: detection.boundingBox, in: packet)
                     guard rect.width > 2, rect.height > 2, rect.origin.x.isFinite, rect.origin.y.isFinite else { continue }
                     let onWall = pendingLandings[detection.kind] != nil

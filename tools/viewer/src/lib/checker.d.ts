@@ -68,6 +68,7 @@ export interface Mark {
 
 export interface Rules {
   id: string
+  regionDefaulted?: boolean
   main_breaker_amps: [number, number]
   panel_amps_for_solar_or_two_batteries: number
   max_meter_distance_ft: number

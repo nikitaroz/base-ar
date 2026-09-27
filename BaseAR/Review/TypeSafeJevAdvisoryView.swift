@@ -10,6 +10,10 @@ struct TypeSafeJevAdvisoryView: View {
     @State private var askedAbout: SurveySession?
     @State private var isLoading = false
     @State private var isExpanded = false
+    #if DEBUG
+    @State private var debugOutput: String?
+    @State private var debugRunning = false
+    #endif
 
     var body: some View {
         if client.isAvailable {
@@ -28,6 +32,9 @@ struct TypeSafeJevAdvisoryView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isLoading)
+                    #if DEBUG
+                    liveLaneDebug
+                    #endif
                 }
                 .padding(.top, 8)
             } label: {
@@ -85,11 +92,7 @@ struct TypeSafeJevAdvisoryView: View {
     private func answers(_ advisory: JevAdvisory) -> some View {
         let answers = advisory.answers ?? [:]
         VStack(alignment: .leading, spacing: 10) {
-            if let visitReady = advisory.visitReady {
-                // noul carries the probability of "yes"; show how sure Jev is of the word it lands on.
-                let sureness = advisory.visitReadyProbability.map { visitReady == "yes" ? $0 : 1 - $0 }
-                row("Ready for engineer review?", value: words(visitReady), confidence: sureness)
-            }
+            // Readiness itself comes from the checks (the card at the top of Review), not from Jev.
             if let nextAction = advisory.nextAction {
                 row("Next step", value: words(nextAction), confidence: answers["next_action"]?.confidence)
             }
@@ -99,11 +102,18 @@ struct TypeSafeJevAdvisoryView: View {
             if let score = advisory.readinessScore {
                 row("Readiness", value: "\(score.formatted(.number.precision(.fractionLength(1)))) of 3", confidence: answers["readiness_score"]?.confidence)
             }
-            if advisory.visitReady == nil, advisory.nextAction == nil, advisory.blockingGap == nil, advisory.readinessScore == nil {
+            if advisory.nextAction == nil, advisory.blockingGap == nil, advisory.readinessScore == nil {
                 Text("Jev sent no answers.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            #if DEBUG
+            Text("\(advisory.model ?? "model ?") · \(advisory.usage?.inputTokens.map { "\($0) tokens in" } ?? "tokens ?")"
+                + (advisory.roundTrip.map { " · \(JevTransport.milliseconds($0)) ms" } ?? "")
+                + (advisory.requestID.map { " · \($0)" } ?? ""))
+                .font(.caption2.monospaced())
+                .foregroundStyle(.secondary)
+            #endif
         }
     }
 
@@ -112,8 +122,9 @@ struct TypeSafeJevAdvisoryView: View {
             HStack(spacing: 6) {
                 Text(value)
                     .foregroundStyle(.primary)
+                // Choice and Score `confidence` (how peaked Jev's own distribution is), not a probability of yes.
                 if let confidence {
-                    Text(confidence.formatted(.percent.precision(.fractionLength(0))))
+                    Text("\(confidence.formatted(.percent.precision(.fractionLength(0)))) confidence")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -128,6 +139,50 @@ struct TypeSafeJevAdvisoryView: View {
         let spaced = raw.replacingOccurrences(of: "_", with: " ")
         return spaced.prefix(1).uppercased() + spaced.dropFirst()
     }
+
+    #if DEBUG
+    /// Test hooks for the Live Survey's Jev lane. Reports also print to the Xcode console.
+    private var liveLaneDebug: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            Text("Live lane (DEBUG)")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                debugButton("Self-check") { JevLiveDebug.selfCheck() }
+                debugButton("Replay") { await JevLiveDebug.replay() }
+            }
+            HStack(spacing: 8) {
+                debugButton("Probe") { await JevLiveDebug.probe() }
+                debugButton("Latency ×20") { await JevLiveDebug.latency() }
+            }
+            if debugRunning {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            if let debugOutput {
+                ScrollView(.horizontal) {
+                    Text(debugOutput)
+                        .font(.caption2.monospaced())
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+    }
+
+    private func debugButton(_ title: String, _ run: @escaping @MainActor () async -> String) -> some View {
+        Button(title) {
+            Task {
+                debugRunning = true
+                debugOutput = await run()
+                debugRunning = false
+            }
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .disabled(debugRunning)
+    }
+    #endif
 
     private func ask() async {
         guard client.isAvailable, !isLoading else { return }

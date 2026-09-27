@@ -28,6 +28,11 @@
 		B1000000000000000000000E /* ReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000E /* ReviewView.swift */; };
 		F9000000000000000000C001 /* TypeSafeJevClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000C001 /* TypeSafeJevClient.swift */; };
 		F9000000000000000000C002 /* TypeSafeJevAdvisoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */; };
+		FD0000000000000000A10001 /* JevTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000A10001 /* JevTransport.swift */; };
+		FD0000000000000000A10002 /* JevLiveContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000A10002 /* JevLiveContext.swift */; };
+		FD0000000000000000A10003 /* JevLiveQuestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000A10003 /* JevLiveQuestions.swift */; };
+		FD0000000000000000A10004 /* JevLiveCoach.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000A10004 /* JevLiveCoach.swift */; };
+		FD0000000000000000A10005 /* JevLiveDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000A10005 /* JevLiveDebug.swift */; };
 		B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000F /* PropertyLocationProvider.swift */; };
 		B10000000000000000000010 /* AddressCompleter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000010 /* AddressCompleter.swift */; };
 		B10000000000000000000011 /* PropertyLocationMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000011 /* PropertyLocationMap.swift */; };
@@ -86,6 +91,11 @@
 		B2000000000000000000000E /* ReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewView.swift; sourceTree = "<group>"; };
 		FA000000000000000000C001 /* TypeSafeJevClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevClient.swift; sourceTree = "<group>"; };
 		FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypeSafeJevAdvisoryView.swift; sourceTree = "<group>"; };
+		FE0000000000000000A10001 /* JevTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevTransport.swift; sourceTree = "<group>"; };
+		FE0000000000000000A10002 /* JevLiveContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevLiveContext.swift; sourceTree = "<group>"; };
+		FE0000000000000000A10003 /* JevLiveQuestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevLiveQuestions.swift; sourceTree = "<group>"; };
+		FE0000000000000000A10004 /* JevLiveCoach.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevLiveCoach.swift; sourceTree = "<group>"; };
+		FE0000000000000000A10005 /* JevLiveDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevLiveDebug.swift; sourceTree = "<group>"; };
 		B2000000000000000000000F /* PropertyLocationProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationProvider.swift; sourceTree = "<group>"; };
 		B20000000000000000000010 /* AddressCompleter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressCompleter.swift; sourceTree = "<group>"; };
 		B20000000000000000000011 /* PropertyLocationMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PropertyLocationMap.swift; sourceTree = "<group>"; };
@@ -245,6 +255,11 @@
 				B2000000000000000000000E /* ReviewView.swift */,
 				FA000000000000000000C001 /* TypeSafeJevClient.swift */,
 				FA000000000000000000C002 /* TypeSafeJevAdvisoryView.swift */,
+				FE0000000000000000A10001 /* JevTransport.swift */,
+				FE0000000000000000A10002 /* JevLiveContext.swift */,
+				FE0000000000000000A10003 /* JevLiveQuestions.swift */,
+				FE0000000000000000A10004 /* JevLiveCoach.swift */,
+				FE0000000000000000A10005 /* JevLiveDebug.swift */,
 			);
 			path = Review;
 			sourceTree = "<group>";
@@ -411,6 +426,11 @@
 				B1000000000000000000000E /* ReviewView.swift in Sources */,
 				F9000000000000000000C001 /* TypeSafeJevClient.swift in Sources */,
 				F9000000000000000000C002 /* TypeSafeJevAdvisoryView.swift in Sources */,
+				FD0000000000000000A10001 /* JevTransport.swift in Sources */,
+				FD0000000000000000A10002 /* JevLiveContext.swift in Sources */,
+				FD0000000000000000A10003 /* JevLiveQuestions.swift in Sources */,
+				FD0000000000000000A10004 /* JevLiveCoach.swift in Sources */,
+				FD0000000000000000A10005 /* JevLiveDebug.swift in Sources */,
 				B1000000000000000000000F /* PropertyLocationProvider.swift in Sources */,
 				B10000000000000000000010 /* AddressCompleter.swift in Sources */,
 				B10000000000000000000011 /* PropertyLocationMap.swift in Sources */,

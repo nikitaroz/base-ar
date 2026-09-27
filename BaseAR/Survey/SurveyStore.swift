@@ -402,6 +402,11 @@ final class SurveyStore {
         session.placement.gasMeterMarkSource = nil
         session.placement.gasStepOutcome = .rejectedInReview
         refreshAssessment()
+        // A battery placed at the finish is placed again without the mark, off the main thread: save it once it is.
+        placementController?.afterBatteryFinalize { [weak self] _ in
+            guard let self, let live = self.placementController?.scene else { return }
+            self.commitPlacement(live)
+        }
     }
 
     /// Saves the scan without sharing it: at the Live Survey's finish and when it is left. Writes survey.json, the

@@ -1,96 +1,87 @@
 import Foundation
 
-/// Optional TypeSafe Jev readiness advisory for the Review screen.
+/// Optional TypeSafe Jev advisory for the Review screen ("Review set v2").
 ///
 /// Advisory only: it never changes a rule outcome, the placement tone, or the survey file.
 /// With no `TYPESAFE_API_KEY` the client is unavailable and makes no network call.
 /// The key comes from the environment (Xcode scheme) or the Info.plist build setting
 /// `$(TYPESAFE_API_KEY)`, which `Config/Local.xcconfig` sets. Never commit a key.
+///
+/// v2 (26 Sep 2026): shares `JevTransport` with the Live Survey coach (one warm connection), pins `jev-1.13.0`,
+/// uses the Review budget (5 s idle, 15 s total, one retry on 408 / 429 / 529 / 5xx honouring Retry-After up to
+/// 3 s), decodes `model` and `usage`, sends rule statuses without the requirement sentences or raw distances, and
+/// no longer asks Jev whether the survey is ready: the Review readiness card computes that from the checks.
 struct TypeSafeJevClient: Sendable {
-    static let endpoint = URL(string: "https://api.typesafe.ai/v1/systemone")!
-    static let model = "jev-latest"
+    static let endpoint = JevTransport.endpoint
+    static let model = JevTransport.pinnedModel
 
-    private let apiKey: String?
+    private let transport: JevTransport
 
     init(apiKey: String? = TypeSafeJevClient.configuredKey()) {
-        let trimmed = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // An unexpanded "$(TYPESAFE_API_KEY)" means the build setting was never defined.
-        self.apiKey = trimmed.isEmpty || trimmed.hasPrefix("$(") ? nil : trimmed
+        transport = JevTransport(apiKey: apiKey)
     }
 
-    var isAvailable: Bool { apiKey != nil }
+    init(transport: JevTransport) {
+        self.transport = transport
+    }
+
+    var isAvailable: Bool { transport.isAvailable }
 
     static func configuredKey() -> String? {
-        if let env = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !env.isEmpty {
-            return env
-        }
-        // An unset build setting leaves an empty string (or the literal placeholder) in Info.plist: that is "no key".
-        guard let plist = Bundle.main.object(forInfoDictionaryKey: "TYPESAFE_API_KEY") as? String else { return nil }
-        let key = plist.trimmingCharacters(in: .whitespacesAndNewlines)
-        return key.isEmpty || key.hasPrefix("$(") ? nil : key
+        JevTransport.configuredKey()
     }
 
     /// Never throws. Offline, auth, HTTP, decode and timeout failures all come back as `.unavailable`.
     func advisory(for session: SurveySession) async -> JevAdvisory {
-        guard let apiKey else {
+        guard isAvailable else {
             return JevAdvisory(status: .unavailable, reason: "No advisory key is set.")
         }
+        let body: Data
         do {
-            let answers = try await fetchAnswers(session: session, apiKey: apiKey)
-            return JevAdvisory(status: .available, answers: answers)
-        } catch is CancellationError {
-            return JevAdvisory(status: .unavailable, reason: "The request was cancelled.")
-        } catch let error as URLError where error.code == .timedOut {
-            return JevAdvisory(status: .unavailable, reason: "The advisory service timed out.")
-        } catch let error as URLError where error.code == .notConnectedToInternet || error.code == .networkConnectionLost {
-            return JevAdvisory(status: .unavailable, reason: "No internet connection.")
-        } catch let error as JevError {
-            return JevAdvisory(status: .unavailable, reason: error.message)
-        } catch is DecodingError {
-            return JevAdvisory(status: .unavailable, reason: "The advisory reply could not be read.")
+            body = try Self.requestBody(for: session)
         } catch {
-            return JevAdvisory(status: .unavailable, reason: "The advisory service could not be reached.")
+            return JevAdvisory(status: .unavailable, reason: "The advisory request could not be built.")
+        }
+        switch await transport.post(body, profile: .review) {
+        case .success(let reply):
+            return JevAdvisory(
+                status: .available,
+                answers: reply.answers,
+                model: reply.model,
+                usage: reply.usage,
+                requestID: reply.requestID,
+                roundTrip: reply.roundTrip
+            )
+        case .failure(let failure):
+            return JevAdvisory(status: .unavailable, reason: Self.reason(for: failure))
         }
     }
 
-    private static let urlSession: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 20
-        configuration.waitsForConnectivity = false
-        return URLSession(configuration: configuration)
-    }()
-
-    private func fetchAnswers(session: SurveySession, apiKey: String) async throws -> [String: JevAnswer] {
-        let body = JevRequest(
-            model: Self.model,
-            state: JevSurveyState(session: session),
-            questions: JevRequest.standardQuestions
+    /// The exact request bytes, sorted keys. The state keeps its camelCase keys, as before.
+    static func requestBody(for session: SurveySession) throws -> Data {
+        try JevTransport.encodeBody(
+            JevRequest(model: model, state: JevSurveyState(session: session), questions: JevRequest.standardQuestions),
+            snakeCaseKeys: false
         )
-        var request = URLRequest(url: Self.endpoint, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await Self.urlSession.data(for: request)
-        try Task.checkCancellation()
-        guard let http = response as? HTTPURLResponse else { throw JevError.badResponse }
-        guard (200...299).contains(http.statusCode) else { throw JevError.http(http.statusCode) }
-        return try JSONDecoder().decode(JevResponse.self, from: data).answers
     }
-}
 
-enum JevError: Error {
-    case badResponse
-    case http(Int)
-
-    var message: String {
-        switch self {
-        case .badResponse: "The advisory service sent no usable reply."
-        case .http(401), .http(403): "The advisory key was not accepted (HTTP 401/403)."
-        case .http(429): "The advisory service is busy (HTTP 429). Try again later."
-        case .http(let code): "The advisory service answered HTTP \(code)."
+    static func reason(for failure: JevCallFailure) -> String {
+        switch failure {
+        case .noKey: return "No advisory key is set."
+        case .cancelled: return "The request was cancelled."
+        case .timedOut: return "The advisory service timed out."
+        case .offline, .connectionLost: return "No internet connection."
+        case .constrained: return "Low Data Mode is on."
+        case .undecodable: return "The advisory reply could not be read."
+        case .connection: return "The advisory service could not be reached."
+        case .http(let status, _, _, _):
+            switch status {
+            case 401, 403: return "The advisory key was not accepted (HTTP 401/403)."
+            case 422: return "The advisory request was not accepted (HTTP 422)."
+            case 429: return "The advisory service is busy (HTTP 429). Try again later."
+            case 529: return "The advisory service is overloaded (HTTP 529). Try again later."
+            default: return "The advisory service answered HTTP \(status)."
+            }
         }
     }
 }
@@ -102,18 +93,17 @@ struct JevRequest: Encodable, Sendable {
     let state: JevSurveyState
     let questions: [String: JevQuestion]
 
+    /// Review set v2. `visit_ready` is gone: readiness is computed in code (the Review readiness card), and a Jev
+    /// yes/no beside it could only contradict the checks.
     static let standardQuestions: [String: JevQuestion] = [
-        "visit_ready": JevQuestion(
-            type: "noul",
-            instructions: "Is this preliminary survey complete enough for a Base engineer to review? Count only measured checks as measured. Typed answers are the homeowner's statements, and scanned numbers are suggestions the homeowner confirms."
-        ),
         "next_action": JevQuestion(
             type: "choice",
             instructions: "What should the homeowner do next?",
             criteria: .labeled([
                 "proceed": "enough evidence to send for engineer review",
                 "need_more_photos": "more photos or scanning needed",
-                "conflict": "a measured conflict needs a different spot or an engineer"
+                "conflict": "a measured conflict needs a different spot or an engineer",
+                "other": "none of the above fits"
             ])
         ),
         "blocking_gap": JevQuestion(
@@ -168,38 +158,7 @@ struct JevQuestion: Encodable, Sendable {
     }
 }
 
-// MARK: - Response
-
-struct JevResponse: Decodable, Sendable {
-    let answers: [String: JevAnswer]
-}
-
-/// The live API (jev-1.13.0, checked 26 Sep 2026) returns `noul` as the probability of "yes" (e.g. 0.12)
-/// and `score` as a fractional scale value (e.g. 1.07). Older docs showed strings and integers, so both decode.
-struct JevAnswer: Decodable, Sendable {
-    let noul: Double?
-    let choice: String?
-    let score: Double?
-    let confidence: Double?
-    let probabilities: [String: Double]?
-
-    enum CodingKeys: String, CodingKey { case noul, choice, score, confidence, probabilities }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        if let probability = try? container.decode(Double.self, forKey: .noul) {
-            noul = probability
-        } else if let word = try? container.decode(String.self, forKey: .noul) {
-            noul = word.lowercased() == "yes" ? 1 : (word.lowercased() == "no" ? 0 : nil)
-        } else {
-            noul = nil
-        }
-        choice = try? container.decode(String.self, forKey: .choice)
-        score = try? container.decode(Double.self, forKey: .score)
-        confidence = try? container.decode(Double.self, forKey: .confidence)
-        probabilities = try? container.decode([String: Double].self, forKey: .probabilities)
-    }
-}
+// MARK: - Advisory
 
 struct JevAdvisory: Sendable {
     enum Status: Sendable {
@@ -210,10 +169,12 @@ struct JevAdvisory: Sendable {
     let status: Status
     var reason: String? = nil
     var answers: [String: JevAnswer]? = nil
+    /// The versioned model that answered, e.g. "jev-1.13.0".
+    var model: String? = nil
+    var usage: JevUsage? = nil
+    var requestID: String? = nil
+    var roundTrip: Duration? = nil
 
-    /// "yes" / "no" from the probability of yes; the probability itself is `visitReadyProbability`.
-    var visitReady: String? { visitReadyProbability.map { $0 >= 0.5 ? "yes" : "no" } }
-    var visitReadyProbability: Double? { answers?["visit_ready"]?.noul }
     var nextAction: String? { answers?["next_action"]?.choice }
     var blockingGap: String? { answers?["blocking_gap"]?.choice }
     /// 0 (not started) to 3 (visit-ready), fractional.
@@ -222,9 +183,8 @@ struct JevAdvisory: Sendable {
 
 // MARK: - Survey summary sent to Jev
 
-/// What leaves the phone: evidence flags, check results, and home answers.
-/// No name, email, phone, address, GPS fix, meter number, or photo is sent.
-/// The rules' own requirement text stands in for a policy catalog, so nothing here hardcodes Base numbers.
+/// What leaves the phone: evidence flags, check statuses, and home answers.
+/// No name, email, phone, address, GPS fix, meter number, photo, raw distance, or rule sentence is sent.
 struct JevSurveyState: Encodable, Sendable {
     let evidenceNotes: String
     let placementTone: String
@@ -256,10 +216,10 @@ struct JevSurveyState: Encodable, Sendable {
             lidarAvailable: placement.lidarMeshAvailable,
             meterLockSource: placement.meterLockSource?.rawValue,
             panelLockSource: placement.panelLockSource?.rawValue,
-            meterFeet: placement.distanceToMeterFeet,
-            wallFeet: placement.distanceToWallFeet,
-            gasFeet: placement.distanceToGasMeterFeet,
-            meterHeightFeet: placement.meterHeightFeet,
+            meterDistanceMeasured: placement.distanceToMeterFeet != nil,
+            wallDistanceMeasured: placement.distanceToWallFeet != nil,
+            gasDistanceMeasured: placement.distanceToGasMeterFeet != nil,
+            meterHeightMeasured: placement.meterHeightFeet != nil,
             meterAndPanelSameWall: placement.meterAndPanelShareWall,
             footprintIsClear: placement.footprintIsClear,
             clearOfWindows: placement.clearOfWindows,
@@ -274,7 +234,6 @@ struct JevSurveyState: Encodable, Sendable {
             JevRuleSummary(
                 id: result.id,
                 title: result.title,
-                requirement: result.requirement,
                 status: result.status.rawValue,
                 usedMeasuredEvidence: result.usedMeasuredEvidence,
                 isRequired: result.isRequired
@@ -311,10 +270,11 @@ struct JevPlacementSummary: Encodable, Sendable {
     let lidarAvailable: Bool
     let meterLockSource: String?
     let panelLockSource: String?
-    let meterFeet: Double?
-    let wallFeet: Double?
-    let gasFeet: Double?
-    let meterHeightFeet: Double?
+    /// Whether each AR distance exists. The distances themselves stay on the phone; the rule statuses carry them.
+    let meterDistanceMeasured: Bool
+    let wallDistanceMeasured: Bool
+    let gasDistanceMeasured: Bool
+    let meterHeightMeasured: Bool
     let meterAndPanelSameWall: Bool?
     let footprintIsClear: Bool?
     let clearOfWindows: Bool?
@@ -328,7 +288,6 @@ struct JevPlacementSummary: Encodable, Sendable {
 struct JevRuleSummary: Encodable, Sendable {
     let id: String
     let title: String
-    let requirement: String
     let status: String
     let usedMeasuredEvidence: Bool
     let isRequired: Bool

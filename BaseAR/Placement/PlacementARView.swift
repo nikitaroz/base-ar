@@ -22,6 +22,46 @@ enum PlacementTarget: String, CaseIterable, Identifiable {
 
 }
 
+/// One phone-motion tip for the top coach banner. Copy never carries a distance.
+private enum CoachTip: Equatable {
+    case findMeter
+    case findPanel
+    case stepBack
+    case lookAlongWall
+    case scootLeft
+    case scootRight
+    case findGasMeter
+    case pointDown
+    case slideToWall
+
+    var message: String {
+        switch self {
+        case .findMeter: "Look up at the electric meter"
+        case .findPanel: "Now look up at the breaker box"
+        case .stepBack: "Take a few steps back"
+        case .lookAlongWall: "Turn your body to look along the wall"
+        case .scootLeft: "Scoot left and look at that side"
+        case .scootRight: "Scoot right and look at that side"
+        case .findGasMeter: "Look around for a gas meter"
+        case .pointDown: "Point your phone down at the ground"
+        case .slideToWall: "Slide the battery closer to the wall"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .findMeter, .findPanel: "iphone.gen3.radiowaves.left.and.right"
+        case .stepBack: "figure.walk.motion"
+        case .lookAlongWall: "arrow.triangle.2.circlepath"
+        case .scootLeft: "arrow.left.circle.fill"
+        case .scootRight: "arrow.right.circle.fill"
+        case .findGasMeter: "flame.circle.fill"
+        case .pointDown: "arrow.down.circle.fill"
+        case .slideToWall: "hand.draw.fill"
+        }
+    }
+}
+
 /// Walk back from a locked meter or panel, then pan so the mesh sees the wall.
 /// One step is about 2.5 ft. The wide look is done only after the distance and the three views.
 private struct ScanGuide: Equatable {
@@ -92,6 +132,8 @@ private struct PlacementSaveRequest {
 
 struct PlacementARView: View {
     var store: SurveyStore
+    /// Room above the coach banner for overlays a parent draws on the camera.
+    var coachTopInset: CGFloat
     var onContinue: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -111,17 +153,25 @@ struct PlacementARView: View {
     @State private var coachingIsActive = false
     /// When false, the AR view stays minimal (chip picker + Measure button). Flip true to reveal the guided walkthrough.
     @State private var measureMode: Bool = true
+    @State private var step: WalkStep
+    @State private var manualMark: PlacementTarget? = nil
+    @State private var liveFeetText: String? = nil
+    @State private var hasStartedAR = true
 
-    init(store: SurveyStore, onContinue: @escaping () -> Void) {
+    init(store: SurveyStore, coachTopInset: CGFloat = 8, onContinue: @escaping () -> Void) {
         self.store = store
+        self.coachTopInset = coachTopInset
         self.onContinue = onContinue
         let existing = store.placementController
         _scene = State(initialValue: existing?.scene ?? PlacementSceneSnapshot())
         _guide = State(initialValue: existing?.scanGuide ?? ScanGuide())
         _yawRadians = State(initialValue: existing?.yawRadians ?? 0)
+        _step = State(initialValue: existing?.hasChosenWalkStep == true ? (existing?.walkStep ?? .scan) : .scan)
     }
 
     private var isSaving: Bool { pendingSave != nil }
+    
+    private let progressSteps: [WalkStep] = [.scan, .gas, .battery, .finish]
 
     private var arSupported: Bool {
         ARWorldTrackingConfiguration.isSupported
@@ -133,6 +183,43 @@ struct PlacementARView: View {
         if !panelIsMarked { return .findPanel }
         if guide.panelWalkNeeded && !guide.panelSurroundDone { return .stepBackFromPanel }
         return .ready
+    }
+    
+    /// One tip at a time, read from the same scan guide and wall check that gate the flow.
+    private var coachTip: CoachTip? {
+        switch step {
+        case .scan:
+            guard manualMark == nil else { return nil }
+            switch cue {
+            case .findMeter: return .findMeter
+            case .findPanel: return .findPanel
+            case .stepBack:
+                return surroundTip(steps: guide.meterSteps, left: guide.meterLookedLeft,
+                                   right: guide.meterLookedRight, along: guide.meterLookedAlong)
+            case .stepBackFromPanel:
+                return surroundTip(steps: guide.panelSteps, left: guide.panelLookedLeft,
+                                   right: guide.panelLookedRight, along: guide.panelLookedAlong)
+            case .ready: return nil
+            }
+        case .gas:
+            return scene.gasMeterPosition == nil ? .findGasMeter : nil
+        case .battery:
+            guard scene.batteryPosition != nil else { return .pointDown }
+            if let wallFeet = scene.automaticWallClearanceFeet, wallFeet > BaseRuleSet.maxWallDistanceFeet {
+                return .slideToWall
+            }
+            return nil
+        case .finish:
+            return nil
+        }
+    }
+
+    private func surroundTip(steps: Int, left: Bool, right: Bool, along: Bool) -> CoachTip {
+        if steps < ScanGuide.wideLookSteps { return .stepBack }
+        if !along { return .lookAlongWall }
+        if !left { return .scootLeft }
+        if !right { return .scootRight }
+        return .stepBack
     }
 
     /// Center-dot lock only while the prompt is asking for one object. Stepping back should not lock a random wall.
@@ -205,7 +292,7 @@ struct PlacementARView: View {
             store.placementController?.walkStep = new
             store.placementController?.hasChosenWalkStep = true
             statusMessage = nil
-            liveReadout.text = nil
+            liveFeetText = nil
             if new != .scan {
                 manualMark = nil
             }
@@ -219,14 +306,14 @@ struct PlacementARView: View {
                 if let controller = store.placementController {
                     PlacementARRepresentable(
                         controller: controller,
-                        mode: .battery,
+                        mode: placementMode,
                         measurementMode: false,
                         measurementKind: .batteryToMeter,
                         editingWorkingSpace: false,
-                        inputEnabled: false,
-                        aimEnabled: false,
-                        tapEnabled: false,
-                        scanning: true,
+                        inputEnabled: inputEnabled,
+                        aimEnabled: aimEnabled,
+                        tapEnabled: tapEnabled,
+                        scanning: isScanning,
                         holdTarget: holdTarget,
                         yawRadians: yawRadians,
                         tone: tone,
@@ -237,6 +324,7 @@ struct PlacementARView: View {
                             yawRadians = $0
                         },
                         onLiveFeet: acceptLiveFeet,
+                        onGuide: { guide = $0 },
                         onScreenshot: handleScreenshot,
                         onFailure: { statusMessage = $0 },
                         onTrackingStatus: { trackingMessage = $0 },
@@ -244,11 +332,18 @@ struct PlacementARView: View {
                         onCoachingActiveChange: { coachingIsActive = $0 }
                     )
                 }
+                
+                // Top coaching banner
                 if !coachingIsActive {
-                    VStack(spacing: 8) {
-                        // Battery model chip picker removed: single-model simplified UX
+                    VStack {
+                        if let tip = coachTip, statusMessage == nil {
+                            coachingBanner(tip)
+                                .padding(.horizontal, 16)
+                                .padding(.top, coachTopInset)
+                                .animation(.easeInOut(duration: 0.25), value: tip)
+                        }
+                        Spacer()
                     }
-                    .padding(.top, 8)
                 }
             }
             if !coachingIsActive {
@@ -377,17 +472,6 @@ struct PlacementARView: View {
             Text(instruction)
                 .font(.body)
                 .multilineTextAlignment(.center)
-            if let progressLine {
-                Text(progressLine)
-                    .font(.footnote.weight(.semibold))
-                    .multilineTextAlignment(.center)
-            }
-            if let measurementLine {
-                Text(measurementLine)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
             if let trackingMessage {
                 Label(trackingMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
@@ -419,6 +503,31 @@ struct PlacementARView: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+    
+    private func coachingBanner(_ tip: CoachTip) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(.blue.opacity(0.2))
+                    .frame(width: 44, height: 44)
+                Image(systemName: tip.symbol)
+                    .font(.system(size: 24))
+                    .foregroundStyle(.blue)
+                    .symbolEffect(.pulse, options: .repeating)
+            }
+            
+            Text(tip.message)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+            
+            Spacer()
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.1), radius: 8, y: 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(tip.message)
     }
 
     @ViewBuilder
@@ -483,6 +592,7 @@ struct PlacementARView: View {
             Button("Next", action: goForward)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(!meterIsMarked || !panelIsMarked)
             // Secondary manual controls moved below primary action
             if let missedTarget {
                 Button(missedTarget == .meter ? "Mark meter yourself" : "Mark panel yourself") {
@@ -492,20 +602,6 @@ struct PlacementARView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
             }
-            Button {
-                finishScan()
-            } label: {
-                if isSaving {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Done")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
             Button("Skip for now") {
                 cancelPendingSave()
                 commitLiveScene()
@@ -513,14 +609,185 @@ struct PlacementARView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+        }
+    }
+
+    private var finishControls: some View {
+        VStack(spacing: 12) {
+            // Simple status summary
+            VStack(spacing: 8) {
+                ForEach(placementStatusItems, id: \.title) { item in
+                    HStack(spacing: 8) {
+                        Image(systemName: item.icon)
+                            .foregroundStyle(item.color)
+                            .font(.body)
+                        Text(item.title)
+                            .font(.body)
+                        Spacer()
+                        if item.isGood {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if item.needsAttention {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 8)
+
+            // Primary actions
+            Button {
+                saveAndReview()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Text("Save and review")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isSaving || scene.batteryPosition == nil || !scene.trackingIsNormal)
+
+            Button("Skip for now") {
+                cancelPendingSave()
+                commitLiveScene()
+                onContinue()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+
             Button("Back", action: goBack)
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-            Text("This is a preliminary survey, not an install measurement. Green only when every required check has measured evidence and passes. Teal means a pass relied on an attestation, not a measurement.")
+
+            Text("This is a preliminary survey, not an install measurement.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
+    }
+
+    private struct StatusItem {
+        let icon: String
+        let title: String
+        let color: Color
+        let isGood: Bool
+        let needsAttention: Bool
+    }
+
+    private var placementStatusItems: [StatusItem] {
+        var items: [StatusItem] = []
+
+        // Meter distance check
+        let meterMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToMeter }
+        if let meterDist = meterMeasurement?.distanceFeet {
+            let isGood = meterDist <= 20
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: isGood ? "Good meter distance" : "Meter is a bit far",
+                color: isGood ? .green : .orange,
+                isGood: isGood,
+                needsAttention: !isGood
+            ))
+        } else if scene.meterPosition != nil || scene.meterWallPosition != nil {
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: "Meter marked",
+                color: .secondary,
+                isGood: false,
+                needsAttention: false
+            ))
+        } else {
+            items.append(StatusItem(
+                icon: "bolt.circle",
+                title: "Need meter location",
+                color: .orange,
+                isGood: false,
+                needsAttention: true
+            ))
+        }
+
+        // Wall distance check
+        let wallMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToWall }
+        if let wallDist = wallMeasurement?.distanceFeet {
+            let isGood = wallDist <= 1.5
+            items.append(StatusItem(
+                icon: "square.on.square",
+                title: isGood ? "Close to wall" : "Check wall distance",
+                color: isGood ? .green : .orange,
+                isGood: isGood,
+                needsAttention: !isGood
+            ))
+        } else if scene.automaticWallClearanceFeet != nil {
+            items.append(StatusItem(
+                icon: "square.on.square",
+                title: "Checking wall distance",
+                color: .secondary,
+                isGood: false,
+                needsAttention: false
+            ))
+        }
+
+        // Gas meter check
+        if store.session.placement.gasMeterNotPresent {
+            items.append(StatusItem(
+                icon: "flame.circle",
+                title: "No gas meter nearby",
+                color: .green,
+                isGood: true,
+                needsAttention: false
+            ))
+        } else {
+            let gasMeasurement = scene.confirmedMeasurements.first { $0.kind == .batteryToGasMeter }
+            if let gasDist = gasMeasurement?.distanceFeet {
+                let isGood = gasDist >= 3
+                items.append(StatusItem(
+                    icon: "flame.circle",
+                    title: isGood ? "Safe from gas meter" : "Too close to gas meter",
+                    color: isGood ? .green : .red,
+                    isGood: isGood,
+                    needsAttention: !isGood
+                ))
+            } else if scene.gasMeterPosition != nil {
+                items.append(StatusItem(
+                    icon: "flame.circle",
+                    title: "Gas meter marked",
+                    color: .secondary,
+                    isGood: false,
+                    needsAttention: false
+                ))
+            }
+        }
+
+        // Footprint clearance
+        let footprintClear = scene.footprintIsClear ?? store.session.placement.footprintClearAttested
+        if let clear = footprintClear {
+            items.append(StatusItem(
+                icon: "square.dashed",
+                title: clear ? "Footprint looks clear" : "Check footprint clearance",
+                color: clear ? .green : .orange,
+                isGood: clear,
+                needsAttention: !clear
+            ))
+        }
+
+        // Transfer switch space
+        let transferSwitchSpace = scene.transferSwitchClearanceObserved ?? store.session.placement.transferSwitchSpaceAttested
+        if let hasSpace = transferSwitchSpace {
+            items.append(StatusItem(
+                icon: "circle.grid.cross",
+                title: hasSpace ? "Transfer switch space noted" : "Check transfer switch space",
+                color: hasSpace ? .green : .orange,
+                isGood: hasSpace,
+                needsAttention: !hasSpace
+            ))
+        }
+
+        return items
     }
 
     private var attestationToggles: some View {
@@ -683,11 +950,12 @@ struct PlacementARView: View {
     }
 
     private var scanInstruction: String {
-        switch (meterIsMarked, panelIsMarked) {
-        case (false, false): "Point the camera at the electric meter, then the breaker panel."
-        case (true, false): "Point at the breaker panel."
-        case (false, true): "Point at the electric meter."
-        case (true, true): "Got it! Tap Next."
+        switch cue {
+        case .findMeter: "Point at the electric meter. It locks on by itself."
+        case .stepBack: "Got it — now the breaker box. First, back up so we can see the wall."
+        case .findPanel: "Got it — now the breaker box."
+        case .stepBackFromPanel: "Got the panel. Back up so we can see around it."
+        case .ready: "Got the panel. Tap Next."
         }
     }
 
@@ -704,10 +972,11 @@ struct PlacementARView: View {
         scene = snapshot
     }
 
+    /// Kept for measurement bookkeeping only; feet are never shown on screen.
     private func acceptLiveFeet(_ feet: Double?) {
         let text = feet.map(formatFeet)
-        guard liveReadout.text != text else { return }
-        liveReadout.text = text
+        guard liveFeetText != text else { return }
+        liveFeetText = text
     }
 
     private func formatFeet(_ feet: Double) -> String {
@@ -774,7 +1043,7 @@ struct PlacementARView: View {
         let snapshot = controller.snapshotForCapture()
         guard snapshot.batteryPosition != nil, snapshot.trackingIsNormal,
               snapshot.batteryModelID == store.session.selectedBatteryModelId else {
-            statusMessage = "Wait for tracking and place the battery on a detected surface before saving."
+            statusMessage = "Place the battery preview before saving."
             return
         }
         let token = UUID()
@@ -930,6 +1199,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
     var onSceneChange: (PlacementSceneSnapshot) -> Void
     var onYawChange: (Float) -> Void
     var onLiveFeet: (Double?) -> Void
+    var onGuide: (ScanGuide) -> Void
     var onScreenshot: @MainActor (UUID, UIImage?) -> Void
     var onFailure: (String) -> Void
     var onTrackingStatus: (String?) -> Void
@@ -957,6 +1227,7 @@ private struct PlacementARRepresentable: UIViewRepresentable {
             screenshotToken: screenshotToken,
             onSceneChange: onSceneChange,
             onYawChange: onYawChange,
+            onLiveFeet: onLiveFeet,
             onGuide: onGuide,
             onScreenshot: onScreenshot,
             onFailure: onFailure,
@@ -990,6 +1261,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
     private(set) var scene = PlacementSceneSnapshot()
     var yawRadians: Float = 0
     fileprivate var walkStep: WalkStep = .scan
+    var hasChosenWalkStep = false
     fileprivate private(set) var scanGuide = ScanGuide()
     private var holdTarget: EquipmentKind?
 
@@ -1171,6 +1443,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             onSceneChange: @escaping (PlacementSceneSnapshot) -> Void,
             onYawChange: @escaping (Float) -> Void,
             onLiveFeet: @escaping (Double?) -> Void,
+            onGuide: @escaping (ScanGuide) -> Void,
             onScreenshot: @escaping @MainActor (UUID, UIImage?) -> Void,
             onFailure: @escaping (String) -> Void,
             onTrackingStatus: @escaping (String?) -> Void,
@@ -1198,6 +1471,7 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             }
             self.onSceneChange = onSceneChange
             self.onYawChange = onYawChange
+            self.onLiveFeet = onLiveFeet
             self.onGuide = onGuide
             self.onScreenshot = onScreenshot
             self.onFailure = onFailure
@@ -2275,10 +2549,9 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
                 publishEquipmentStatus(nil)
                 return
             }
+            // The bridge does not report per-frame status yet, so silence is the normal case.
             guard let observation = equipmentBridge.latestObservation else {
-                clearTransientEquipmentObservations()
-                publishEquipmentStatus(trackingBlockedMessage == nil
-                    ? "Waiting for a fresh equipment scan. You can also mark equipment manually." : nil)
+                publishEquipmentStatus(nil)
                 return
             }
             if observation.generation != lastEquipmentGeneration {
@@ -2318,6 +2591,8 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             // Stepping back leaves holdTarget nil, so a box in view cannot lock a random wall.
             for detection in best.values where detection.confidence >= 0.5 && detection.kind == holdTarget {
                 let alreadyLocked = detection.kind == .electricMeter ? meterLock.locked : panelLock.locked
+                let rect = Self.viewRect(for: detection.boundingBox, in: packet)
+                let landing = project(detection, in: packet)
                 let color: UIColor
                 let title: String
                 if alreadyLocked {
@@ -2363,6 +2638,31 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             guard let depth = depthHit(at: pixel, packet: packet, cameraOrigin: ray.origin) else { return nil }
             // Depth locates equipment; a camera-facing direction is not an observed wall normal.
             return (depth.position, depth.normal, false)
+        }
+
+        private func depthHit(
+            at pixel: CGPoint,
+            packet: EquipmentScanFrame,
+            cameraOrigin: SIMD3<Float>
+        ) -> (position: SIMD3<Float>, normal: SIMD3<Float>)? {
+            guard let depth = packet.depth else { return nil }
+            return depthPatch(
+                at: pixel,
+                depth: depth,
+                imageSize: packet.imageSize,
+                intrinsics: packet.intrinsics,
+                cameraTransform: packet.cameraTransform,
+                cameraOrigin: cameraOrigin
+            )
+        }
+
+        private func relockAllowed(_ kind: EquipmentKind, point: SIMD3<Float>) -> Bool {
+            guard let ban = relockBan, ban.kind == kind else { return true }
+            guard simd_distance(ban.point, point) < 0.45 else {
+                relockBan = nil
+                return true
+            }
+            return false
         }
 
         /// Median of a depth patch. One empty neighbor no longer throws the hit away.

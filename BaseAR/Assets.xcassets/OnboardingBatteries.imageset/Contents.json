@@ -1,15 +1,13 @@
 {
   "images" : [
     {
-      "filename" : "OnboardingBatteries.svg",
-      "idiom" : "universal"
+      "filename" : "OnboardingBatteries.png",
+      "idiom" : "universal",
+      "scale" : "1x"
     }
   ],
   "info" : {
     "author" : "xcode",
     "version" : 1
-  },
-  "properties" : {
-    "preserves-vector-representation" : true
   }
 }

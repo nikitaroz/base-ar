@@ -260,7 +260,7 @@ struct JevSurveyState: Encodable, Sendable {
             wallFeet: placement.distanceToWallFeet,
             gasFeet: placement.distanceToGasMeterFeet,
             meterHeightFeet: placement.meterHeightFeet,
-            meterAndPanelSameWall: placement.meterAndPanelSameWall,
+            meterAndPanelSameWall: placement.meterAndPanelShareWall,
             footprintIsClear: placement.footprintIsClear,
             clearOfWindows: placement.clearOfWindows,
             keepsEquipmentAccess: placement.keepsEquipmentAccess,

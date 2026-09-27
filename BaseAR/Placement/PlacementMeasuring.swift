@@ -128,7 +128,6 @@ struct PlacementMeasurements: Sendable, Equatable {
     var distanceToWallFeet: Double?
     var distanceToGasMeterFeet: Double?
     var meterHeightFeet: Double?
-    var meterAndPanelSameWall: Bool?
     var footprintIsClear: Bool?
     /// False when a classified window overlaps the cabinet on the host wall. Nil until that face has been scanned.
     var clearOfWindows: Bool?
@@ -165,7 +164,6 @@ extension PlacementMeasuring {
         updated.distanceToWallFeet = measured.distanceToWallFeet
         updated.distanceToGasMeterFeet = measured.distanceToGasMeterFeet
         updated.meterHeightFeet = measured.meterHeightFeet
-        updated.meterAndPanelSameWall = measured.meterAndPanelSameWall
         // A missing mesh leaves the previous measured result in place, but only for the same spot.
         // With a mesh, nil means this spot is not measured, so an old answer must not carry over. Yes/No answers are not a measurement.
         let keepBatteryChecks = !measured.lidarMeshAvailable && measured.batteryPosition == placement.batteryPosition
@@ -235,7 +233,6 @@ struct CorePlacementMeasurer: PlacementMeasuring {
             distanceToWallFeet: wallFeet,
             distanceToGasMeterFeet: gasFeet,
             meterHeightFeet: heightFeet,
-            meterAndPanelSameWall: sameWall,
             footprintIsClear: footprint,
             clearOfWindows: windows,
             keepsEquipmentAccess: access,
@@ -962,7 +959,7 @@ enum MeasurementOverlay {
         flag("keeps_meter_and_panel_access", measured.keepsEquipmentAccess)
         flag("front_working_space", measured.frontWorkingSpaceIsClear)
         flag("transfer_switch_space", measured.transferSwitchClearanceObserved)
-        if let same = measured.meterAndPanelSameWall {
+        if let same = measured.meterAndPanelShareWall {
             comments.append("check meter_and_panel_same_wall \(same ? "yes" : "no")")
         }
 

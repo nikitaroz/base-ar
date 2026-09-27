@@ -387,7 +387,7 @@ struct ReviewView: View {
             LabeledContent("Clear of meter and panel access", value: observation(store.session.placement.keepsEquipmentAccess))
             LabeledContent("30 × 36 in working space clear", value: observation(store.session.placement.frontWorkingSpaceIsClear))
             LabeledContent("Transfer-switch space", value: attestationText(measured: store.session.placement.transferSwitchClearanceObserved, attested: store.session.placement.transferSwitchSpaceAttested))
-            LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelSameWall))
+            LabeledContent("Meter and panel share wall", value: sameWallText(store.session.placement.meterAndPanelShareWall))
             LabeledContent("Measurement surfaces", value: measurementMethods)
             Text("GPS is the phone’s property fix, not the battery position. AR measurements are preliminary estimates.")
                 .font(.footnote)

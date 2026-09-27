@@ -29,7 +29,7 @@ enum BaseRuleSet {
         transferSwitchSpace,
         meterHeight,
         frontWorkingSpace,
-        meterAndPanelSameWall
+        meterAndPanelShareWall
     ]
 
     private static let austinBreaker = EligibilityRule(
@@ -216,17 +216,17 @@ enum BaseRuleSet {
         }
     )
 
-    private static let meterAndPanelSameWall = EligibilityRule(
+    private static let meterAndPanelShareWall = EligibilityRule(
         id: "meter-panel-same-wall",
         title: "Meter and panel on the same wall",
-        requirement: "The meter and the main breaker panel should sit on the same wall.",
+        requirement: "The meter and the main breaker panel should sit on the same wall (either side counts).",
         isRequired: true,
         evaluate: { session in
-            guard let same = session.placement.meterAndPanelSameWall else {
+            guard let same = session.placement.meterAndPanelShareWall else {
                 return .unknown("The meter and the panel both need to be found on the wall in the Live Survey.")
             }
             return same
-                ? .pass("The meter and panel marks face the same direction and lie on the same wall.")
+                ? .pass("The meter and panel marks lie on the same wall.")
                 : .conflict("The meter and panel marks are not on the same wall.")
         }
     )

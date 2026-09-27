@@ -486,6 +486,8 @@ struct PlacementARView: View {
     /// The meter or panel that just locked. "Not the …" can undo it for 5 s (and while the next item is searched for).
     @State private var recentLock: (kind: EquipmentKind, token: UUID)?
     @State private var capturedFrames = 0
+    @State private var cachedLiveAssessment: SurveyAssessment?
+    @State private var cachedLiveScene: PlacementSceneSnapshot?
     /// The bottom line as shown, paced so it does not flicker at the detector's rate.
     @State private var pacer = FeedbackPacer()
     @State private var latestFeedback: Feedback?
@@ -699,10 +701,20 @@ struct PlacementARView: View {
     /// The full survey assessment with the ghost or placed battery applied: every required rule, including the
     /// breaker and panel-rating ones, so the preview is green only when the survey itself would be.
     /// Nil with no battery on screen, since there is nothing to tint.
-    private var liveAssessment: SurveyAssessment? {
+    /// Read by the view on every redraw, so it must be cheap: the full assessment re-measures the whole scan.
+    /// `refreshLiveAssessment()` recomputes it at most every 1.5 s, and only when the scene changed.
+    private var liveAssessment: SurveyAssessment? { cachedLiveAssessment }
+
+    private func refreshLiveAssessment() {
         let preview = guidedScene
-        guard preview.batteryPosition != nil else { return nil }
-        return store.assessment(applying: preview)
+        guard preview.batteryPosition != nil else {
+            cachedLiveAssessment = nil
+            cachedLiveScene = nil
+            return
+        }
+        guard preview != cachedLiveScene else { return }
+        cachedLiveScene = preview
+        cachedLiveAssessment = store.assessment(applying: preview)
     }
 
     /// The step clocks stop while the user cannot see the two lines or the scan is not running.
@@ -1013,6 +1025,12 @@ struct PlacementARView: View {
             while !Task.isCancelled {
                 capturedFrames = store.placementController?.keyframes.count ?? 0
                 try? await Task.sleep(for: .seconds(0.5))
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                refreshLiveAssessment()
+                try? await Task.sleep(for: .seconds(1.5))
             }
         }
     }
@@ -4840,6 +4858,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             return result
         }
 
+        /// The box colour only needs a fresh clearance every couple of seconds. A full measure() on every mesh
+        /// update was most of the 26 Sep main-thread hangs (it runs longer than the update interval).
+        private var transferBoxClearance: Bool?
+        private var transferBoxMeasuredAt = Date.distantPast
+        private static let transferBoxRemeasureInterval: TimeInterval = 2
+
         private func updateTransferBox(_ snapshot: PlacementSceneSnapshot) {
             let show = batteryRig != nil && (walkStep == .battery || walkStep == .finish)
             guard show, let box = placementMeasurer.transferSwitchBox(in: snapshot) else {
@@ -4865,7 +4889,12 @@ final class PlacementSceneController: NSObject, ARSessionDelegate, ARCoachingOve
             transferBox.orientation = simd_quatf(simd_float3x3(columns: (along, box.up, box.normal)))
             // Same pass / conflict / unknown colors as the battery tone.
             let color: UIColor
-            switch placementMeasurer.measure(snapshot).transferSwitchClearanceObserved {
+            let now = Date()
+            if now.timeIntervalSince(transferBoxMeasuredAt) >= Self.transferBoxRemeasureInterval {
+                transferBoxClearance = placementMeasurer.measure(snapshot).transferSwitchClearanceObserved
+                transferBoxMeasuredAt = now
+            }
+            switch transferBoxClearance {
             case true: color = ToneStyle.uiColor(.clear)
             case false: color = ToneStyle.uiColor(.conflict)
             case nil: color = ToneStyle.uiColor(.incomplete)
